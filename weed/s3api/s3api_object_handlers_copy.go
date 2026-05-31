@@ -861,6 +861,14 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		dstEntry.Chunks = dstChunks
 	}
 
+	// S3A/hadoop-aws sends the ETag returned by UploadPartCopy back during
+	// CompleteMultipartUpload. Reuse the ETag already available on the copied
+	// chunks instead of reading the copied range a second time just to hash it.
+	// For a single copied chunk this is the chunk MD5; for multiple copied
+	// chunks this follows SeaweedFS' existing chunk-composite ETag algorithm.
+	etag := filer.ETag(dstEntry)
+	dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
+
 	// Save the part entry to the multipart uploads folder
 	uploadDir := s3a.genUploadsFolder(dstBucket) + "/" + uploadID
 	partName := fmt.Sprintf("%04d_%s.part", partID, "copy")
@@ -881,24 +889,10 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Calculate ETag for the part
-	partPath := util.FullPath(uploadDir + "/" + partName)
-	filerEntry := &filer.Entry{
-		FullPath: partPath,
-		Attr: filer.Attr{
-			FileSize: dstEntry.Attributes.FileSize,
-			Mtime:    time.Unix(dstEntry.Attributes.Mtime, 0),
-			Crtime:   time.Unix(dstEntry.Attributes.Crtime, 0),
-			Mime:     dstEntry.Attributes.Mime,
-		},
-		Chunks: dstEntry.Chunks,
-	}
-
-	etag := filer.ETagEntry(filerEntry)
 	setEtag(w, etag)
 
 	response := CopyPartResult{
-		ETag:         etag,
+		ETag:         "\"" + etag + "\"",
 		LastModified: t,
 	}
 
@@ -1279,20 +1273,11 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 
 // validateConditionalCopyHeaders validates the conditional copy headers against the source entry
 func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *filer_pb.Entry) s3err.ErrorCode {
-	// Calculate ETag for the source entry
-	srcPath := util.FullPath(fmt.Sprintf("%s/%s", r.URL.Path, entry.Name))
-	filerEntry := &filer.Entry{
-		FullPath: srcPath,
-		Attr: filer.Attr{
-			FileSize: entry.Attributes.FileSize,
-			Mtime:    time.Unix(entry.Attributes.Mtime, 0),
-			Crtime:   time.Unix(entry.Attributes.Crtime, 0),
-			Mime:     entry.Attributes.Mime,
-			Md5:      entry.Attributes.Md5,
-		},
-		Chunks: entry.Chunks,
-	}
-	sourceETag := filer.ETagEntry(filerEntry)
+	// Use the same ETag that HEAD/GET/ListObject expose. Completed multipart
+	// uploads persist their S3 multipart ETag in ExtETagKey; recomputing from
+	// SeaweedFS' internal chunks can produce a different chunk-composite ETag
+	// and make x-amz-copy-source-if-match fail for hadoop-aws/S3A renames.
+	sourceETag := s3a.getObjectETag(entry)
 
 	// Check X-Amz-Copy-Source-If-Match
 	if ifMatch := r.Header.Get(s3_constants.AmzCopySourceIfMatch); ifMatch != "" {
