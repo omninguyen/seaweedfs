@@ -173,7 +173,6 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopyDest)
 		return
 	}
-
 	// Validate conditional copy headers
 	if err := s3a.validateConditionalCopyHeaders(r, entry); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)
@@ -444,7 +443,7 @@ func cloneProtoEntry(entry *filer_pb.Entry) *filer_pb.Entry {
 	return proto.Clone(entry).(*filer_pb.Entry)
 }
 
-func copyEntryETag(entry *filer_pb.Entry) string {
+func copyEntryETag(fullPath util.FullPath, entry *filer_pb.Entry) string {
 	if entry != nil && entry.Extended != nil {
 		if etag, ok := entry.Extended[s3_constants.ExtETagKey]; ok && len(etag) > 0 {
 			return string(etag)
@@ -980,24 +979,11 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Calculate ETag for the part
-	partPath := util.FullPath(uploadDir + "/" + partName)
-	filerEntry := &filer.Entry{
-		FullPath: partPath,
-		Attr: filer.Attr{
-			FileSize: dstEntry.Attributes.FileSize,
-			Mtime:    time.Unix(dstEntry.Attributes.Mtime, 0),
-			Crtime:   time.Unix(dstEntry.Attributes.Crtime, 0),
-			Mime:     dstEntry.Attributes.Mime,
-		},
-		Chunks: dstEntry.Chunks,
-	}
-
-	etag := filer.ETagEntry(filerEntry)
+	etag := copyEntryETag(dstEntry)
 	setEtag(w, etag)
 
 	response := CopyPartResult{
-		ETag:         etag,
+		ETag:         "\"" + strings.Trim(etag, "\"") + "\"",
 		LastModified: t,
 	}
 
@@ -1423,25 +1409,12 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 
 // validateConditionalCopyHeaders validates the conditional copy headers against the source entry
 func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *filer_pb.Entry) s3err.ErrorCode {
-	// Calculate ETag for the source entry. ETagEntry derives the tag from the
-	// chunks/Md5/remote-etag only, so no path is needed here.
-	filerEntry := &filer.Entry{
-		Attr: filer.Attr{
-			FileSize: entry.Attributes.FileSize,
-			Mtime:    time.Unix(entry.Attributes.Mtime, 0),
-			Crtime:   time.Unix(entry.Attributes.Crtime, 0),
-			Mime:     entry.Attributes.Mime,
-			Md5:      entry.Attributes.Md5,
-		},
-		Chunks: entry.Chunks,
-	}
-	sourceETag := filer.ETagEntry(filerEntry)
+	sourceETag := strings.Trim(copyEntryETag(entry), `"`)
 
 	// Check X-Amz-Copy-Source-If-Match
 	if ifMatch := r.Header.Get(s3_constants.AmzCopySourceIfMatch); ifMatch != "" {
 		// Remove quotes if present
 		ifMatch = strings.Trim(ifMatch, `"`)
-		sourceETag = strings.Trim(sourceETag, `"`)
 		glog.V(3).Infof("CopyObjectHandler: If-Match check - expected %s, got %s", ifMatch, sourceETag)
 		if ifMatch != sourceETag {
 			glog.V(3).Infof("CopyObjectHandler: If-Match failed - expected %s, got %s", ifMatch, sourceETag)
@@ -1453,7 +1426,6 @@ func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *f
 	if ifNoneMatch := r.Header.Get(s3_constants.AmzCopySourceIfNoneMatch); ifNoneMatch != "" {
 		// Remove quotes if present
 		ifNoneMatch = strings.Trim(ifNoneMatch, `"`)
-		sourceETag = strings.Trim(sourceETag, `"`)
 		glog.V(3).Infof("CopyObjectHandler: If-None-Match check - comparing %s with %s", ifNoneMatch, sourceETag)
 		if ifNoneMatch == sourceETag {
 			glog.V(3).Infof("CopyObjectHandler: If-None-Match failed - matched %s", sourceETag)
