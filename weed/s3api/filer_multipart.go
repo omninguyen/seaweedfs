@@ -940,7 +940,12 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 			continue
 		}
 
-		key := string(entry.Extended[s3_constants.ExtMultipartObjectKey])
+		keyBytes, ok := entry.Extended[s3_constants.ExtMultipartObjectKey]
+		if !ok {
+				glog.Warningf("listMultipartUploads %s: missing object key metadata for upload entry %s", *input.Bucket, entry.Name)
+				continue
+		}
+		key := string(keyBytes)
 
 		if *input.KeyMarker != "" {
 				if key < *input.KeyMarker {
