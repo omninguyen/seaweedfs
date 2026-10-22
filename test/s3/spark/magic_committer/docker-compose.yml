@@ -1,0 +1,48 @@
+services:
+  seaweedfs:
+    image: alpine:3.20
+    # ./weed is a static linux binary built from this checkout (make weed).
+    command:
+      - /usr/bin/weed
+      - mini
+      - -dir=/data
+      - -ip=seaweedfs
+      - -s3.config=/etc/seaweedfs/s3.json
+      - -bucket=spark
+      - -master.telemetry=false
+    ports:
+      - "${S3_PORT:-8333}:8333" # S3 API
+      - "${FILER_PORT:-8888}:8888" # Filer UI
+      - "${MASTER_PORT:-9333}:9333" # Master UI
+    volumes:
+      - ./weed:/usr/bin/weed:ro
+      - ./s3.json:/etc/seaweedfs/s3.json:ro
+      - seaweedfs-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/status"]
+      interval: 3s
+      timeout: 2s
+      retries: 40
+      start_period: 5s
+
+  spark:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+      args:
+        MAVEN_REPO: ${MAVEN_REPO:-https://repo1.maven.org/maven2}
+    image: seaweedfs-spark-magic-committer:3.5.1
+    command: ["tail", "-f", "/dev/null"]
+    environment:
+      AWS_REGION: us-east-1
+    ports:
+      - "${SPARK_UI_PORT:-4040}:4040" # Spark UI, while a job runs
+    volumes:
+      - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ./magic_committer_job.py:/opt/jobs/magic_committer_job.py:ro
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+
+volumes:
+  seaweedfs-data:

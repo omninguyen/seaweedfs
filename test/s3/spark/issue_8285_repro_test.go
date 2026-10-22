@@ -79,6 +79,16 @@ print("WRITE_COUNT=" + str(count))
 
 func listObjectKeysByPrefix(t *testing.T, env *TestEnvironment, bucketName, prefix string) []string {
 	t.Helper()
+
+	var keys []string
+	for _, object := range listObjectsByPrefix(t, env, bucketName, prefix) {
+		keys = append(keys, aws.ToString(object.Key))
+	}
+	return keys
+}
+
+func listObjectsByPrefix(t *testing.T, env *TestEnvironment, bucketName, prefix string) []s3types.Object {
+	t.Helper()
 	client := newS3Client(env)
 
 	pager := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
@@ -86,18 +96,16 @@ func listObjectKeysByPrefix(t *testing.T, env *TestEnvironment, bucketName, pref
 		Prefix: aws.String(prefix),
 	})
 
-	var keys []string
+	var objects []s3types.Object
 	for pager.HasMorePages() {
 		page, err := pager.NextPage(context.Background())
 		if err != nil {
 			t.Fatalf("failed listing objects for prefix %q: %v", prefix, err)
 		}
-		for _, object := range page.Contents {
-			keys = append(keys, aws.ToString(object.Key))
-		}
+		objects = append(objects, page.Contents...)
 	}
 
-	return keys
+	return objects
 }
 
 func headObjectInfo(t *testing.T, env *TestEnvironment, bucketName, key string) (bool, string, error) {

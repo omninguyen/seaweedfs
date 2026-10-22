@@ -1,0 +1,21 @@
+# apache/spark:3.5.1 ships hadoop-client 3.3.4 but neither the S3A connector
+# nor spark-hadoop-cloud, whose commit protocol lets Spark SQL use the S3A
+# committers. Bake both in, pinned to the versions that match hadoop 3.3.4.
+FROM apache/spark:3.5.1
+
+ARG MAVEN_REPO=https://repo1.maven.org/maven2
+
+USER root
+RUN set -eux; \
+    cd /opt/spark/jars; \
+    fetch() { \
+        curl -fsSL --retry 5 --retry-delay 3 -o "$(basename "$2")" "$MAVEN_REPO/$2"; \
+        echo "$1  $(basename "$2")" | sha256sum -c -; \
+    }; \
+    fetch 53f9ae03c681a30a50aa17524bd9790ab596b28481858e54efd989a826ed3a4a \
+        org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar; \
+    fetch 873fe7cf495126619997bec21c44de5d992544aea7e632fdc77adb1a0915bae5 \
+        com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar; \
+    fetch 3f93b4b2e99951edbf2ad2fad895c7982f17abe45bc08f29fc4df31f6f12335f \
+        org/apache/spark/spark-hadoop-cloud_2.12/3.5.1/spark-hadoop-cloud_2.12-3.5.1.jar
+USER spark

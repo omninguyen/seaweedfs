@@ -7,6 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -209,9 +212,26 @@ func (env *TestEnvironment) Cleanup(t *testing.T) {
 
 func runSparkPyScript(t *testing.T, container testcontainers.Container, script string, s3Port int) (int, string) {
 	t.Helper()
+	return runSparkPyScriptWithConf(t, container, script, s3Port, nil)
+}
+
+// runSparkPyScriptWithConf is runSparkPyScript with extra SparkSession
+// settings. They are applied after the defaults, so they also override them.
+func runSparkPyScriptWithConf(t *testing.T, container testcontainers.Container, script string, s3Port int, extraConf map[string]string) (int, string) {
+	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
+
+	keys := make([]string, 0, len(extraConf))
+	for key := range extraConf {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var extraConfLines strings.Builder
+	for _, key := range keys {
+		fmt.Fprintf(&extraConfLines, "    .config(%s, %s)\n", strconv.Quote(key), strconv.Quote(extraConf[key]))
+	}
 
 	pythonScript := fmt.Sprintf(`
 import glob
@@ -265,10 +285,10 @@ spark = (SparkSession.builder
     .config("spark.hadoop.fs.s3a.change.detection.version.required", "false")
     .config("spark.hadoop.fs.s3a.change.detection.mode", "warn")
     .config("spark.local.dir", "/tmp/spark-temp")
-    .getOrCreate())
+%s    .getOrCreate())
 
 %s
-`, s3Port, script)
+`, s3Port, extraConfLines.String(), script)
 
 	code, out, err := container.Exec(ctx, []string{"python3", "-c", pythonScript})
 	var output string
