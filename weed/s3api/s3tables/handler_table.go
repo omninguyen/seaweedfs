@@ -1005,6 +1005,9 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 
 	// Delete the table
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		if req.RetainData {
+			return h.unregisterTable(r.Context(), client, tablePath, tableEntry, req.VersionToken)
+		}
 		dataPath := TableDataDirFromMetadataLocation(metadata.MetadataLocation)
 		if dataPath != "" && dataPath != tablePath && strings.HasPrefix(dataPath+"/", GetTableBucketPath(bucketName)+"/") {
 			// Refuse to purge a data path that is an ancestor of the table's own
@@ -1117,6 +1120,28 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 
 	h.writeJSON(w, http.StatusOK, nil)
 	return nil
+}
+
+// unregisterTable removes a table's catalog record and leaves its files in
+// place: the name path keeps its directory and everything under it, and a
+// decoupled table's data location is not touched at all. It clears the same
+// attributes a rename moves off its source, so the directory ends in the state
+// a rename leaves behind, which the rest of the catalog already handles:
+// listings skip it, and a create of the same name is routed to a fresh
+// location instead of writing over the kept files.
+//
+// A token caller removes the record only while it still holds every attribute
+// the caller read, so a write that landed since then turns the delete into a
+// version conflict instead of being erased with the record.
+func (h *S3TablesHandler) unregisterTable(ctx context.Context, client filer_pb.SeaweedFilerClient, tablePath string, tableEntry *filer_pb.Entry, versionToken string) error {
+	if versionToken != "" && tableEntry != nil {
+		err := h.removeExtendedAttributesIf(ctx, client, tablePath, snapshotExtended(tableEntry.Extended), renamedTableAttributes...)
+		if errors.Is(err, ErrConcurrentUpdate) {
+			return ErrVersionTokenMismatch
+		}
+		return err
+	}
+	return h.removeExtendedAttributes(ctx, client, tablePath, renamedTableAttributes...)
 }
 
 // renamedTableAttributes are the catalog attributes a rename carries to the new

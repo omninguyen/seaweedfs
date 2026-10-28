@@ -95,6 +95,21 @@ func wantsVendedCredentials(r *http.Request) bool {
 	return false
 }
 
+// purgeRequested reports whether a dropTable asked for the table's data and
+// metadata files to be deleted along with it. The spec defaults the
+// parameter to false, which keeps the files.
+func purgeRequested(r *http.Request) (bool, error) {
+	raw := r.URL.Query().Get("purgeRequested")
+	if raw == "" {
+		return false, nil
+	}
+	purge, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("invalid purgeRequested value %q: must be true or false", raw)
+	}
+	return purge, nil
+}
+
 // writeLoadResult writes a table or view load response. The FileIO config it
 // carries depends on the delegation the client asked for, so a cache between
 // us and the client must key on that header and not on the URL alone.

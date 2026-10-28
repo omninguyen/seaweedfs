@@ -845,7 +845,11 @@ func (s *Server) handleTableExists(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleDropTable deletes a table.
+// handleDropTable deletes a table. Only a drop with purgeRequested=true
+// deletes the table's files; without it the catalog record is removed and
+// every data and metadata file is kept, so the table can be registered again
+// from its last metadata file, as the spec's default of false requires. Spark
+// sends DROP TABLE without the parameter and DROP TABLE ... PURGE with it.
 func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	namespace := parseNamespace(vars["namespace"])
@@ -856,38 +860,47 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	purge, err := purgeRequested(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
+		return
+	}
+
 	bucketName := getBucketFromPrefix(r)
 	bucketARN := buildTableBucketARN(bucketName)
 
 	// Extract identity from context
 	identityName := s3_constants.GetIdentityNameFromContext(r)
 
-	// Resolve the table's storage location from the catalog before the
-	// delete, so we can purge data files afterwards. The catalog is the
+	// A purge resolves the table's storage location from the catalog before
+	// the delete, so the files can be removed afterwards. The catalog is the
 	// authoritative owner of this mapping — if the table is not registered,
 	// there is nothing to clean up and DeleteTable will return NoSuchTable.
 	var storedMetadataLocation string
-	lookupReq := &s3tables.GetTableRequest{
-		TableBucketARN: bucketARN,
-		Namespace:      namespace,
-		Name:           tableName,
-	}
-	var lookupResp s3tables.GetTableResponse
-	lookupErr := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		mgrClient := s3tables.NewManagerClient(client)
-		return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", lookupReq, &lookupResp, identityName)
-	})
-	if lookupErr == nil {
-		storedMetadataLocation = lookupResp.MetadataLocation
+	if purge {
+		lookupReq := &s3tables.GetTableRequest{
+			TableBucketARN: bucketARN,
+			Namespace:      namespace,
+			Name:           tableName,
+		}
+		var lookupResp s3tables.GetTableResponse
+		lookupErr := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			mgrClient := s3tables.NewManagerClient(client)
+			return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", lookupReq, &lookupResp, identityName)
+		})
+		if lookupErr == nil {
+			storedMetadataLocation = lookupResp.MetadataLocation
+		}
 	}
 
 	deleteReq := &s3tables.DeleteTableRequest{
 		TableBucketARN: bucketARN,
 		Namespace:      namespace,
 		Name:           tableName,
+		RetainData:     !purge,
 	}
 
-	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
 		return s.tablesManager.Execute(r.Context(), mgrClient, "DeleteTable", deleteReq, nil, identityName)
 	})
@@ -902,12 +915,14 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Purge data files that lived under the dropped table's location, so a
-	// subsequent CREATE TABLE at the same name (issue #9074) does not trip
-	// Trino's "non-empty location" pre-check. We only purge when the catalog
-	// told us a location: if GetTable above failed, there is no mapping to
-	// trust and we leave storage alone.
-	if storedMetadataLocation != "" {
+	// A purge also removes the files that lived under the dropped table's
+	// location, so a subsequent CREATE TABLE at the same name (issue #9074)
+	// does not trip Trino's "non-empty location" pre-check; Trino drops with
+	// purgeRequested=true, so that fix is unaffected by keeping the files of
+	// a plain drop. We only purge when the catalog told us a location: if
+	// GetTable above failed, there is no mapping to trust and we leave
+	// storage alone.
+	if purge && storedMetadataLocation != "" {
 		if tableLoc := tableLocationFromMetadataLocation(storedMetadataLocation); tableLoc != "" {
 			if dataBucket, dataPath, parseErr := parseS3Location(tableLoc); parseErr == nil {
 				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), dataBucket, dataPath); cleanupErr != nil {

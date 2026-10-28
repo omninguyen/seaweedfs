@@ -272,6 +272,12 @@ type DeleteTableRequest struct {
 	Namespace      []string `json:"namespace"`
 	Name           string   `json:"name"`
 	VersionToken   string   `json:"versionToken,omitempty"`
+	// RetainData removes only the catalog record and keeps every file under
+	// the table's location, so the table can be registered again from its
+	// last metadata file. The Iceberg REST catalog sets it for a dropTable
+	// without purgeRequested. AWS's DeleteTable has no such field, so S3
+	// Tables clients keep the purging delete AWS defines.
+	RetainData bool `json:"retainData,omitempty"`
 }
 
 type UpdateTableRequest struct {
