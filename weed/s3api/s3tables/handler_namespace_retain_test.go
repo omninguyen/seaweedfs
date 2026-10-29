@@ -70,6 +70,18 @@ func deleteNamespace(t *testing.T, m *Manager, fs *s3tablestest.MemFiler, namesp
 	})
 }
 
+// purgeTable drops ns.t with the purging delete, leaving the namespace without
+// a table in it.
+func purgeTable(t *testing.T, m *Manager, fs *s3tablestest.MemFiler) {
+	t.Helper()
+	status, resp := runHandler(t, m, fs.Client, "DeleteTable", &DeleteTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "t",
+	})
+	require.Equal(t, http.StatusOK, status, "%+v", resp)
+}
+
 // Dropping a namespace whose dropped table kept its files removes the
 // namespace from the catalog and leaves the files where they were, ready for
 // a register_table.
@@ -100,32 +112,28 @@ func TestDeleteNamespaceKeepsRetainedFiles(t *testing.T) {
 // hold anything worth keeping, so the namespace goes with them as before.
 func TestDeleteNamespaceRemovesEmptyLeftovers(t *testing.T) {
 	fs, m := startRenameManager(t)
-	status, resp := runHandler(t, m, fs.Client, "DeleteTable", &DeleteTableRequest{
-		TableBucketARN: mustBucketARN(t),
-		Namespace:      []string{"ns"},
-		Name:           "t",
-	})
-	require.Equal(t, http.StatusOK, status, "%+v", resp)
+	purgeTable(t, m, fs)
 
 	nsPath := GetNamespacePath(renameTestBucket, "ns")
 	fs.Put(nsPath, "left", nil)
 	fs.Put(path.Join(nsPath, "left"), "data", nil)
 	fs.Put(path.Join(nsPath, "left", "data"), "part=1", nil)
 
-	status, resp = deleteNamespace(t, m, fs, "ns")
+	status, resp := deleteNamespace(t, m, fs, "ns")
 	require.Equal(t, http.StatusOK, status, "%+v", resp)
 
 	assert.Nil(t, fs.Get(GetTableBucketPath(renameTestBucket), "ns"), "the namespace directory must be deleted")
 	assert.Nil(t, fs.Get(path.Join(nsPath, "left"), "data"), "empty leftovers go with the namespace")
 }
 
-// The live table sorts after twelve leftover directories, past the first ten
-// entries the emptiness check used to read: it must still block the delete.
+// The live table sorts after a full listing page of leftover directories, so
+// it is on the second page, well past the first ten entries the emptiness
+// check used to read: it must still block the delete.
 func TestDeleteNamespaceSeesEveryChild(t *testing.T) {
 	fs, m := startRenameManager(t)
 	nsPath := GetNamespacePath(renameTestBucket, "ns")
-	for i := 0; i < 12; i++ {
-		fs.Put(nsPath, fmt.Sprintf("a%02d", i), nil)
+	for i := 0; i < childListPageSize; i++ {
+		fs.Put(nsPath, fmt.Sprintf("a%04d", i), nil)
 	}
 
 	status, resp := deleteNamespace(t, m, fs, "ns")
@@ -136,6 +144,64 @@ func TestDeleteNamespaceSeesEveryChild(t *testing.T) {
 	require.NoError(t, err, "the live table must survive")
 	assert.Equal(t, "t", got.Name)
 	assert.NotNil(t, fs.Get(path.Join(GetTablePath(renameTestBucket, "ns", "t"), "metadata"), "v3.metadata.json"))
+}
+
+// A retained directory whose only file sorts after a full listing page of
+// empty subdirectories still holds that file: the walk must page to it rather
+// than call the directory empty and delete it with the namespace.
+func TestDeleteNamespaceFindsRetainedFilePastFirstPage(t *testing.T) {
+	fs, m := startRenameManager(t)
+	purgeTable(t, m, fs)
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	dataDir := path.Join(nsPath, "kept", "data")
+	fs.Put(nsPath, "kept", nil)
+	fs.Put(path.Join(nsPath, "kept"), "data", nil)
+	for i := 0; i < childListPageSize; i++ {
+		fs.Put(dataDir, fmt.Sprintf("p%04d", i), nil)
+	}
+	fs.PutFile(dataDir, "zz.parquet", time.Now())
+
+	status, resp := deleteNamespace(t, m, fs, "ns")
+	require.Equal(t, http.StatusOK, status, "%+v", resp)
+	assert.NotNil(t, fs.Get(GetTableBucketPath(renameTestBucket), "ns"), "the namespace directory must stay to hold the file")
+	assertFilesKept(t, fs, []string{path.Join(dataDir, "zz.parquet")})
+}
+
+// A file sitting directly in the namespace is not a leftover of a table: it
+// blocks the delete, and both it and the namespace stay as they were.
+func TestDeleteNamespaceRefusesFileInNamespace(t *testing.T) {
+	fs, m := startRenameManager(t)
+	purgeTable(t, m, fs)
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	fs.PutFile(nsPath, "notes.txt", time.Now())
+	record := fs.Get(GetTableBucketPath(renameTestBucket), "ns").Extended[ExtendedKeyMetadata]
+
+	status, resp := deleteNamespace(t, m, fs, "ns")
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, ErrCodeNamespaceNotEmpty, resp.Type)
+	assertFilesKept(t, fs, []string{path.Join(nsPath, "notes.txt")})
+	assert.Equal(t, record, fs.Get(GetTableBucketPath(renameTestBucket), "ns").Extended[ExtendedKeyMetadata],
+		"the namespace record must be untouched")
+}
+
+// Empty directories listed after a retained one, in the namespace or inside
+// the retained directory, must not undo what was found: the namespace keeps
+// the retained file.
+func TestDeleteNamespaceKeepsRetainedDespiteLaterEmptyDirs(t *testing.T) {
+	fs, m := startRenameManager(t)
+	purgeTable(t, m, fs)
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	kept := path.Join(nsPath, "a-kept")
+	fs.Put(nsPath, "a-kept", nil)
+	fs.Put(kept, "data", nil)
+	fs.PutFile(path.Join(kept, "data"), "f.parquet", time.Now())
+	fs.Put(kept, "zz-empty", nil)
+	fs.Put(nsPath, "b-empty", nil)
+
+	status, resp := deleteNamespace(t, m, fs, "ns")
+	require.Equal(t, http.StatusOK, status, "%+v", resp)
+	assert.NotNil(t, fs.Get(GetTableBucketPath(renameTestBucket), "ns"), "the namespace directory must stay to hold the file")
+	assertFilesKept(t, fs, []string{path.Join(kept, "data", "f.parquet")})
 }
 
 // Creating a dropped namespace again takes back the directory its retained
