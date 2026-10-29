@@ -189,14 +189,15 @@ func (env *environment) maintainIcebergTable(t *testing.T, bucket, tablePath str
 }
 
 // duckdb runs a script against the catalog and returns whatever tally it
-// printed. The prelude is the reporter's own ATTACH, SigV4 and all.
+// printed. The prelude is the reporter's own ATTACH, SigV4 and all, plus
+// PURGE_REQUESTED so the drop phase deletes the table's files.
 func (env *environment) duckdb(t *testing.T, bucket, phase, body string) tally {
 	t.Helper()
 
 	script := fmt.Sprintf(`INSTALL iceberg;
 LOAD iceberg;
 CREATE SECRET s3_secret (TYPE S3, KEY_ID '%s', SECRET '%s', ENDPOINT 'host.docker.internal:%d', URL_STYLE 'path', USE_SSL false);
-ATTACH 's3://%s' AS cat (TYPE ICEBERG, ENDPOINT '%s', AUTHORIZATION_TYPE SigV4, SECRET 's3_secret', SIGV4_SERVICE 's3', SIGV4_REGION 'us-east-1', ACCESS_DELEGATION_MODE 'none', READ_ONLY false);
+ATTACH 's3://%s' AS cat (TYPE ICEBERG, ENDPOINT '%s', AUTHORIZATION_TYPE SigV4, SECRET 's3_secret', SIGV4_SERVICE 's3', SIGV4_REGION 'us-east-1', ACCESS_DELEGATION_MODE 'none', READ_ONLY false, PURGE_REQUESTED true);
 %s
 `, accessKey, secretKey, env.s3Port, bucket, env.containerURL(env.icebergPort), body)
 

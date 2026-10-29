@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	pathpkg "path"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -331,6 +333,93 @@ func (h *S3TablesHandler) getExtendedAttribute(ctx context.Context, client filer
 	}
 
 	return data, nil
+}
+
+// missingCatalogRecord is the error for a namespace or table path whose
+// directory exists without a catalog record. Such a directory is not a
+// namespace or table: a rename, or a drop that kept the files, leaves one
+// behind. The error matches filer_pb.ErrNotFound as well as
+// ErrAttributeNotFound, so a handler that maps a missing entry to
+// NoSuchNamespace or NoSuchTable answers the same for it instead of failing
+// with an internal error.
+func missingCatalogRecord() error {
+	return fmt.Errorf("%w: %w: %s", filer_pb.ErrNotFound, ErrAttributeNotFound, ExtendedKeyMetadata)
+}
+
+// readCatalogRecord returns the metadata attribute that makes path a namespace
+// or table, or missingCatalogRecord when the directory carries none.
+func (h *S3TablesHandler) readCatalogRecord(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) ([]byte, error) {
+	data, err := h.getExtendedAttribute(ctx, client, path, ExtendedKeyMetadata)
+	if errors.Is(err, ErrAttributeNotFound) {
+		return nil, missingCatalogRecord()
+	}
+	return data, err
+}
+
+// childListPageSize is how many entries forEachChild asks the filer for at a
+// time.
+const childListPageSize = 1024
+
+// forEachChild calls fn for every entry directly under dir, paging through
+// the listing so a large directory is read whole rather than cut at the first
+// page. fn returns false to stop early.
+func (h *S3TablesHandler) forEachChild(ctx context.Context, client filer_pb.SeaweedFilerClient, dir string, fn func(entry *filer_pb.Entry) (bool, error)) error {
+	lastName := ""
+	for {
+		stream, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
+			Directory:         dir,
+			StartFromFileName: lastName,
+			Limit:             childListPageSize,
+		})
+		if err != nil {
+			return err
+		}
+		received := 0
+		for {
+			resp, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			if resp.Entry == nil {
+				continue
+			}
+			received++
+			lastName = resp.Entry.Name
+			more, err := fn(resp.Entry)
+			if err != nil || !more {
+				return err
+			}
+		}
+		if received < childListPageSize {
+			return nil
+		}
+	}
+}
+
+// holdsFiles reports whether any file lives under dir, at any depth. The walk
+// descends only into directories and stops at the first file, so a directory
+// left with data in it answers after a few lookups however large it is.
+func (h *S3TablesHandler) holdsFiles(ctx context.Context, client filer_pb.SeaweedFilerClient, dir string) (bool, error) {
+	found := false
+	err := h.forEachChild(ctx, client, dir, func(entry *filer_pb.Entry) (bool, error) {
+		if !entry.IsDirectory {
+			found = true
+			return false, nil
+		}
+		held, err := h.holdsFiles(ctx, client, pathpkg.Join(dir, entry.Name))
+		if err != nil {
+			return false, err
+		}
+		found = held
+		return !found, nil
+	})
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return false, nil
+	}
+	return found, err
 }
 
 // loadNamespaceMetadata resolves a namespace to its metadata. A directory that

@@ -3,6 +3,7 @@ package catalog_spark
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -67,6 +68,59 @@ print("dropped with purge")
 	}
 	if keys := listSparkBucketKeysUnder(t, env, tableBucket, prefix); len(keys) != 0 {
 		t.Fatalf("DROP TABLE ... PURGE left files under %s: %v", prefix, keys)
+	}
+}
+
+// TestSparkDropNamespaceKeepsRetainedFiles drops a table without PURGE and then
+// its namespace. The namespace leaves the catalog, but the table's files stay
+// for a later register_table, and creating the namespace and the table again
+// leaves them alone.
+func TestSparkDropNamespaceKeepsRetainedFiles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	env, _, tableBucket := setupSparkTestEnv(t)
+
+	namespace := "drop_ns_" + randomString(6)
+	table := "t_" + randomString(6)
+	ident := fmt.Sprintf("iceberg.%s.%s", namespace, table)
+
+	output := runSparkPySQL(t, env.sparkContainer, fmt.Sprintf(`
+spark.sql("CREATE NAMESPACE iceberg.%[1]s")
+spark.sql("CREATE TABLE %[2]s (id INT, name STRING) USING iceberg")
+spark.sql("INSERT INTO %[2]s VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma')")
+spark.sql("DROP TABLE %[2]s")
+spark.sql("DROP NAMESPACE iceberg.%[1]s")
+print("dropped table and namespace")
+`, namespace, ident), env.icebergRestPort, env.s3Port)
+	if !strings.Contains(output, "dropped table and namespace") {
+		t.Fatalf("create/insert/drop failed, output:\n%s", output)
+	}
+
+	prefix := namespace + "/" + table + "/"
+	retained := listSparkBucketKeysUnder(t, env, tableBucket, prefix)
+	for _, suffix := range []string{".metadata.json", ".parquet"} {
+		if !hasKeyWithSuffix(retained, suffix) {
+			t.Fatalf("DROP NAMESPACE deleted the %s files the table drop kept under %s; keys left: %v", suffix, prefix, retained)
+		}
+	}
+
+	output = runSparkPySQL(t, env.sparkContainer, fmt.Sprintf(`
+spark.sql("CREATE NAMESPACE iceberg.%[1]s")
+spark.sql("CREATE TABLE %[2]s (id INT, name STRING) USING iceberg")
+spark.sql("INSERT INTO %[2]s VALUES (4, 'delta')")
+count = spark.sql("SELECT COUNT(*) AS c FROM %[2]s").collect()[0]['c']
+print(f"recreated row count: {count}")
+`, namespace, ident), env.icebergRestPort, env.s3Port)
+	if !strings.Contains(output, "recreated row count: 1") {
+		t.Fatalf("creating the namespace and table again failed, output:\n%s", output)
+	}
+	keys := listSparkBucketKeysUnder(t, env, tableBucket, prefix)
+	for _, key := range retained {
+		if !slices.Contains(keys, key) {
+			t.Errorf("creating the namespace and table again removed the kept file %s; keys left: %v", key, keys)
+		}
 	}
 }
 

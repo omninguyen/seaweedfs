@@ -1217,14 +1217,15 @@ func (h *S3TablesHandler) readTableMetadata(ctx context.Context, client filer_pb
 
 // tableMetadata extracts the table-metadata xattr from an entry. A view stored
 // at the same name is reported absent, the way GetTable and the renamer's
-// entry-type check already treat kind mismatches.
+// entry-type check already treat kind mismatches, and so is a directory with
+// no record at all (see missingCatalogRecord).
 func tableMetadata(entry *filer_pb.Entry) ([]byte, error) {
 	if EntryType(entry.Extended) == EntryTypeView {
 		return nil, filer_pb.ErrNotFound
 	}
 	data, ok := entry.Extended[ExtendedKeyMetadata]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrAttributeNotFound, ExtendedKeyMetadata)
+		return nil, missingCatalogRecord()
 	}
 	return data, nil
 }

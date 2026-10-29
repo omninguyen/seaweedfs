@@ -1,11 +1,13 @@
 package s3tables
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -172,7 +174,7 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 
 	// Check if namespace already exists
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
+		_, err := h.readCatalogRecord(r.Context(), client, namespacePath)
 		return err
 	})
 
@@ -202,9 +204,13 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 
 	var taken error
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		err := h.createDirectoryExclusive(r.Context(), client, namespacePath, map[string][]byte{ExtendedKeyMetadata: metadataBytes})
+		attrs := map[string][]byte{ExtendedKeyMetadata: metadataBytes}
+		err := h.createDirectoryExclusive(r.Context(), client, namespacePath, attrs)
 		if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
-			taken = err // an answer, not a filer failure
+			err = h.adoptNamespaceDirectory(r.Context(), client, namespacePath, attrs)
+		}
+		if errors.Is(err, ErrNameTaken) {
+			taken = filer_pb.ErrEntryAlreadyExists // an answer, not a filer failure
 			return nil
 		}
 		return err
@@ -229,6 +235,23 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 
 	h.writeJSON(w, http.StatusOK, resp)
 	return nil
+}
+
+// adoptNamespaceDirectory claims a directory already at a namespace's path.
+// DeleteNamespace leaves the directory without a catalog record when tables
+// dropped without purge still keep files in it; creating the namespace again
+// takes the directory back, and the tables' files stay unregistered. The claim
+// is compare-checked: a directory that still carries a catalog record, or a
+// file at that path, is a name conflict reported as ErrNameTaken.
+func (h *S3TablesHandler) adoptNamespaceDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, namespacePath string, attrs map[string][]byte) error {
+	entry, err := h.lookupEntry(ctx, client, namespacePath)
+	if err != nil {
+		return err
+	}
+	if !entry.IsDirectory {
+		return fmt.Errorf("%w: %s is not a directory", ErrNameTaken, namespacePath)
+	}
+	return h.claimCatalogEntry(ctx, client, namespacePath, attrs)
 }
 
 // handleGetNamespace gets details of a namespace
@@ -264,7 +287,7 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 	var bucketPolicy string
 	var bucketTags map[string]string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
+		data, err := h.readCatalogRecord(r.Context(), client, namespacePath)
 		if err != nil {
 			return err
 		}
@@ -357,7 +380,7 @@ func (h *S3TablesHandler) handleUpdateNamespace(w http.ResponseWriter, r *http.R
 	var bucketPolicy string
 	var bucketTags map[string]string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
+		data, err := h.readCatalogRecord(r.Context(), client, namespacePath)
 		if err != nil {
 			return err
 		}
@@ -646,7 +669,7 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 	var bucketPolicy string
 	var bucketTags map[string]string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
+		data, err := h.readCatalogRecord(r.Context(), client, namespacePath)
 		if err != nil {
 			return err
 		}
@@ -695,37 +718,11 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 	}
 
 	// Check if namespace is empty
-	hasChildren := false
+	var contents namespaceContents
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.ListEntries(r.Context(), &filer_pb.ListEntriesRequest{
-			Directory: namespacePath,
-			Limit:     10,
-		})
-		if err != nil {
-			return err
-		}
-
-		for {
-			entry, err := resp.Recv()
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				return err
-			}
-			if entry.Entry != nil && !strings.HasPrefix(entry.Entry.Name, ".") {
-				// Only consider it a child if it's a table (has metadata) or a file.
-				// Empty directories left by dropped tables or S3 clients should not
-				// prevent the namespace from being deleted.
-				_, hasMetadata := entry.Entry.Extended[ExtendedKeyMetadata]
-				if hasMetadata || !entry.Entry.IsDirectory {
-					hasChildren = true
-					break
-				}
-			}
-		}
-
-		return nil
+		var scanErr error
+		contents, scanErr = h.scanNamespace(r.Context(), client, namespacePath)
+		return scanErr
 	})
 
 	if err != nil {
@@ -737,13 +734,18 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 		return err
 	}
 
-	if hasChildren {
+	if contents.hasChildren {
 		h.writeError(w, http.StatusConflict, ErrCodeNamespaceNotEmpty, "namespace is not empty")
 		return fmt.Errorf("namespace not empty")
 	}
 
-	// Delete the namespace
+	// Delete the namespace. Files kept by a table drop that did not purge
+	// outlive it: only the namespace's catalog record goes, and the directory
+	// stays to hold them until the namespace is created again.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		if contents.retainsFiles {
+			return h.removeExtendedAttributes(r.Context(), client, namespacePath, s3tablesExtendedKeys...)
+		}
 		return h.deleteDirectory(r.Context(), client, namespacePath)
 	})
 
@@ -754,4 +756,42 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 
 	h.writeJSON(w, http.StatusOK, nil)
 	return nil
+}
+
+// namespaceContents is what DeleteNamespace finds under a namespace.
+type namespaceContents struct {
+	// hasChildren is set when a table, a view, or a file sits directly in the
+	// namespace; any of them blocks the delete.
+	hasChildren bool
+	// retainsFiles is set when a directory without a catalog record still
+	// holds files: a table dropped without purge left them for a later
+	// register_table, so they must survive the namespace.
+	retainsFiles bool
+}
+
+// scanNamespace reads every entry under a namespace, paging past the first
+// listing page so a table cannot hide behind leftover directories. Tables,
+// views and files are children that block the delete. A directory without a
+// catalog record is what a rename or a dropped table leaves behind: an empty
+// one goes with the namespace, one that still holds files is retained.
+func (h *S3TablesHandler) scanNamespace(ctx context.Context, client filer_pb.SeaweedFilerClient, namespacePath string) (namespaceContents, error) {
+	var contents namespaceContents
+	err := h.forEachChild(ctx, client, namespacePath, func(entry *filer_pb.Entry) (bool, error) {
+		if strings.HasPrefix(entry.Name, ".") {
+			return true, nil
+		}
+		if _, hasMetadata := entry.Extended[ExtendedKeyMetadata]; hasMetadata || !entry.IsDirectory {
+			contents.hasChildren = true
+			return false, nil
+		}
+		if !contents.retainsFiles {
+			held, err := h.holdsFiles(ctx, client, path.Join(namespacePath, entry.Name))
+			if err != nil {
+				return false, err
+			}
+			contents.retainsFiles = held
+		}
+		return true, nil
+	})
+	return contents, err
 }

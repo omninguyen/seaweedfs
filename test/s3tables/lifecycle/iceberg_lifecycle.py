@@ -151,7 +151,7 @@ def main():
         print(json.dumps(tally(catalog.load_table(identifier))))
         return
 
-    catalog.drop_table(identifier)
+    catalog.purge_table(identifier)
     try:
         catalog.load_table(identifier)
     except NoSuchTableError:
