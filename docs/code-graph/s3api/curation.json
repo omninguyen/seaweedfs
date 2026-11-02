@@ -19,6 +19,11 @@
  },
  "weed/s3api/auth_credentials_policy_document.go": {
   "character": "Stateless config-file pre-processor (pure JSON rewrite)",
+  "gotchas": [
+   "A policy that already has non-blank 'content' keeps it and its 'document' is ignored; a blank 'content' counts as absent, so the document wins.",
+   "When anything is rewritten the whole file is re-encoded from a map, so key order changes; the proto parser does not care, but a diff of the normalized bytes against the file will.",
+   "A file that is not a JSON object, or whose 'policies' is not an array of objects, is passed through unchanged for the proto parser to reject."
+  ],
   "if_broken": "Identities relying on policies from an advanced IAM file get AccessDenied, because their policies parse as empty.",
   "ux": "Operators can use one IAM config file in either policy form; policies attached by name keep working.",
   "what": "normalizeAdvancedIAMPolicies rewrites policies written in the advanced-IAM form {\"name\", \"document\": {...}} into the S3-config form {\"name\", \"content\": \"<json string>\"} before the protobuf parser sees the file. A document that is already a JSON string is used verbatim; an object is re-encoded as a string; anything it cannot rewrite is left untouched.",
@@ -40,10 +45,14 @@
  },
  "weed/s3api/auth_credentials_trust.go": {
   "character": "One IdentityAccessManagement method: a thin delegate to the advanced IAM integration",
+  "gotchas": [
+   "Without advanced IAM every trust check fails, so AssumeRole cannot succeed in a legacy-identities-only deployment.",
+   "s3_iam_middleware.go declares the same method on its integration interface and implements it by calling the IAM manager; this file is the IdentityAccessManagement-side delegate that s3api_sts.go calls."
+  ],
   "if_broken": "Role assumption either always fails or ignores trust policies (privilege escalation).",
   "ux": "AccessDenied from AssumeRole when the role's trust policy does not name the caller.",
   "what": "ValidateTrustPolicyForPrincipal(roleArn, principalArn) asks the IAM integration whether the role's trust policy lets that principal assume it, and fails with 'IAM integration not available' when there is none.",
-  "when": "STS AssumeRole handling (s3api_sts.go) and the IAM middleware (s3_iam_middleware.go).",
+  "when": "STS AssumeRole (the caller's principal ARN) and AssumeRoleWithLDAPIdentity (the LDAP user's principal ARN) in s3api_sts.go, before any credentials are minted.",
   "why": "Consequence: AssumeRole must check the target role's trust policy; without it any authenticated user could assume any role. Design: the trust evaluation lives in the advanced IAM manager (weed/iam), so the legacy identity store only forwards; failing closed when no integration exists means STS cannot grant roles without the engine that defines them."
  },
  "weed/s3api/auth_signature_v2.go": {
@@ -1201,6 +1210,8 @@
    "recheckPolicyForKeyWithLookup is deny-biased: any lookup miss or error keeps the original Deny, and an explicit Deny in the caller's own policies still vetoes a bucket-policy Allow."
   ],
   "if_broken": "The gateway does not start, or routes land on the wrong handler (for example a tagging PUT treated as a PutObject that overwrites the object). If the lock-ring subscription were lost, route-by-key writes would silently fall back to the distributed lock path.",
+  "issue": "bug",
+  "issue_note": "ValidateS3Credential compares the client-supplied secret with cred.SecretKey using != (s3api_server.go:1536), which returns at the first differing byte. It is the credential check behind the Iceberg and Lance OAuth client_credentials token endpoints (iceberg/handlers_oauth.go, lance/handlers_oauth.go), where the raw secret arrives in the request, so response timing leaks how much of a guessed secret is correct. Both signature paths in this package use subtle.ConstantTimeCompare (auth_signature_v4.go, auth_signature_v2.go). The OAuth handlers already answer every failure with the same generic message, so the timing is the only leak. Low severity, since network jitter makes the attack slow; the fix is a one-line constant-time compare. Found by reading; not reproduced.",
   "ux": "Defines which URL shapes work (path-style vs virtual-host via -domainName, health probes at /status, /healthz, /readyz), which operations exist, and the defaults: no IAM config means 'no credentials = allow all' so `docker run seaweedfs` works out of the box (#9557), while an explicit IAM config file defaults to Deny.",
   "what": "NewS3ApiServerWithStore wires the whole gateway: legacy IAM (IdentityAccessManagement), bucket policy engine, FilerClient (with master-based filer discovery when -master is given), the object-write lock ring (LockClient fed by master LockRingUpdates), the SSE-S3 key manager, a shared ReaderCache for GET streaming (256 downloader slots, optional in-memory chunk cache), circuit breaker, bucket config cache (60 min TTL), optional advanced IAM + STS + embedded IAM API, trusted proxies, SIGHUP reload hooks, and the background loops (metadata subscription, bucket size metrics, owner-index backfill, versioning reconciler). registerRouter declares every S3 route on gorilla/mux: path-style and virtual-host routers per -domainName plus a host-less catch-all, each wrapped as track(iam.Auth(cb.Limit(handler, ACTION))). It also holds checkPolicyWithEntry / recheck*Policy*, which re-run bucket-policy evaluation once a handler has the object's entry (for s3:ExistingObjectTag conditions), and small adapters other servers use (AuthenticateRequest, ValidateS3Credential, GetCredentialByAccessKey).",
   "when": "Constructed once at process start by weed/command (s3, filer -s3, mini); registerRouter runs inside the constructor. The recheck helpers run inside object handlers after the entry is fetched. SIGHUP re-reads the -config identities, the JWT filer signing keys and the trusted proxies.",
