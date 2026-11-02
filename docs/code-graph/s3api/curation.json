@@ -105,6 +105,20 @@
   "when": "getBucketEntry/bucketExists run for bucket-scoped requests and config loads; validateTableBucketObjectPath(OrVerify) runs inside object read/write handlers for every key of a table bucket; volumeVerifyPutAllowed gates the PUT handler only when the key matched the verify shape.",
   "why": "Consequence: every handler builds filer paths through bucketDir/bucketPrefix, so this decides where every object is read and written; getBucketEntry refuses dot-prefixed names so internal trees under /buckets (.system) can never be addressed as a bucket. Design: isTableBucket asks the in-memory bucketRegistry first and only falls back to a filer lookup when there is no registry. AWS/ecosystem compatibility: Snowflake's SYSTEM$VERIFY_EXTERNAL_VOLUME writes, reads, lists and deletes a 21-byte verify_… object at the volume root before using it; without the exception a table bucket cannot be a Snowflake external volume. The exception is fenced so it cannot store data: bucket root only, one regex shape, never a directory, PUT dated within ±1h of the server clock, Content-Length ≤ 1024 with no chunked/undeclared body, no user metadata, tagging, stored content headers or zip extraction."
  },
+ "weed/s3api/bucket_size_metrics.go": {
+  "character": "The leader-elected background loop that publishes bucket size metrics and enforces bucket quotas by flipping buckets read-only",
+  "gotchas": [
+   "Enforcement lags by up to a minute plus vacuum, so a bucket can overshoot its quota by a minute of writes.",
+   "Every gateway uses the same lock owner string (<filer>-s3-metrics), so log lines about the owner cannot tell gateways apart; the renew token still keeps only one holder.",
+   "Without -master the loop silently does nothing, so quotas are never enforced.",
+   "The lock goes through Filers[0] only; if that filer is down no gateway collects metrics or enforces quotas."
+  ],
+  "if_broken": "Quotas stop being enforced (or never lift), and size dashboards go stale.",
+  "ux": "Prometheus shows per-bucket size; a bucket at quota starts refusing writes shortly after crossing it and accepts them again after deletes and vacuum.",
+  "what": "startBucketSizeMetricsLoop waits 10s, then holds a long-lived distributed lock 's3.leader' through the first filer. Every minute, while it holds the lock, it asks a master for CollectionStatistics, lists the buckets, sets each bucket's logical size, physical size and object-count gauges, and calls enforceBucketQuotas. That function reads filer.conf, flips each bucket's read-only flag to match LogicalSize() against its quota (ApplyBucketQuotaReadOnly) and saves filer.conf only when a flag changed.",
+  "when": "Started from the server constructor as a goroutine; runs every minute for the life of the process, only on the gateway holding the lock.",
+  "why": "Consequence: quotas are enforced here, not on the write path: a bucket over quota becomes read-only within about a minute, and a bucket under quota is writable again. Design: the master summarises collection statistics so the gateway does not pull every volume each minute. The leader lock keeps several gateways from rewriting filer.conf at once. LogicalSize subtracts un-vacuumed deleted bytes so vacuum lag never counts against a bucket, matching the Admin UI."
+ },
  "weed/s3api/chunked_reader_v4.go": {
   "character": "s3ChunkedReader: a per-request io.ReadCloser state machine that decodes aws-chunked upload bodies (derived from MinIO), plus the ChecksumAlgorithm enum and hash constructors used across the write path",
   "gotchas": [
@@ -120,6 +134,21 @@
   "when": "getRequestDataReader (s3api_put_object_helper.go) for PUT / UploadPart bodies whose x-amz-content-sha256 is a STREAMING-* value.",
   "why": "Consequence: SDKs upload large or streaming bodies (aws-cli, boto3, Java SDK v2 with checksums) in aws-chunked framing; without this decoder the stored object would contain the framing bytes. Design: chained chunk signatures are what authenticate the BODY of a streaming SigV4 upload, since the header signature covers only the literal STREAMING-... payload marker; trailer checksums give end-to-end integrity for unsigned streaming. AWS compatibility: the signed, signed-trailer and unsigned-trailer streaming variants and the five flexible checksum algorithms."
  },
+ "weed/s3api/cors/": {
+  "character": "The CORS engine as a package of its own: the bucket CORSConfiguration types, their validation, rule matching, and the middleware that answers preflights and decorates responses",
+  "gotchas": [
+   "The response always echoes the request Origin and sets Access-Control-Allow-Credentials: true, even for a '*' rule (AWS answers '*' without credentials).",
+   "A preflight whose method or headers are not allowed still gets 200 with Allow-Origin but no Allow-Methods; the browser blocks it, but it is not the 403 AWS sends.",
+   "Non-preflight requests are served even when no rule matches; only the CORS headers are withheld, and the browser hides the response."
+  ],
+  "if_broken": "Browser uploads and downloads fail with CORS errors, or responses become readable from origins the bucket owner never allowed.",
+  "issue": "bug",
+  "issue_note": "EvaluateRequest stops at the first rule whose AllowedOrigins match, and for a preflight it builds the response from that rule even when its AllowedMethods (or AllowedHeaders) do not cover the request. AWS picks the first rule that matches origin AND method AND headers. A common configuration therefore fails: rule 1 {origins:[*], methods:[GET]}, rule 2 {origins:[https://app.example.com], methods:[PUT,POST]}. Probe (cors package test): a PUT preflight from https://app.example.com → allowOrigin set, allowMethods \"\" (browser blocks the upload); the actual PUT request evaluated without a preflight → allowMethods \"PUT, POST\". Only the actual-request path checks the method before accepting a rule.",
+  "ux": "Browsers get Access-Control-Allow-Origin/Methods/Headers/Expose-Headers/Max-Age as configured; a disallowed preflight fails in the browser console.",
+  "what": "cors.go defines CORSRule / CORSConfiguration (XML and JSON), ValidateConfiguration (1–100 rules; methods limited to GET/PUT/POST/DELETE/HEAD; at most one origin wildcard, only after http:// or https://), ParseRequest, EvaluateRequest (first rule whose origin matches; for actual requests the method must match too), the preflight and actual response builders, and ApplyHeaders. middleware.go wraps every request. It reads the bucket's CORS configuration through an interface, falls back to a global configuration when the bucket has none or does not exist, adds 'Vary: Origin', answers OPTIONS preflights itself (403 when nothing matches), and lets non-preflight requests through even when no rule matches.",
+  "when": "Every S3 request through the router-level middleware and every OPTIONS preflight; ValidateConfiguration on PutBucketCors.",
+  "why": "Consequence: browsers block every cross-origin upload or download that does not get the right Access-Control-* headers, so web apps that talk to S3 directly depend on this. Design: the engine sits behind small interfaces (BucketChecker, CORSConfigGetter) so it does not import the gateway, and a missing bucket falls back to the global configuration instead of a 403, so a preflight cannot reveal whether a bucket exists. AWS compatibility: rule shape, validation limits and wildcard rules follow PutBucketCors. Expose '*' is expanded to the standard S3 headers because browsers treat '*' literally on credentialed requests."
+ },
  "weed/s3api/credential_iam_errors.go": {
   "character": "Single stateless exported mapping function shared with weed/iamapi",
   "gotchas": [
@@ -130,6 +159,17 @@
   "what": "CredentialErrToIamErrCode maps credential-store errors to IAM error codes: ErrUserAlreadyExists → EntityAlreadyExists, ErrUserNotFound / ErrAccessKeyNotFound → NoSuchEntity, anything else → ServiceFailure.",
   "when": "Embedded IAM API handlers (s3api_embedded_iam.go) and weed/iamapi management handlers, whenever a credential-manager call fails.",
   "why": "Consequence: IAM clients (aws iam ..., Terraform) branch on these codes; without the mapping every store error would look like a 500, or worse, a store failure could be reported as a 200. Design: one function shared by the standalone IAM server (weed/iamapi) and the embedded IAM API, so the two report identical error granularity. AWS compatibility: the codes are the AWS IAM exception names."
+ },
+ "weed/s3api/custom_types.go": {
+  "character": "A single result struct for the conditional-header checks (If-Match, If-None-Match, If-Modified-Since, If-Unmodified-Since)",
+  "gotchas": [
+   "Entry is nil both when the object does not exist and when the check did not need to fetch it; callers must not read nil as 'absent'."
+  ],
+  "if_broken": "Conditional requests answer from a stale or missing entry: wrong 304/412 decisions, or delete-marker 404s without their headers.",
+  "ux": "Invisible: it decides whether a client gets 200, 304 or 412.",
+  "what": "Defines ConditionalHeaderResult: the S3 error code the check decided, the object's ETag (for a 304), the entry it fetched while checking (so the handler does not look it up again) and, when the resolved key is a delete marker, that marker's entry so a missing-key answer can still carry its headers.",
+  "when": "Returned by the conditional-header evaluators the object read and write handlers call before streaming or writing.",
+  "why": "Consequence: GET, HEAD, PUT and CopyObject all evaluate conditions before acting. Returning the fetched entry saves a second filer lookup, and that lookup could see a different version than the one the condition was checked against. AWS compatibility: a 404 on a delete marker must still return x-amz-delete-marker and the version ID, which is why the marker is carried through."
  },
  "weed/s3api/filer_multipart.go": {
   "character": "S3ApiServer methods implementing multipart upload storage on the filer: create, complete, abort, list uploads and parts, plus the ETag/checksum math",
@@ -161,6 +201,19 @@
   "what": "Wraps filer_pb calls into the small set of operations handlers use: mkdir, mkdirExclusive (never replaces an existing entry), mkFile (retries as a 'prefix object' on the directory when other keys are nested under the name), list with bounded retries, rm/rmObject with idempotent-delete retries, exists, getEntry, updateEntry, getCollectionName (FilerGroup_bucket) and objectKey. rmObject turns a non-empty explicit directory marker into a plain implicit directory instead of failing.",
   "when": "Called by nearly every handler and background loop for raw filer access; list() backs bucket and object listings, rm/rmObject back DeleteObject(s) and DeleteBucket, mkdirExclusive backs PutBucket.",
   "why": "Design: listings retry up to 3 times (100ms then 200ms backoff) only on transient gRPC statuses, never on not-found, because a listing has no side effects and collects into a fresh slice per attempt. Deletes retry because the filer answers 'already gone' with an empty error, so a dropped reply can be re-sent safely; otherwise a lost reply would become a 500 on DeleteBucket or a per-key InternalError inside a DeleteObjects 200, which no SDK retries. mkdirExclusive exists so PutBucket cannot replace a table bucket created in its check-to-create window. AWS compatibility: S3 allows both 'a' and 'a/b' as keys; the filer cannot have a file and a directory with one name, so mkFile marks the directory itself as the object (MarkPrefixObject), and deleting such a directory key strips its object metadata (demoteDirectoryMarkerToImplicitDirectory) while keeping xattr-* and internal keys."
+ },
+ "weed/s3api/lifecycle_xml/": {
+  "character": "The BucketLifecycleConfiguration XML wire form as a dependency-light package, plus the converter to and from the engine's flat s3lifecycle.Rule",
+  "gotchas": [
+   "The canonical form has no transitions: LifecycleToCanonical drops Transition and NoncurrentVersionTransition, and MarshalCanonical cannot write them back.",
+   "Rule holds one Transition, not a list; a rule with several <Transition> elements keeps only the last.",
+   "flattenFilter gives a direct <Tag> priority over a sibling <Prefix> in the same Filter (AWS would reject that document), and Prefix.UnmarshalXML ignores its decode error."
+  ],
+  "if_broken": "Objects expire under the wrong prefix or tag filter, or never expire, and configurations do not round-trip.",
+  "ux": "Lifecycle documents written with aws-cli or Terraform are understood the same way everywhere; documents written by tooling come back with the namespace clients expect.",
+  "what": "types.go defines Lifecycle / Rule / Filter / And / Expiration / Transition / NoncurrentVersion* / AbortIncompleteMultipartUpload. Each has custom (Un)MarshalXML that records whether the element was present, so an absent element and an empty one differ, and Filter accepts Prefix | Tag | And plus size bounds. canonical.go has Parse / ParseCanonical, LifecycleToCanonical (Filter first, the legacy top-level Prefix as fallback), CanonicalToLifecycle / MarshalCanonical (choosing the narrowest Filter shape, sorted And tags, stamping the S3 namespace) and flattenFilter.",
+  "when": "PutBucketLifecycleConfiguration validation, the fast-path TTL resolver and warning, the lifecycle worker and scheduler, and shell commands that read or write lifecycle rules.",
+  "why": "Consequence: the gateway stores the client's lifecycle XML and the lifecycle worker, the TTL fast path and weed shell all interpret it, so two parsers that disagree would expire different objects than the user configured. Design: kept outside weed/s3api so the shell and the worker can parse the same shape without importing the gateway (weed/s3api pulls in weed/server, which imports weed/shell). The set flags let a round trip reproduce what the client sent. AWS compatibility: element names, the Filter/And rules and the legacy Prefix form follow the S3 API."
  },
  "weed/s3api/object_lock_utils.go": {
   "character": "Stateless helpers: the on-entry storage format of bucket versioning and object-lock configuration, and validation of retention / legal-hold / lock-configuration documents",
@@ -203,6 +256,18 @@
   "when": "BucketPolicyEngine (s3api_bucket_policy_engine.go) on bucket-policy evaluation; IdentityAccessManagement.iamPolicyEngine for attached/group policies; validation on PutBucketPolicy.",
   "why": "Consequence: every bucket policy and every attached IAM policy decision in the gateway comes from this engine; an error is either a data exposure or a lockout. Design: policies are compiled once on load and evaluated per request without re-parsing; deny-overrides-allow and Indeterminate let callers layer resource and identity policies AWS-style; forwarded headers are trusted only from configured proxies so aws:SourceIp cannot be spoofed by clients. AWS compatibility: policy grammar, operators, condition keys and variables follow AWS IAM so policies can be copied from AWS."
  },
+ "weed/s3api/request_body.go": {
+  "character": "A bounded body reader shared by the handlers that must read a whole request body into memory",
+  "gotchas": [
+   "The body has been consumed afterwards; callers that pass the request on (UnifiedPostHandler) must put the bytes back in r.Body themselves.",
+   "s3tables has its own readRequestBody method with a fixed 10 MB cap; it is not this function."
+  ],
+  "if_broken": "Unbounded allocation on attacker-sized bodies, or valid bodies at exactly the limit rejected.",
+  "ux": "Oversized configuration bodies are refused instead of slowing or crashing the gateway.",
+  "what": "readRequestBody reads at most limit+1 bytes through an io.LimitReader and returns errRequestBodyTooLarge when the body is longer than limit; a nil body yields nil.",
+  "when": "UnifiedPostHandler (10 MiB IAM limit), SigV4 body hashing for IAM/STS requests, PutBucketLifecycleConfiguration, PutBucketQuota and PutBucketRequestPayment.",
+  "why": "Consequence: XML and form bodies (lifecycle configuration, quota, request payment, the IAM/STS POST body, the SigV4 payload hash for non-S3 services) are read fully before parsing, so without a cap one request could exhaust the gateway's memory. Design: reading one byte past the limit tells 'exactly at the limit' apart from 'too large' without trusting Content-Length."
+ },
  "weed/s3api/s3_action_resolver.go": {
   "character": "Stateless resolver from (HTTP method, query subresources, bucket/object shape, legacy action) to the fine-grained AWS s3: action string",
   "gotchas": [
@@ -242,6 +307,17 @@
   "what": "The shared vocabulary of the gateway: AWS header names (x-amz-*, SSE, checksum, object lock, conditional, copy-source, rename), the filer Extended-attribute keys SeaweedFS stores S3 state under (Seaweed-X-Amz-Versioning, -Version-Id, -Latest-Version-*, object-lock keys, x-seaweedfs-* internal keys), legacy action names (Read/Write/List/Admin/…) and s3:/s3tables: policy action strings, canned ACL grants, grantee groups, ownership modes, crypto sizes and SSE identifiers, folder names (.uploads, .versions, .system), DefaultBucketsPath and ObjectWriteRouteKeyPrefix. Helpers: GetBucketAndObject (mux vars + NormalizeObjectKey), IsValidObjectKey/IsValidBucketName/IsValidPathSegment (path-traversal guards), GetPrefix, EffectiveOwnership, and the request-context identity API (identity name, principal ARN, OIDC claim, access key id, stored credential, ignored session token) backed by a mutable identityHolder shared across request copies.",
   "when": "Read on every request (GetBucketAndObject from routing and auth; context helpers from auth, handlers and the audit log). SetAllowBackslashInObjectKey runs once at the end of server construction.",
   "why": "Consequence: these strings are an on-disk format. Changing an Ext* key orphans every bucket and object already written (versioning, lock and SSE state become invisible); changing a header name breaks client compatibility. Design: identity travels in context values, never headers, because headers can be spoofed; the identityHolder pointer exists because auth runs as an inner handler whose r.WithContext copy is invisible to outer middleware such as the audit logger. StoredCredentialFingerprint is an HMAC with a server key, because an unkeyed hash of the secret inside a vended token would give the token holder an offline guessing oracle. IsValidObjectKey rejects '.'/'..' segments and NUL after mux URL-decoding, because filepath.Join in the filer would otherwise collapse them and escape the bucket directory. AWS compatibility: PartOffsetMultiplier = 8 GiB per part (larger than the 5 GiB max part) keeps SSE CTR IVs from colliding across parts; absent or invalid ownership behaves as BucketOwnerEnforced."
+ },
+ "weed/s3api/s3_error_utils.go": {
+  "character": "Two small error helpers: a not-found classifier for filer errors and the log-and-return pair used by the multipart engine",
+  "gotchas": [
+   "On an error that is not a gRPC status at all, the function falls back to matching the sentinel's text anywhere in err.Error(), including client-chosen path text a caller wrapped in."
+  ],
+  "if_broken": "Transient filer failures surface as 404s, or real misses as 500s.",
+  "ux": "Correct NoSuchKey / NoSuchBucket versus InternalError answers.",
+  "what": "isFilerNotFound reports whether a filer error means 'not found': the filer_pb.ErrNotFound sentinel, a gRPC NotFound status, or an Unknown status whose message contains the sentinel's text (as list and cache errors arrive raw over gRPC). handleMultipartError logs and returns (nil, code); handleMultipartInternalError is the ErrInternalError shorthand.",
+  "when": "isFilerNotFound in filer_util, bucket and object handlers and retention; the multipart helpers throughout filer_multipart.go.",
+  "why": "Consequence: treating a failed read as 'absent' makes the gateway act on missing data (create over existing objects, answer NoSuchKey on a transient error), while the opposite turns every miss into a 500. Design: lookups are already normalized by filer_pb.LookupEntry, but list and cache errors are not, so the text is matched only on miss-shaped statuses and only on what the filer itself said, because callers wrap errors with client-chosen paths."
  },
  "weed/s3api/s3_iam_middleware.go": {
   "character": "S3IAMIntegration: the adapter between the S3 gateway and the advanced IAM manager (weed/iam/integration), implementing the IAMIntegration interface; one instance per server when -s3.iam.config / EnableIam is set",
@@ -376,6 +452,30 @@
   "when": "getBucketConfig runs on nearly every bucket or object request, from auth (policy and ownership checks) to PUT/GET (versioning state). A cold load also synchronously backfills a pre-existing bucket policy into the advanced-IAM mirror (ensureBucketPolicyInIAM) before the IAM path evaluates it. updateBucketConfig runs on PutBucketVersioning, ownership, ACL, object-lock and lifecycle writes; setBucketMetadata on tagging, CORS and encryption writes.",
   "why": "Consequence: almost every request reads bucket config (versioning, ownership, policy, CORS), so without the cache each request would cost a filer lookup; with a wrong mapping a request silently runs under the wrong versioning or lock rules. Design: newBucketConfigFromEntry is the single mapping used by the read path, the write path and the metadata-subscription refresher, so a missed field cannot keep stale data. The author's example: a stale LifecycleTTL would keep stamping an irreversible volume TTL onto new writes. Writes are field-level patches routed to the owner filer so concurrent config writes serialize under one path lock instead of racing whole-entry rewrites, and IF_EXISTS keeps a PATCH on a deleted bucket from being acknowledged as a silent no-op. After a write the cache entry is invalidated, not refreshed, because the locally built config may be stale relative to a concurrent write. Consistency comes mainly from metadata-subscription events (auth_credentials_subscribe.go); the TTL is a safety net, and the negative cache's TTL is ttl/4 with a 30s floor. AWS compatibility: GetBucketVersioning returns exactly what is stored (empty means never configured, so no Status element), and Object Lock forces versioning Enabled whatever the stored flag says."
  },
+ "weed/s3api/s3api_bucket_config_stubs.go": {
+  "character": "Stub handlers for bucket configurations SeaweedFS does not store: analytics, inventory, intelligent-tiering and metrics",
+  "gotchas": [
+   "There are no Put/Delete counterparts; writing these configurations still fails."
+  ],
+  "if_broken": "Bucket discovery in SDKs and IaC tools fails with MethodNotAllowed.",
+  "ux": "Tools that read every bucket setting keep working; nothing can actually be configured.",
+  "what": "After stubBucketGuard confirms the bucket exists (NoSuchBucket first, as AWS orders it), the Get* handlers answer NoSuchConfiguration and the List* handlers answer an empty, non-truncated list document in the S3 namespace.",
+  "when": "GET /<bucket>?analytics, ?inventory, ?intelligent-tiering and ?metrics, with or without an id.",
+  "why": "Consequence: AWS SDKs and tools such as Terraform's aws_s3_bucket probe these subresources during discovery; MethodNotAllowed would make them fail on a bucket that is otherwise fine. Design: an honest 'not configured' instead of a fake configuration. AWS compatibility: a never-configured bucket gets the same answers on AWS."
+ },
+ "weed/s3api/s3api_bucket_cors_handlers.go": {
+  "character": "The Get/Put/DeleteBucketCors handlers plus the adapters that plug the gateway into the cors middleware, including the global fallback built from -allowedOrigins",
+  "gotchas": [
+   "PutBucketCors decodes the body straight from r.Body with no size cap; the 100-rule limit is checked only after the whole document is decoded.",
+   "Invalid rules answer InvalidRequest rather than AWS's MalformedXML / InvalidArgument codes.",
+   "CORS shares the metadata blob with tags and encryption, so it inherits that write path's read-modify-write race (see s3api_bucket_config.go)."
+  ],
+  "if_broken": "CORS rules are not stored or not applied, so browser clients break, or a bucket's rules are silently replaced by the global fallback.",
+  "ux": "aws s3api put-bucket-cors works as on AWS; with -allowedOrigins set, buckets without their own rules still answer CORS.",
+  "what": "S3BucketChecker and S3CORSConfigGetter adapt the server to the cors package interfaces. getCORSMiddleware builds the middleware, and createFallbackCORSConfig turns the -allowedOrigins option into one permissive rule (all five methods, all headers, standard expose headers). GetBucketCors returns the stored configuration or NoSuchCORSConfiguration. PutBucketCors decodes and validates the XML and stores it through updateCORSConfiguration (the bucket-metadata path). DeleteBucketCors removes it and answers 204.",
+  "when": "GET/PUT/DELETE /<bucket>?cors; the fallback is built once when the router is set up.",
+  "why": "Consequence: these settings decide which websites may call the bucket from a browser. Design: the configuration is stored in the bucket's metadata blob with tags and encryption (setBucketMetadata), so it is cached in BucketConfig and refreshed by the metadata subscription. The global fallback lets an operator enable browser access for every bucket without per-bucket configuration. AWS compatibility: same operations and status codes as S3."
+ },
  "weed/s3api/s3api_bucket_handlers.go": {
   "character": "S3ApiServer HTTP handlers for bucket lifecycle and core bucket subresources, plus the AuthWithPublicRead middleware and bucket ownership/admin helpers",
   "gotchas": [
@@ -392,6 +492,65 @@
   "when": "PUT/DELETE/HEAD /bucket and the bucket-level ?acl, ?lifecycle, ?location, ?requestPayment, ?ownershipControls, ?versioning routes; GET / for ListBuckets. AuthWithPublicRead wraps GET/HEAD object, ListObjects and HeadBucket. autoCreateBucket runs from the PutObject and multipart paths.",
   "why": "Consequence: bucket creation and deletion set the ownership and lock invariants every later request relies on; a non-atomic create could leave a bucket without the object lock the client asked for. Design: object lock and versioning are written in the same CreateEntry as the bucket and rolled back if serialization fails; mkdirExclusive keeps a plain bucket from replacing a table bucket created in the check-to-create window; the collection listing is advisory only, because the filer resolves and drops the collection inside the delete. AWS compatibility: BucketAlreadyOwnedByYou is returned only for a repeat create by the same owner with no conflicting ACL or object-lock request; unrouted subresource PUT/DELETE answer NotImplemented instead of being treated as CreateBucket/DeleteBucket; a lifecycle with Transition rules answers NotImplemented; Suspended versioning is refused on object-lock buckets (InvalidBucketState); GetBucketVersioning omits Status when never configured."
  },
+ "weed/s3api/s3api_bucket_handlers_misc.go": {
+  "character": "Small read-only bucket subresources that report 'not used' or a computed answer: policy status, request payment, accelerate, logging, notification, replication, website, plus the guard that stops unknown subresources from turning into a listing",
+  "gotchas": [
+   "isPolicyPublic treats any condition as making a statement non-public, while AWS counts some conditions (such as aws:SourceArn) as still public.",
+   "The listing-parameter allowlist (listObjectsQueryParams) must grow with any new ListObjects parameter, or that request turns into NotImplemented."
+  ],
+  "if_broken": "Consoles and SDK helpers fail on bucket inspection, or unknown subresources return listings.",
+  "ux": "Tools that inspect bucket settings get sensible answers; 'requester pays' cannot be enabled.",
+  "what": "GetBucketPolicyStatus reports IsPublic when some Allow statement has Principal '*' and no conditions. PutBucketRequestPayment accepts only Payer=BucketOwner (body capped at 64 KiB). GetBucketAccelerateConfiguration answers Suspended. GetBucketLogging and GetBucketNotificationConfiguration answer empty documents. GetBucketReplication and GetBucketWebsite answer their not-found errors. unroutedBucketSubresource / unroutedSubresource name the first query key on a bucket GET that is neither a listing parameter nor a presign key, so ListObjects can answer NotImplemented instead of a listing.",
+  "when": "GET /<bucket>?policyStatus, ?accelerate, ?logging, ?notification, ?replication, ?website and PUT ?requestPayment; the unrouted check runs in the ListObjects catch-all.",
+  "why": "Consequence: SDKs and consoles call these during bucket inspection, and an unknown subresource answered with a bucket listing silently tells the client something false (for example that a GET ?replication succeeded). Design: features SeaweedFS does not have report the same state AWS shows for a bucket that never enabled them. AWS compatibility: response element names and error codes match AWS."
+ },
+ "weed/s3api/s3api_bucket_handlers_object_lock_config.go": {
+  "character": "The Put/GetObjectLockConfiguration handlers: a bucket's default retention and Object Lock enabled state",
+  "gotchas": [
+   "Both Get paths set XMLNS on the configuration before marshaling; on the cached path that writes into the BucketConfig shared by concurrent requests.",
+   "ObjectLockEnabled must be 'Enabled' (any other value is malformed XML), so Object Lock cannot be switched off; a configuration without a Rule clears the default retention."
+  ],
+  "if_broken": "New objects get the wrong default retention, or compliance checks report Object Lock missing on a locked bucket.",
+  "ux": "aws s3api put-object-lock-configuration sets the default retention; buckets created without Object Lock refuse it.",
+  "what": "PutObjectLockConfiguration requires the bucket to support Object Lock (isObjectLockAvailable; otherwise 409 InvalidBucketState), parses and validates the XML (ValidateObjectLockConfiguration, mapped to S3 errors), and stores it as BucketConfig.ObjectLockConfig through updateBucketConfig. GetObjectLockConfiguration returns the cached configuration. If the cache has none it re-reads the bucket entry, loads the configuration from its extended attributes and refreshes the whole cached BucketConfig from that entry; otherwise it answers ObjectLockConfigurationNotFoundError.",
+  "when": "PUT/GET /<bucket>?object-lock.",
+  "why": "Consequence: the default retention here is applied to every new object version in the bucket, so a wrong value either locks data that should be deletable or leaves compliance data unprotected. Design: the Get path re-reads the filer when the cache shows nothing, because a bucket created with Object Lock on another gateway may not have reached this cache yet, and reporting 'not found' there would mislead compliance tooling. AWS compatibility: 409 InvalidBucketState for buckets without Object Lock matches AWS and s3-tests."
+ },
+ "weed/s3api/s3api_bucket_lifecycle_config.go": {
+  "character": "Storage helpers for a bucket's lifecycle configuration: the raw XML and the transition minimum-object-size setting",
+  "gotchas": [
+   "The returned XML is a copy, so callers may modify it, but the stored version is what clients wrote, not a re-serialization."
+  ],
+  "if_broken": "Lifecycle rules are lost or not visible to the worker, so objects never expire, or expire under stale rules.",
+  "ux": "Lifecycle configuration round-trips byte for byte.",
+  "what": "Aliases the stored-key names and the size cap from the scheduler package. getStoredBucketLifecycleConfiguration returns a copy of the stored XML and the normalized X-Amz-Transition-Default-Minimum-Object-Size value (default all_storage_classes_128K). storeBucketLifecycleConfiguration and clearStoredBucketLifecycleConfiguration write them through updateBucketConfig.",
+  "when": "Put/Get/DeleteBucketLifecycleConfiguration handlers in s3api_bucket_handlers.go.",
+  "why": "Consequence: GetBucketLifecycleConfiguration replays exactly these stored bytes, and the lifecycle worker reads the same keys, so the storage form is shared state. Design: the key names live in s3lifecycle/scheduler because callers outside the gateway read them too; this file only holds local shorthands. AWS compatibility: the transition minimum-object-size header is echoed back as AWS does."
+ },
+ "weed/s3api/s3api_bucket_lifecycle_fastpath_warn.go": {
+  "character": "The warning logic for lifecycle changes on buckets using the TTL fast path, where objects already written keep the volume TTL they were stamped with",
+  "gotchas": [
+   "The eligibility test duplicates NewLifecycleTTLResolver's filter (s3api_object_lifecycle_ttl.go); if the two drift, the warning fires for the wrong rules.",
+   "Clients ignore unknown headers, so the warning only helps operators who look at raw responses or logs."
+  ],
+  "if_broken": "Operators silently lose data they thought a lifecycle change had protected, or get false alarms on harmless edits.",
+  "ux": "The response carries a header naming the rules whose already-written objects will still expire on the old schedule.",
+  "what": "fastpathConfigChangeLeavesStampedObjects compares the old and new lifecycle XML (nil new means delete). It takes the rules that were fast-path eligible (Enabled, ExpirationDays > 0, no tag filter, fits int32 seconds) and matches them to new rules, first by ID, then by prefix and size filters. It returns a reason when an eligible rule was removed or disabled, had its filter changed, or was lengthened. The handlers put that reason in the X-Seaweed-Lifecycle-Fastpath-Warning response header.",
+  "when": "PutBucketLifecycleConfiguration and DeleteBucketLifecycle on buckets with the lifecycle TTL fast path enabled.",
+  "why": "Consequence: on the fast path an object's expiry is baked into its volume TTL at write time and cannot be taken back, so removing or extending a rule does not save objects already written; without a warning an operator would believe retention was extended. Design: shortening a rule and pure ID renames do not warn, because neither loses data. Tag-filtered rules are never on the fast path. AWS compatibility: none; this is a SeaweedFS-specific header."
+ },
+ "weed/s3api/s3api_bucket_owner_index.go": {
+  "character": "The bucket owner index under /buckets/.system/owners/<owner>/<bucket>, which lets ListBuckets serve one identity's buckets without scanning every bucket",
+  "gotchas": [
+   "Ownership is keyed by identity name (AmzIdentityId); a user renamed through UpdateUser no longer finds the buckets indexed under the old name.",
+   "Admins, a bare List grant, wildcard action or resource grants and STS session requests never use the index; they still scan /buckets."
+  ],
+  "if_broken": "Users miss buckets they own in ListBuckets, or see deleted ones, depending on which write path broke.",
+  "ux": "ListBuckets stays fast for ordinary users regardless of the total number of buckets.",
+  "what": "The index holds zero-length files whose Crtime is the bucket's creation time, under an escaped owner directory (escapeOwnerName percent-encodes '/' and a leading dot). It is written in three ways: the bucket handlers write it synchronously, maintainBucketOwnerIndex applies /buckets metadata events, and startBucketOwnerIndexBackfill indexes pre-existing buckets, re-listing each page to drop buckets deleted meanwhile, then writes a .complete marker. bucketOwnerIndexReady caches that marker. listBucketsFromOwnerIndex merges the owned index entries with the buckets the identity's legacy actions name explicitly (after resolveGrantedBuckets checks visibility) and pages with a continuation token.",
+  "when": "CreateBucket and DeleteBucket handlers, every /buckets metadata event, the backfill once at startup, and ListBuckets for identities whose grants name only specific buckets (canListBucketsFromOwnerIndex).",
+  "why": "Consequence: ListBuckets for a non-admin identity used to scan all of /buckets; with tens of thousands of buckets that is slow and loads the filer on every call. Design: every write path is idempotent, so the synchronous writes, the subscription and racing backfills on several gateways cannot conflict, and readers keep scanning until the backfill marker exists, so a half-built index is never trusted."
+ },
  "weed/s3api/s3api_bucket_policy_engine.go": {
   "character": "BucketPolicyEngine: the per-server wrapper (one instance on S3ApiServer, shared with IdentityAccessManagement) around policy_engine.PolicyEngine for bucket policies",
   "gotchas": [
@@ -403,6 +562,20 @@
   "what": "Loads, replaces and deletes a bucket's policy document in the engine (from a bucket entry's Extended key or from the already-parsed cached document) and evaluates a request against it: resolves the fine-grained s3: action from the request (ResolveS3Action), builds the resource ARN, extracts condition values (source IP via trusted proxies, headers, tags, principal variables, JWT claims, original ACL grant headers, and the object's existing tags when an entry is passed), and for UploadPart / Complete / Abort looks up the SSE algorithm stored at CreateMultipartUpload so s3:x-amz-server-side-encryption conditions still apply. Returns (allowed, evaluated, err): evaluated=false means no matching statement.",
   "when": "Every authenticated request on a bucket with a policy (Phase 1 in authRequestWithAuthType), anonymous requests in AuthWithPublicRead, and handler rechecks with the object entry; policies are loaded when bucket configs are built (syncBucketPolicyToEngine).",
   "why": "Consequence: bucket policies are the S3 resource-based access control; this is where they are actually enforced, in both auth phases (iam.Auth before the handler, checkPolicyWithEntry after the entry is loaded). Design: tri-state results let callers implement AWS semantics (explicit Deny wins, Allow can grant, no-match falls through to identity policies); the multipart SSE lookup exists because UploadPart requests carry no SSE header, so a 'Deny unless encrypted' policy would otherwise wrongly deny or allow parts. AWS compatibility: s3: action names, ARN resources and condition keys match AWS's."
+ },
+ "weed/s3api/s3api_circuit_breaker.go": {
+  "character": "Per-route admission control: the global and per-bucket circuit breaker plus the concurrent-upload throttle, wrapped around every handler as cb.Limit",
+  "gotchas": [
+   "Enabled and limitations are replaced on reload without taking the mutex while requests read them; under Go's memory model that is a data race, harmless only because the fields are word-sized.",
+   "Byte limits use r.ContentLength, so chunked uploads (ContentLength -1, counted as 0) bypass both the upload-bytes throttle and the bytes breaker.",
+   "The throttle re-reads the counters, unlocks, then increments, so several waiters woken together can overshoot the limit.",
+   "Interceptor is a seam that nothing in this repository sets."
+  ],
+  "if_broken": "Either no protection against overload, or counters that leak (never rolled back) and eventually reject every request for an action.",
+  "ux": "Throttled clients get 503 SlowDown when a breaker trips (the request-count and bytes breakers both use it), or simply slower uploads under the upload limits.",
+  "what": "NewCircuitBreaker loads /etc/s3/circuit_breaker.json from a filer (absent means disabled). Limit(handler, action) returns the wrapped handler. For ACTION_WRITE it first blocks on a condition variable while in-flight upload bytes exceed -concurrentUploadLimitMB or in-flight uploads reach -concurrentFileUploadLimit, then counts the request in. If the breaker is enabled, limit() checks four counters in order: bucket request count, bucket bytes, global request count, global bytes. It rejects with ErrTooManyRequest or ErrRequestBytesExceed (both 503 SlowDown) and rolls back the counters it took. An optional Interceptor wraps everything and runs even when the breaker is disabled.",
+  "when": "Every route registered with cb.Limit (almost all S3 routes; ownership-controls routes skip it). Reloaded when the config file changes (auth_credentials_subscribe.go).",
+  "why": "Consequence: without admission control a burst of large uploads exhausts memory and volume-server bandwidth for every tenant. Design: limits are configured per action and per bucket in the filer and reloaded live through the metadata subscription, so an operator can throttle one noisy bucket without a restart. Upload throttling waits rather than rejects, so clients are slowed instead of failed."
  },
  "weed/s3api/s3api_embedded_iam.go": {
   "character": "The AWS IAM query API served on the S3 port: EmbeddedIamApi with 48 user, access-key, policy, group, tag and service-account actions (plus the 17 OIDC and role actions it hands to its two satellite files), the read-only gate, the persistence strategy and the IAM authorization rules (AuthorizeIamAction, AuthIamManagement)",
@@ -620,6 +793,18 @@
   "when": "GET/HEAD/DELETE/PUT on versioned or suspended buckets (via the object handlers and putVersionedObject), GET /bucket?versions, the versioning reconciler, and listing code that reads the cached latest metadata (getLatestVersionEntryFromDirectoryEntry).",
   "why": "Consequence: this is the version history of every versioned bucket; a wrong pointer either resurrects a deleted object, hides the current one, or serves an old version. Design: the pointer moves before the version file is deleted so a crash in between never leaves latest naming a missing file; any stale pointer that does appear (replication lag, crashes) self-heals on read with an IF_ENTRY_EQUAL write and, failing that, is queued for the background versioning reconciler. NoncurrentSinceNs is stamped on the demoted version BEFORE the pointer flip, because the lifecycle router reacts to the flip's metadata event and would otherwise derive the age from a sibling's mtime (wrong for versioned copies). A suspended-versioning delete collapses onto one 'null' marker (v_null) rather than accumulating markers, per the S3 spec. AWS compatibility: ListObjectVersions sorts by key, then newest version first, interleaving the three element kinds; max-keys caps at 1000 and max-keys=0 returns an empty, non-truncated page."
  },
+ "weed/s3api/s3api_path_validation.go": {
+  "character": "The bucket-route guard that rejects path traversal, empty path vars, ambiguous subresources and unsafe versionId/uploadId values before any handler runs",
+  "gotchas": [
+   "operationSubresources must be kept in sync with new subresource routes; bucketQueryActions keys are counted automatically, others are not.",
+   "hasPathSegmentQuery uses a substring test on the raw query ('versionId' anywhere) as a fast path, then the exact keys are checked."
+  ],
+  "if_broken": "Cross-bucket reads and writes that bypass authorization, or version and upload IDs that address arbitrary filer paths.",
+  "ux": "Normal clients never notice; crafted paths get 400 InvalidRequest.",
+  "what": "validateRequestPath checks the mux vars: bucket must be a valid bucket name and object a valid key, both non-empty. If the request has a query, it rejects two operation subresources (hasAmbiguousSubresource over operationSubresources plus every bucketQueryActions key), and versionId / uploadId values that are not valid single path segments (hasPathSegmentQuery also catches percent-encoded spellings of those keys).",
+  "when": "Every request matched by the per-bucket subrouter (bucket.Use(validateRequestPath) in registerRouter).",
+  "why": "Consequence: the router runs with SkipClean(true), so '..' survives routing and util.JoinPath later collapses it. Without this guard 'GET /bucket-A/../evil-bucket/k' is authorized against bucket-A but read from evil-bucket. versionId and uploadId become filer entry names, so a value containing '/' or '..' would also escape its directory. Design: one middleware on the bucket subrouter, so every bucket and object route gets the check without each handler repeating it."
+ },
  "weed/s3api/s3api_put_handlers.go": {
   "character": "S3ApiServer methods: the single SSE dispatch point for writes (SSE-C, SSE-KMS, SSE-S3, single-part and multipart) and the SSE-metadata writer for entries",
   "gotchas": [
@@ -650,6 +835,30 @@
   "when": "Constructed once at process start by weed/command (s3, filer -s3, mini); registerRouter runs inside the constructor. The recheck helpers run inside object handlers after the entry is fetched. SIGHUP re-reads the -config identities, the JWT filer signing keys and the trusted proxies.",
   "why": "Design: route order is load-bearing: gorilla/mux picks the first match, so object routes with a query come before plain object routes, those before bucket routes with a query, and plain bucket routes come last. ListObjectsV1 is the catch-all GET and explicitly answers NotImplemented for unrouted subresources instead of returning a listing. The lock client subscribes to ring updates BEFORE the master loop starts because the master sends the initial LockRingUpdate only once per connect. The advertised host must be -ip, not a wildcard bind address, or IAM pushes from peers dial an unroutable address and fail silently after 10s. The auth path primes bucket loads (iam.primeBucketForIAM) because advanced-IAM evaluates the bucket-policy mirror before any handler runs, and a grant carried only by a not-yet-mirrored policy would otherwise deny forever. Consequence: everything else in the package is reached from here."
  },
+ "weed/s3api/s3api_server_grpc.go": {
+  "character": "The gateway's gRPC IAM cache service (SeaweedS3IamCache): one-way pushes of identities, policies and groups from the filer or admin tooling into this gateway's in-memory IAM",
+  "gotchas": [
+   "Without a signing key the service is open to every local peer, including other processes on the same host.",
+   "GetPolicy answers an empty response, not NotFound, for an unknown policy.",
+   "PutIdentity and RemoveIdentity do not check s3a.iam for nil, unlike the policy and group RPCs."
+  ],
+  "if_broken": "Gateways keep serving revoked keys until a full reload, or anyone who can reach the gRPC port rewrites identities.",
+  "ux": "IAM changes made anywhere show up on all gateways almost immediately.",
+  "what": "Implements PutIdentity / RemoveIdentity, PutPolicy / DeletePolicy / GetPolicy / ListPolicies and PutGroup / RemoveGroup on top of IdentityAccessManagement (UpsertIdentity, RemoveIdentity, PutPolicy…). Every RPC first runs checkAdminAuth. If a filer signing key (jwt.filer_signing.key) is configured, the caller must present 'Bearer <JWT>' signed with it as SeaweedFilerAdminClaims and without a SessionId. With no key, only local peers (unix socket, loopback, the server's own addresses) are accepted.",
+  "when": "When the filer or the embedded IAM API on another gateway propagates a targeted change (credential manager's propagating store); GetPolicy and ListPolicies for tooling.",
+  "why": "Consequence: these calls rewrite who can authenticate, so an unauthenticated caller could add an admin identity. Design: the filer propagates a single changed identity or policy to every gateway, so an IAM change takes effect in seconds without each gateway reloading the whole configuration. The auth mirrors the filer's own IamGrpcServer.checkAdminAuth, so one operator setting secures both."
+ },
+ "weed/s3api/s3api_status_handlers.go": {
+  "character": "The health-probe handler",
+  "gotchas": [
+   "/readyz is ready even when the filer is unreachable, so traffic is routed to a gateway that will answer 500s."
+  ],
+  "if_broken": "Orchestrators restart or drain healthy gateways.",
+  "ux": "Probes succeed whenever the process is up.",
+  "what": "StatusHandler answers 200 with an empty body.",
+  "when": "GET/HEAD /status, /healthz and /readyz, registered ahead of the bucket routes and outside iam.Auth.",
+  "why": "Consequence: load balancers and Kubernetes probes mark the gateway healthy or not based on this answer. Design: it checks nothing (no filer or master round-trip), so a probe never fails because of backend latency; it reports only that the HTTP server is serving."
+ },
  "weed/s3api/s3api_sts.go": {
   "character": "STSHandlers: the AWS STS query-API front end served on the S3 port (one instance when advanced IAM has an STS service), with its XML response types",
   "gotchas": [
@@ -663,6 +872,17 @@
   "what": "HandleSTSRequest dispatches on Action (API version 2011-06-15): AssumeRoleWithWebIdentity (OIDC token → role via the IAM manager, typed errors for expired/invalid tokens), AssumeRole (SigV4-signed caller; role trust policy and explicit identity denies checked; an empty RoleArn means 'assume self', allowed only with a global sts:AssumeRole grant, admins get an is_admin claim), AssumeRoleWithLDAPIdentity (username/password checked against the configured or first LDAP provider, then the role's trust policy), GetFederationToken (long-term credentials only; the federated session carries the caller's attached and stored policies plus an optional session policy), GetCallerIdentity. prepareSTSCredentials resolves the role (cap by its MaxSessionDuration), mints a session id, JWT session token (with role, session name, attached policies, session policy) and temporary access/secret keys. Validates RoleSessionName (2–64 chars, [\\w+=,.@-]), DurationSeconds (900s .. 12h or the configured max; federation up to 36h) and the session policy; reports PackedPolicySize against a 2048-byte budget.",
   "when": "POST / with Action=… on the S3 port: explicit query routes, the authenticated IAM/STS UnifiedPostHandler, and a lowest-priority unauthenticated fallback (for AssumeRoleWithWebIdentity/LDAP bodies).",
   "why": "Consequence: STS is how OIDC/LDAP users and applications obtain temporary S3 credentials; a flaw here mints credentials for roles the caller should not get. Design: trust policies are always checked against the caller's principal ARN, and an explicit Deny in the caller's own policies still blocks AssumeRole; temporary credentials are self-contained JWTs, so any gateway sharing the signing key can validate them without shared session storage. AWS compatibility: action names, parameter names, error codes, XML envelopes and duration limits mirror AWS STS so SDKs and the aws CLI work unchanged."
+ },
+ "weed/s3api/s3api_subresource_ambiguity.go": {
+  "character": "A router-wide middleware that refuses requests naming more than one operation subresource",
+  "gotchas": [
+   "The AST shows no callers (in=0) because the function is passed as a value to router.Use in s3api_server.go; it is not dead."
+  ],
+  "if_broken": "An authorization-confusion hole: a caller allowed one operation could run another by adding a second subresource.",
+  "ux": "Clients never send two subresources legitimately; a crafted request gets 400.",
+  "what": "rejectAmbiguousSubresource answers InvalidRequest when hasAmbiguousSubresource finds two or more operation-selecting query keys (policy, tagging, acl, versioning, uploads…), otherwise passes the request on.",
+  "when": "Every request, through router.Use in registerRouter, before any route matches.",
+  "why": "Consequence: gorilla/mux picks a route by registration order while the IAM action resolver checks the query in its own order, so 'PUT /bucket?policy&tagging' could be authorized as PutBucketTagging and served as PutBucketPolicy. Design: validateRequestPath already enforced the rule inside the bucket routes; registering it on the root router covers the routes outside them (STS, IAM, S3 Tables, health) and runs once per request."
  },
  "weed/s3api/s3api_version_id.go": {
   "character": "Stateless helpers (plus two thin S3ApiServer path methods) defining the version-id format and its ordering",
@@ -737,5 +957,29 @@
   "what": "S3TablesHandler.HandleRequest dispatches on X-Amz-Target to the handlers for buckets, namespaces, tables (CreateTable, RegisterTable, Get/List/Update/Delete, RenameTable), views, table and bucket policies, maintenance configuration and job status, and tags. A table bucket is /buckets/<name> marked s3tables.tableBucket; a namespace is /buckets/<bucket>/<ns> and a table or view is /buckets/<bucket>/<ns>/<name>, each with JSON metadata, policy, tags and maintenance in s3tables.* xattrs. filer_ops.go writes every record compare-and-swap (UpdateEntry with ExpectedExtended, a snapshot that also asserts the package's absent keys, retried 5 times). In-flight operations mark records through ExtendedKeyDeleting: 'create' and 'rename-dest' hide a record until its parent is re-checked (confirmParent), and a random token claims a bucket or namespace for delete. Deletes remove only what is still exactly as scanned (deleteDirectoryIfMatches, removeEmptyTree). permissions.go evaluates its own PolicyDocument. The owner is always allowed. Identity Actions grant s3tables:<Op>[:<bucket>] with wildcards and admin markers. A Deny in the table or bucket policy vetoes both. Conditions see s3tables:* keys, request/resource/bucket tags and aws:TagKeys. Manager runs the same handlers in-process through httptest for weed shell, the admin console and the Iceberg REST catalog; it also offers AuthorizeCreateTable / AuthorizeUpdateTable for credential vending. The package also holds the Iceberg upload-layout validator (metadata/, data/, Lance '_' dirs) and manifest / manifest-list readers that repair iceberg-go partition and format-version quirks.",
   "when": "Every S3 Tables request on the S3 port (s3api_tables.go routes JSON X-Amz-Target and REST paths through authenticateS3Tables, which authenticates only). Every Iceberg REST catalog call (weed/s3api/iceberg) through Manager.Execute, and weed shell / admin console table commands through a trusted Manager. The layout validator runs on S3 uploads into table buckets.",
   "why": "Consequence: this catalog decides which Iceberg or Lance table a name resolves to and where its data lives, so a lost race either strands data or lets a delete purge a directory another table still points at. Design: the filer has no multi-key transactions, so every operation is a sequence of compare-checked single-entry writes plus claims that a competing operation must respect. That is why creates write a hidden record and confirm the parent afterwards, and deletes claim before they scan. Authorization veils existence: a caller who may not read a resource gets the same 404 as for a missing one (authorizeAbsentTarget, canReadEntry). Rename is catalog-only because Iceberg manifests embed absolute paths, so the data stays and the destination keeps the old MetadataLocation. AWS compatibility: the operation names, JSON shapes, ARN formats (any partition), name rules, reserved prefixes and the AES256-only encryption mirror AWS S3 Tables. UpdateNamespace, views, RegisterTable, LANCE buckets and the Format field are SeaweedFS extensions for the Iceberg REST catalog and the vector store."
+ },
+ "weed/s3api/stats.go": {
+  "character": "The outermost per-route middleware (track) plus the per-bucket traffic and latency counters handlers call directly",
+  "gotchas": [
+   "The V(2) access log uses %q so requester- and key-supplied bytes (newlines) cannot forge extra log lines.",
+   "Metric cardinality still grows with the number of real buckets, since every authorized request is labelled by bucket."
+  ],
+  "if_broken": "Missing metrics or audit entries; a panic here would fail every request.",
+  "ux": "Operators get per-action and per-bucket request rates, latencies, bytes and an audit entry per request; clients see the Server header.",
+  "what": "track wraps every S3 route. It increments the in-flight gauge for the action, sets the 'Server: SeaweedFS <version>' header, attaches an audit-tracking flag and a mutable identity holder to the request, times the handler through a status-recording writer, logs the request at V(2), records the request histogram and counter labelled by action, status and bucket, marks the bucket active, and emits a fallback audit entry (PostLog) for handlers that did not log one themselves. TimeToFirstByte, BucketTrafficReceived and BucketTrafficSent record per-bucket latency and byte counters from inside handlers.",
+  "when": "Every routed S3 request (registerRouter wraps each handler as track(iam.Auth(cb.Limit(...)))); the traffic helpers on object reads and writes.",
+  "why": "Consequence: these are the Prometheus metrics and audit log operators rely on; a handler path that skips them is invisible in dashboards and the audit trail. Design: track sits outside iam.Auth, so the identity holder is attached before authentication, which lets the fallback audit entry name the requester even though auth stores the identity on a request copy track never sees. The bucket label is dropped on 403s so unauthenticated probes for random bucket names cannot grow metric cardinality."
+ },
+ "weed/s3api/tags.go": {
+  "character": "The S3 Tagging XML types and the parsers and validators shared by object and bucket tagging",
+  "gotchas": [
+   "Object tag validation lives in the s3tables package (s3tables.ValidateTagsWithLimit), so changing the S3 Tables tag rules changes object tagging too.",
+   "A key with no '=' is stored with an empty value, as AWS does."
+  ],
+  "if_broken": "Tag-based policies and lifecycle rules see different tags than were stored, or invalid tags are accepted and break later reads.",
+  "ux": "aws s3api put-object-tagging and --tagging behave as on AWS; invalid tags fail with InvalidTag instead of being stored.",
+  "what": "Defines Tag / TagSet / Tagging (the XML body of Put/GetObjectTagging and Put/GetBucketTagging) with ToTags and FromTags (sorted by key for stable output). parseTagsHeader decodes the x-amz-tagging header (URL-query style, empty segments skipped, duplicate keys rejected). ValidateTags (10 tags, for objects) and ValidateBucketTags (50) delegate to the s3tables tag validator: key 1–128 runes, value up to 256, a restricted Unicode character set.",
+  "when": "PutObject / CopyObject / CreateMultipartUpload with x-amz-tagging, the object and bucket tagging handlers, and policy rechecks that read stored tags.",
+  "why": "Consequence: tags feed bucket-policy conditions (s3:ExistingObjectTag, s3:RequestObjectTag) and lifecycle filters, so a parser that disagrees with the policy engine authorizes one tag set and stores another. Design: parseTagsHeader skips empty segments exactly as url.ParseQuery does, so CopyObject stores the same keys that PutObject and bucket policies see. AWS compatibility: the limits and character set follow AWS (10 per object, 50 per bucket)."
  }
 }
