@@ -67,6 +67,10 @@ Use the **Defects** chips in the viewer to show only flagged nodes.
 
 - Source: branch `claude/brave-carson-13bjg1` at base commit `984eac6`. `weed/` is unchanged since then; this folder is the only addition.
 - Edges come from graphify's AST extraction; descriptions and defect flags were curated by hand.
+- Drift check against upstream `master` at `b7b2a59` (8 commits past the base): inside the graph's scope only `s3tables/` changed (`handler_namespace.go`, `handler_policy.go`, `manager.go`).
+  - That makes one statement in the `s3tables/` node stale on master: TagResource and UntagResource now merge tags inside the compare-and-swap, so concurrent tag writes no longer lose each other.
+  - Master also binds namespace deletes and tag operations to the authorized bucket record, and adds an in-process tag cap. HTTP requests still go unvalidated.
+  - None of the 20 flagged defects is touched by those commits. `s3vectors/` also changed but is outside this graph.
 
 ## Regenerating
 
