@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>__TITLE__</title>
+<!--
+  Code-graph viewer template. Nothing project-specific lives here: every visible
+  label comes from the markers (__TITLE__, __SUBTITLE__, __INTRO__, __LAYERS__,
+  __DATA__, __CURATION__), filled by a plain string replace (tools/assemble.py).
+  Fix presentation bugs HERE, never in the assembled HTML.
+-->
+<style>
+  :root{
+    --bg:#0d0f14; --surface:#161923; --surface2:#1c2030; --border:#2a3042;
+    --text:#e6e8ec; --text2:#9aa3b2; --text3:#6b7280; --hc:#845ef7; --edge:#55607a;
+    --bug:#ff6b6b; --dead:#868e96; --dup:#fab005;
+    --l0:#7c8599; --l1:#845ef7; --l2:#ff6b6b; --l3:#fab005;
+    --l4:#20c997; --l5:#4dabf7; --l6:#e64980; --l7:#a9e34b;
+    --warnbg:#2a1e14; --warnfg:#ffd8a8; --issuebg:#2a1418; --issuefg:#ffc9c9;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      --bg:#f6f7f9; --surface:#ffffff; --surface2:#eef0f4; --border:#d5d9e2;
+      --text:#1b1f27; --text2:#4a5263; --text3:#6b7385; --edge:#9aa3b5;
+      --l0:#5d6478; --l1:#6741d9; --l2:#e03131; --l3:#e8590c;
+      --l4:#0ca678; --l5:#1c7ed6; --l6:#c2255c; --l7:#5c940d;
+      --warnbg:#fff4e6; --warnfg:#7a3e00; --issuebg:#fff0f0; --issuefg:#8a1c1c;
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:14px;line-height:1.5}
+  .layout{display:flex;height:100vh}
+  main{flex:1;overflow:auto;padding:24px 28px;position:relative;min-width:0}
+  #edges{position:absolute;top:0;left:0;pointer-events:none;z-index:1;overflow:visible}
+  #edges path{fill:none;stroke:var(--edge);stroke-width:1;opacity:.13}
+  #edges path.hi-out{stroke:var(--hc);stroke-width:2;opacity:.95}
+  #edges path.hi-in{stroke:var(--hc);stroke-width:1.6;opacity:.75;stroke-dasharray:4 3}
+  #edges path.dim{opacity:.03}
+  .content{position:relative;z-index:2}
+  .content h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--text2);font-size:13px;margin-bottom:8px}
+  .intro{color:var(--text2);font-size:12.5px;max-width:980px;margin:0 0 10px;line-height:1.6}
+  .hint{color:var(--text3);font-size:11.5px;margin-bottom:14px}
+  .hint b{color:var(--text2)}
+  .lane{margin-bottom:20px;border-left:3px solid var(--lc);padding-left:14px}
+  .lane-h{font-size:12px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:var(--lc);margin-bottom:2px}
+  .lane-sub{color:var(--text3);font-size:11.5px;margin-bottom:10px}
+  .nodes{display:flex;flex-wrap:wrap;gap:8px}
+  .node{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 22px 7px 11px;cursor:pointer;min-width:0;max-width:100%;position:relative}
+  .node:hover{border-color:var(--lc);background:var(--surface2)}
+  .node.sel{border-color:var(--lc);background:var(--surface2);box-shadow:0 0 0 2px var(--lc)}
+  .node.neigh-out{border-color:var(--hc)}
+  .node.neigh-in{border-color:var(--hc);border-style:dashed}
+  .node.faded{opacity:.28}
+  .node.pkg{border-style:double;border-width:3px}
+  .node .lbl{font-family:"SFMono-Regular",Menlo,Consolas,monospace;font-size:12.5px;overflow-wrap:anywhere}
+  .node .deg{color:var(--text3);font-size:10.5px;margin-top:2px}
+  .node .dot{position:absolute;top:7px;right:7px;width:7px;height:7px;border-radius:50%;background:var(--border)}
+  .node.curated .dot{background:#20c997}
+  .node .iss{position:absolute;bottom:6px;right:6px;width:8px;height:8px;border-radius:2px}
+  .node.hit{outline:2px solid var(--l1);outline-offset:1px}
+  .node.hidden,.lane.hidden{display:none}
+  aside{width:420px;flex-shrink:0;border-left:1px solid var(--border);background:var(--surface);overflow-y:auto;padding:22px 20px;z-index:3}
+  .p-empty{color:var(--text3);font-size:13px;line-height:1.7}
+  .p-file{font-family:monospace;font-size:11px;color:var(--text3);word-break:break-all;margin-bottom:8px}
+  .p-char{font-size:12px;color:var(--text2);font-style:italic;margin-bottom:6px}
+  .p-lbl{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin:14px 0 4px}
+  .p-val{font-size:13.5px;line-height:1.6;white-space:pre-line;overflow-wrap:anywhere}
+  .warn,.issue,.p-char{overflow-wrap:anywhere}
+  .p-deg{display:flex;gap:16px;margin:8px 0 4px}
+  .p-deg span{font-size:12px;color:var(--text2)}
+  .p-deg b{color:var(--text);font-size:15px}
+  .badge{display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;border-radius:5px;background:var(--lc);color:#0d0f14}
+  .ibadge{display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;border-radius:5px;margin-left:6px;color:#0d0f14}
+  .rel{font-size:12px;color:var(--text2);margin:3px 0;cursor:pointer;line-height:1.45}
+  .rel:hover{color:var(--text)}
+  .rel .arrow{color:var(--text3);font-family:monospace}
+  .rel .rt{color:var(--text3);font-size:10px;margin-left:4px}
+  .rel .via{display:block;color:var(--text3);font-size:10.5px;font-family:monospace;padding-left:16px;overflow-wrap:anywhere}
+  .warn{background:var(--warnbg);border-left:3px solid var(--l3);padding:10px 12px;border-radius:6px;font-size:12.5px;margin-top:14px;color:var(--warnfg)}
+  .warn ul{margin:4px 0 0;padding-left:18px}
+  .issue{background:var(--issuebg);border-left:3px solid var(--bug);padding:10px 12px;border-radius:6px;font-size:12.5px;margin-top:14px;color:var(--issuefg)}
+  .clr{float:right;font-size:11px;color:var(--text3);cursor:pointer;border:1px solid var(--border);border-radius:5px;padding:2px 8px}
+  .clr:hover{color:var(--text)}
+  .searchbar{display:flex;align-items:center;gap:12px;margin-bottom:6px;flex-wrap:wrap}
+  #search{flex:1;min-width:200px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:9px 12px;outline:none}
+  #search:focus{border-color:var(--l1)}
+  .scount{font-size:11.5px;color:var(--text3);white-space:nowrap}
+  .cbox{font-size:11.5px;color:var(--text2);display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap}
+  .results{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+  .results:empty{display:none}
+  .rchip{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;cursor:pointer;font-family:"SFMono-Regular",Menlo,Consolas,monospace;font-size:12px;display:flex;align-items:center;gap:6px}
+  .rchip:hover{border-color:var(--l1)}
+  .rchip .rlayer{width:8px;height:8px;border-radius:2px}
+  .rchip .rdot{width:6px;height:6px;border-radius:50%}
+  .rchip .rfile{color:var(--text3);font-size:10px}
+  .filterbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+  .fl{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text3)}
+  .fchip{font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text3);cursor:pointer;display:inline-flex;align-items:center;gap:5px;user-select:none}
+  .fchip.on{color:var(--text);border-color:var(--fc);background:color-mix(in srgb, var(--fc) 16%, var(--surface))}
+  .fchip .fdot{width:8px;height:8px;border-radius:2px;background:var(--fc)}
+  .fchip:not(.on) .fdot{opacity:.3}
+  .btn{font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text3);cursor:pointer}
+  .btn:hover{color:var(--text);border-color:var(--l1)}
+  @media (max-width: 820px){
+    .layout{flex-direction:column;height:auto}
+    main{padding:16px;overflow:visible}
+    aside{width:100%;border-left:none;border-top:1px solid var(--border)}
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <main id="main">
+    <svg id="edges" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="content">
+      <h1>__TITLE__</h1>
+      <div class="sub">__SUBTITLE__</div>
+      <p class="intro">__INTRO__</p>
+      <div class="hint">Lines are the real AST dependencies between nodes. Click a node: <b>solid</b> = what it uses, <b>dashed</b> = what uses it. Double-bordered cards are collapsed neighbor packages.</div>
+      <div class="searchbar">
+        <input id="search" type="text" placeholder="Search by node name or path…" autocomplete="off">
+        <span id="searchcount" class="scount"></span>
+        <label class="cbox"><input type="checkbox" id="onlyuncurated"> only uncurated</label>
+      </div>
+      <div class="filterbar">
+        <span class="fl">Lanes</span>
+        <span id="layerchips"></span>
+      </div>
+      <div class="filterbar">
+        <span class="fl">Edges</span>
+        <span id="relchips"></span>
+        <span id="issuewrap" style="display:none"><span class="fl" style="margin-left:14px">Defects</span> <span id="issuechips"></span></span>
+        <span class="btn" id="resetfilters">Reset</span>
+      </div>
+      <div id="results" class="results"></div>
+      <div id="lanes"></div>
+    </div>
+  </main>
+  <aside id="panel"></aside>
+</div>
+
+<script id="data" type="application/json">__DATA__</script>
+<script id="curation" type="application/json">__CURATION__</script>
+<script id="layers" type="application/json">__LAYERS__</script>
+<script>
+const DATA = JSON.parse(document.getElementById('data').textContent);
+const CUR = JSON.parse(document.getElementById('curation').textContent);
+const LAYER_PALETTE = ['--l0','--l1','--l2','--l3','--l4','--l5','--l6','--l7'];
+const LAYERS = JSON.parse(document.getElementById('layers').textContent)
+  .map((l, i) => ({ ...l, c: LAYER_PALETTE[i % LAYER_PALETTE.length] }));
+const ISSUE_COLORS = { bug:'var(--bug)', dead:'var(--dead)', duplicate:'var(--dup)' };
+const byId = Object.fromEntries(DATA.nodes.map(n=>[n.id,n]));
+const layerOf = id => LAYERS.find(l=>l.id===id) || LAYERS[0];
+const layerColor = id => `var(${layerOf(id).c})`;
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const cur = n => CUR[n.file] || {};
+const isCurated = n => !!cur(n).what;
+const issueOf = n => cur(n).issue || null;
+
+// Colliding labels are disambiguated from the data itself (parent folder), never from a hardcoded list.
+const labelCount = {};
+DATA.nodes.forEach(n=>{ labelCount[n.label]=(labelCount[n.label]||0)+1; });
+const displayLabel = n => {
+  if(labelCount[n.label] < 2) return n.label;
+  const parts = n.file.replace(/\/$/,'').split('/');
+  return parts.length>=2 ? `${parts[parts.length-2]}/${n.label}` : n.label;
+};
+
+// One drawn path per (source,target) pair; a pair can carry several relation types.
+const pairs = {};
+DATA.edges.forEach(e=>{
+  const k = e.s+'\u0000'+e.t;
+  (pairs[k] = pairs[k] || {s:e.s, t:e.t, rels:[]}).rels.push(e);
+});
+const PAIRS = Object.values(pairs);
+const outMap = {}, inMap = {};
+PAIRS.forEach(p=>{ (outMap[p.s]=outMap[p.s]||[]).push(p); (inMap[p.t]=inMap[p.t]||[]).push(p); });
+
+const activeLayers = new Set(LAYERS.map(l=>l.id));
+const REL_TYPES = [...new Set(DATA.edges.map(e=>e.r))];
+const activeRels = new Set(REL_TYPES);
+const ISSUE_TYPES = [...new Set(DATA.nodes.map(issueOf).filter(Boolean))];
+const activeIssues = new Set(); // empty = no defect filtering
+
+const nodeEls = {};
+const lanesEl = document.getElementById('lanes');
+LAYERS.forEach(L=>{
+  const ns = DATA.nodes.filter(n=>n.layer===L.id).sort((a,b)=>b.in-a.in || b.out-a.out);
+  if(!ns.length) return;
+  const lane = document.createElement('div');
+  lane.className='lane'; lane.dataset.layer=L.id; lane.style.setProperty('--lc',`var(${L.c})`);
+  lane.innerHTML = `<div class="lane-h">${esc(L.id)} · ${esc(L.name)} <span style="color:var(--text3);font-weight:400">(${ns.length})</span></div><div class="lane-sub">${esc(L.sub)}</div>`;
+  const wrap = document.createElement('div'); wrap.className='nodes';
+  ns.forEach(n=>{
+    const el = document.createElement('div');
+    const iss = issueOf(n);
+    el.className='node'+(isCurated(n)?' curated':'')+(n.kind==='package'?' pkg':'');
+    el.style.setProperty('--lc',`var(${L.c})`); el.dataset.id=n.id;
+    el.innerHTML=`<span class="dot" title="${isCurated(n)?'curated':'not curated'}"></span>`+
+      (iss?`<span class="iss" style="background:${ISSUE_COLORS[iss]||'var(--bug)'}" title="${esc(iss)}"></span>`:'')+
+      `<div class="lbl">${esc(displayLabel(n))}</div><div class="deg">in ${n.in} · out ${n.out}</div>`;
+    el.onclick=(ev)=>{ev.stopPropagation();select(n.id);};
+    wrap.appendChild(el); nodeEls[n.id]=el;
+  });
+  lane.appendChild(wrap); lanesEl.appendChild(lane);
+});
+
+function nodeVisible(id){
+  const n = byId[id]; if(!n) return false;
+  if(!activeLayers.has(n.layer)) return false;
+  if(activeIssues.size && !activeIssues.has(issueOf(n))) return false;
+  return true;
+}
+const pairVisible = p => nodeVisible(p.s) && nodeVisible(p.t) && p.rels.some(e=>activeRels.has(e.r));
+
+const svg = document.getElementById('edges');
+const mainEl = document.getElementById('main');
+const SVGNS='http://www.w3.org/2000/svg';
+let curSel=null;
+function drawEdges(){
+  svg.innerHTML='';
+  svg.setAttribute('width', mainEl.scrollWidth); svg.setAttribute('height', mainEl.scrollHeight);
+  svg.style.width = mainEl.scrollWidth+'px'; svg.style.height = mainEl.scrollHeight+'px';
+  const ox = mainEl.scrollLeft, oy = mainEl.scrollTop;
+  const base = mainEl.getBoundingClientRect();
+  const box = el => { const r=el.getBoundingClientRect(); return {x:r.left-base.left+ox+r.width/2, top:r.top-base.top+oy, bot:r.top-base.top+oy+r.height}; };
+  PAIRS.forEach(p=>{
+    if(!pairVisible(p)) return;  // filters are applied at draw time, so a redraw never resurrects hidden edges
+    const a=nodeEls[p.s], b=nodeEls[p.t]; if(!a||!b) return;
+    const p1=box(a), p2=box(b);
+    let y1, y2;
+    if(p2.top >= p1.bot){ y1=p1.bot; y2=p2.top; }
+    else if(p1.top >= p2.bot){ y1=p1.top; y2=p2.bot; }
+    else { y1=p1.bot; y2=p2.bot; }
+    const dy=Math.abs(y2-y1);
+    const c=Math.min(Math.max(dy*0.4,24),110);
+    const cy1 = y1<=y2 ? y1+c : y1-c;
+    const cy2 = y2>=y1 ? y2-c : y2+c;
+    const path=document.createElementNS(SVGNS,'path');
+    path.setAttribute('d',`M ${p1.x} ${y1} C ${p1.x} ${cy1}, ${p2.x} ${cy2}, ${p2.x} ${y2}`);
+    path.dataset.s=p.s; path.dataset.t=p.t;
+    svg.appendChild(path);
+  });
+  if(curSel) paintPaths(curSel);
+}
+window.addEventListener('load',drawEdges);
+window.addEventListener('resize',()=>{clearTimeout(window._rt);window._rt=setTimeout(drawEdges,150);});
+
+function paintPaths(id){
+  document.documentElement.style.setProperty('--hc',layerColor(byId[id].layer));
+  svg.querySelectorAll('path').forEach(p=>{
+    p.classList.remove('hi-out','hi-in','dim');
+    if(p.dataset.s===id) p.classList.add('hi-out');
+    else if(p.dataset.t===id) p.classList.add('hi-in');
+    else p.classList.add('dim');
+  });
+}
+function emptyPanelHTML(){
+  const top = [...DATA.nodes].sort((a,b)=>b.in-a.in).slice(0,3)
+    .map(n=>`<b>${esc(displayLabel(n))}</b> (in ${n.in})`).join(', ');
+  const hint = top ? `<br><br>The most depended-on nodes: ${top}.` : '';
+  return `<div class="p-empty">Select a node to see its role and highlight its connections.${hint}</div>`;
+}
+function clearSel(){
+  curSel=null;
+  Object.values(nodeEls).forEach(el=>el.classList.remove('sel','neigh-out','neigh-in','faded'));
+  svg.querySelectorAll('path').forEach(p=>p.classList.remove('hi-out','hi-in','dim'));
+  document.getElementById('panel').innerHTML=emptyPanelHTML();
+}
+mainEl.addEventListener('click',clearSel);
+
+function select(id){
+  curSel=id;
+  const n=byId[id], hc=layerColor(n.layer);
+  const outs=(outMap[id]||[]).filter(pairVisible), ins=(inMap[id]||[]).filter(pairVisible);
+  const neighOut=new Set(outs.map(p=>p.t)), neighIn=new Set(ins.map(p=>p.s));
+  Object.entries(nodeEls).forEach(([nid,el])=>{
+    el.classList.remove('sel','neigh-out','neigh-in','faded');
+    el.style.setProperty('--hc',hc);
+    if(nid===id) el.classList.add('sel');
+    else if(neighOut.has(nid)) el.classList.add('neigh-out');
+    else if(neighIn.has(nid)) el.classList.add('neigh-in');
+    else el.classList.add('faded');
+  });
+  paintPaths(id);
+  renderPanel(n,outs,ins);
+}
+
+const FIELDS = [['what','What it does'],['why','Why it exists'],['when','When it runs'],['ux','What users see'],['if_broken','If it breaks']];
+function relRow(p, other, arrow){
+  const o = byId[other]; if(!o) return '';
+  const rels = p.rels.filter(e=>activeRels.has(e.r));
+  const tags = rels.map(e=>`${e.r}×${e.w}`).join(' · ');
+  const via = rels.flatMap(e=>e.via||[]).slice(0,3).map(v=>`<span class="via">${esc(v)}</span>`).join('');
+  return `<div class="rel" onclick="event.stopPropagation();select(${esc(JSON.stringify(o.id))})"><span class="arrow">${arrow}</span> ${esc(displayLabel(o))}<span class="rt">${esc(tags)}</span>${via}</div>`;
+}
+function renderPanel(n,outs,ins){
+  const c=cur(n), L=layerOf(n.layer);
+  let h=`<span class="clr" onclick="clearSel()">✕ clear</span><span class="badge" style="--lc:var(${L.c})">${esc(L.id)} · ${esc(L.name)}</span>`;
+  if(c.issue) h+=`<span class="ibadge" style="background:${ISSUE_COLORS[c.issue]||'var(--bug)'}">${esc(c.issue)}</span>`;
+  h+=`<div class="p-file" style="margin-top:10px">${esc(n.file)}${n.symbols?` · ${n.symbols} symbols`:''}</div>`;
+  if(c.character) h+=`<div class="p-char">${esc(c.character)}</div>`;
+  h+=`<div class="p-deg"><span><b>${n.in}</b> used by</span><span><b>${n.out}</b> uses</span></div>`;
+  if(!c.what){ h+=`<div class="warn">Not curated yet. Its description is written by reading the file.</div>`; }
+  FIELDS.forEach(([k,label])=>{ if(c[k]) h+=`<div class="p-lbl">${label}</div><div class="p-val">${esc(c[k])}</div>`; });
+  if(c.issue && c.issue_note) h+=`<div class="issue"><b>${esc(c.issue)}:</b> ${esc(c.issue_note)}</div>`;
+  const g = c.gotchas ? (Array.isArray(c.gotchas)?c.gotchas:[c.gotchas]) : [];
+  if(g.length) h+=`<div class="warn"><b>⚠ Gotchas</b><ul>${g.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`;
+  if(c.protected) h+=`<div class="p-lbl">Protected</div><div class="p-val">${esc(c.protected)}</div>`;
+  if(c.cases) h+=`<div class="p-lbl">Cases</div><div class="p-val">${esc(Array.isArray(c.cases)?c.cases.join('\n'):c.cases)}</div>`;
+  if(c.curated_at) h+=`<div class="p-file" style="margin-top:14px">curated against ${esc(c.curated_at)}</div>`;
+  if(outs.length){ h+=`<div class="p-lbl">Uses (${outs.length})</div>`+outs.sort((a,b)=>b.rels.length-a.rels.length).map(p=>relRow(p,p.t,'→')).join(''); }
+  if(ins.length){ h+=`<div class="p-lbl">Used by (${ins.length})</div>`+ins.map(p=>relRow(p,p.s,'←')).join(''); }
+  document.getElementById('panel').innerHTML=h;
+}
+
+// ── Search ──────────────────────────────────────────────────
+const totalCurated = DATA.nodes.filter(isCurated).length;
+const searchEl = document.getElementById('search');
+const resultsEl = document.getElementById('results');
+const onlyUncEl = document.getElementById('onlyuncurated');
+document.getElementById('searchcount').textContent = `${totalCurated}/${DATA.nodes.length} curated`;
+function jumpTo(id){
+  const el = nodeEls[id]; if(!el) return;
+  Object.values(nodeEls).forEach(e=>e.classList.remove('hit'));
+  el.classList.add('hit');
+  el.scrollIntoView({behavior:'smooth', block:'center'});
+  select(id);
+}
+function runSearch(){
+  const q = searchEl.value.trim().toLowerCase();
+  const onlyUnc = onlyUncEl.checked;
+  resultsEl.innerHTML='';
+  if(!q && !onlyUnc) return;
+  const matches = DATA.nodes.filter(n=>{
+    const c = cur(n);
+    const hay = (n.label+' '+n.file+' '+(c.what||'')).toLowerCase();
+    return (!q || hay.includes(q)) && (!onlyUnc || !isCurated(n));
+  }).sort((a,b)=>b.in-a.in).slice(0,40);
+  matches.forEach(n=>{
+    const chip=document.createElement('div'); chip.className='rchip';
+    chip.innerHTML=`<span class="rlayer" style="background:${layerColor(n.layer)}"></span>${esc(displayLabel(n))}<span class="rdot" style="background:${isCurated(n)?'#20c997':'var(--border)'}"></span><span class="rfile">${esc(n.file)}</span>`;
+    chip.onclick=(ev)=>{ev.stopPropagation();jumpTo(n.id);};
+    resultsEl.appendChild(chip);
+  });
+  if(!matches.length) resultsEl.innerHTML='<div class="rfile" style="padding:4px">No results</div>';
+}
+searchEl.addEventListener('input', runSearch);
+onlyUncEl.addEventListener('change', runSearch);
+
+// ── Lane, edge-type and defect filters ──────────────────────
+function chip(container, label, color, on, onToggle){
+  const c=document.createElement('span'); c.className='fchip'+(on?' on':''); c.style.setProperty('--fc',color);
+  c.innerHTML=`<span class="fdot"></span>${esc(label)}`;
+  c.onclick=(ev)=>{ev.stopPropagation(); c.classList.toggle('on'); onToggle(c.classList.contains('on')); applyFilters();};
+  container.appendChild(c); return c;
+}
+function buildFilterChips(){
+  const lc = document.getElementById('layerchips');
+  LAYERS.forEach(L=>{
+    if(!DATA.nodes.some(n=>n.layer===L.id)) return;
+    chip(lc, `${L.id}·${L.name}`, `var(${L.c})`, true, on=>on?activeLayers.add(L.id):activeLayers.delete(L.id));
+  });
+  const rc = document.getElementById('relchips');
+  REL_TYPES.forEach(r=>{
+    const cnt = DATA.edges.filter(e=>e.r===r).length;
+    chip(rc, `${r} (${cnt})`, 'var(--l1)', true, on=>on?activeRels.add(r):activeRels.delete(r));
+  });
+  if(ISSUE_TYPES.length){   // only offered when at least one node is actually flagged
+    document.getElementById('issuewrap').style.display='';
+    const ic = document.getElementById('issuechips');
+    ISSUE_TYPES.forEach(t=>{
+      const cnt = DATA.nodes.filter(n=>issueOf(n)===t).length;
+      chip(ic, `${t} (${cnt})`, ISSUE_COLORS[t]||'var(--bug)', false, on=>on?activeIssues.add(t):activeIssues.delete(t));
+    });
+  }
+}
+function applyFilters(){
+  Object.entries(nodeEls).forEach(([id,el])=>el.classList.toggle('hidden', !nodeVisible(id)));
+  document.querySelectorAll('.lane').forEach(lane=>{
+    const lid = Number(lane.dataset.layer);
+    const anyVisible = DATA.nodes.some(n=>n.layer===lid && nodeVisible(n.id));
+    lane.classList.toggle('hidden', !anyVisible);
+  });
+  drawEdges();
+  if(curSel && nodeVisible(curSel)) select(curSel); else if(curSel) clearSel();
+}
+document.getElementById('resetfilters').onclick=(ev)=>{
+  ev.stopPropagation();
+  LAYERS.forEach(l=>activeLayers.add(l.id)); REL_TYPES.forEach(r=>activeRels.add(r)); activeIssues.clear();
+  document.querySelectorAll('#layerchips .fchip, #relchips .fchip').forEach(c=>c.classList.add('on'));
+  document.querySelectorAll('#issuechips .fchip').forEach(c=>c.classList.remove('on'));
+  applyFilters();
+};
+buildFilterChips();
+document.getElementById('panel').innerHTML = emptyPanelHTML();
+</script>
+</body>
+</html>

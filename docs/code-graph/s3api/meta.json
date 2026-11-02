@@ -1,0 +1,23 @@
+{
+ "title": "weed/s3api — code graph",
+ "subtitle": "File-level map of SeaweedFS's S3 gateway package: 98 files of package s3api plus 11 neighbor subpackages it imports, lanes ordered by request flow.",
+ "intro": "weed/s3api is SeaweedFS's S3-compatible gateway. It is a gorilla/mux HTTP server that authenticates each request (SigV4/V2, presigned URLs, STS/JWT, embedded IAM and bucket policies) and maps the S3 operation onto the filer tree under BucketsPath. On top of filer entries and volume chunks it implements the features S3 clients expect: multipart uploads, versioning, SSE-C/KMS/S3, object lock, tagging, ACLs, CORS and lifecycle. Edges come only from the AST (graphify): symbol-level calls, type references, function values passed (indirect_call, e.g. route registration), embeds and imports, aggregated to file level. No dependency rule is enforced: this is one Go package whose files call each other freely.",
+ "output": "s3api-graph.html",
+ "scope": {
+  "seeds": "weed/s3api/*.go (non-test)",
+  "neighbors": "weed/s3api/{s3err,s3_constants,policy_engine,s3tables,s3lifecycle,s3lifecycle/scheduler,lifecycle_xml,s3bucket,cors,s3_objectlock,policy}/ collapsed to one node each",
+  "excluded": "*_test.go, s3tables/s3tablestest, s3lifecycle/lifecycletest, iceberg/testdata, policy_engine/examples.go (go:build ignore), kms_azure.go (azurekms build tag); iceberg/, lance/, s3vectors/ are not imported by package s3api and are out of scope",
+  "why_criterion": "consequence if it fails + design decision + AWS compatibility constraint",
+  "dependency_rule": "none"
+ },
+ "layers": [
+  {"id": 0, "name": "Cross-cutting", "sub": "plumbing every lane uses: constants, error codes, XSD wire types, response writers, metrics"},
+  {"id": 1, "name": "Server & routing", "sub": "process wiring, mux routes and the middleware every request crosses before a handler"},
+  {"id": 2, "name": "Auth & identity", "sub": "who is calling and whether they may: signatures, IAM, STS, bucket policies, ACLs"},
+  {"id": 3, "name": "Bucket API", "sub": "bucket-scoped S3 operations and the per-bucket config they read and write"},
+  {"id": 4, "name": "Object API", "sub": "object-scoped S3 operations: get, put, copy, delete, list, multipart, tagging, ACL, retention"},
+  {"id": 5, "name": "Object features", "sub": "semantics shared across operations: versioning, SSE, object lock, multipart engine, checksums"},
+  {"id": 6, "name": "Filer access", "sub": "how the gateway reads and writes filer entries: paths, listings, chunk manifests, routed owners"},
+  {"id": 7, "name": "Satellite APIs", "sub": "adjacent APIs hosted by the gateway: S3 Tables, lifecycle worker RPCs, SOSAPI"}
+ ]
+}
