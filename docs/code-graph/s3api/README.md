@@ -1,12 +1,15 @@
 # weed/s3api code graph
 
-A file-level map of the SeaweedFS S3 gateway. The structure comes from the AST and the explanations were written by hand. Open `s3api-graph.html` in a browser. It is self-contained, with no server or network needed.
+A file-level map of the SeaweedFS S3 gateway and the catalog APIs that run beside it. The structure comes from the AST and the explanations were written by hand. Open `s3api-graph.html` in a browser. It is self-contained, with no server or network needed.
 
 ## What is in it
 
-- **109 nodes:** the 98 non-test files of package `weed/s3api`, plus 11 neighbor packages it imports, each shown as one collapsed node. The neighbor packages are `s3err`, `s3_constants`, `policy_engine`, `s3tables`, `s3lifecycle` (top-level files only), `s3lifecycle/scheduler`, `lifecycle_xml`, `s3bucket`, `cors`, `s3_objectlock` and `policy`.
-- **928 edges,** extracted with graphify and aggregated from symbols to files. Edge types are `calls`, `indirect_call` (function values such as route registration), `references`, `embeds` and `imports_from`. No edge was added by hand.
-- **8 lanes, ordered by request flow:**
+- **145 nodes:**
+  - the 98 non-test files of package `weed/s3api`;
+  - the 35 non-test files of the three catalog servers wired next to the gateway in `command/s3.go`: the Iceberg REST catalog (`weed/s3api/iceberg`, 21 files), the Lance Namespace REST server (`weed/s3api/lance`, 9) and the S3 Vectors API (`weed/s3api/s3vectors`, 5);
+  - 12 collapsed packages, one node each: the 11 neighbor packages package `s3api` imports (`s3err`, `s3_constants`, `policy_engine`, `s3tables`, `s3lifecycle` (top-level files only), `s3lifecycle/scheduler`, `lifecycle_xml`, `s3bucket`, `cors`, `s3_objectlock`, `policy`) and the Iceberg maintenance worker `weed/worker/tasks/iceberg`.
+- **1,088 edges** (807 distinct node pairs), extracted with graphify and aggregated from symbols to files. Edge types are `calls`, `indirect_call` (function values such as route registration), `references`, `embeds` and `imports_from`. No edge was added by hand.
+- **12 lanes, ordered by request flow:**
 
 | Lane | Contents |
 | --- | --- |
@@ -18,23 +21,28 @@ A file-level map of the SeaweedFS S3 gateway. The structure comes from the AST a
 | 5 Object features | Versioning, SSE, Object Lock, multipart, lifecycle TTL |
 | 6 Filer access | Filer access |
 | 7 Satellite APIs | S3 Tables, lifecycle RPC, SOSAPI |
+| 8 Iceberg REST catalog | `weed/s3api/iceberg` |
+| 9 Lance REST namespace | `weed/s3api/lance` |
+| 10 S3 Vectors | `weed/s3api/s3vectors` |
+| 11 Iceberg maintenance worker | `weed/worker/tasks/iceberg` (collapsed) |
 
-- **Excluded:** `*_test.go`, test helper packages (`s3tablestest`, `lifecycletest`, `iceberg/testdata`), `policy_engine/examples.go` and `kms_azure.go`.
+- **Excluded:** `*_test.go`, test helper packages (`s3tablestest`, `lifecycletest`), `testdata` directories, `policy_engine/examples.go` and `kms_azure.go`.
+- **A known gap in the edges:** the Iceberg, Lance and S3 Vectors servers register their routes with unexported method values (`s.handleX`), and graphify draws no edge for those. Their handler files therefore show no incoming edge from `server.go`. The gateway's own routes (`s3a.XHandler`) are drawn.
 
-Each node was curated by reading its source in full. The panel shows these fields:
+Each node was curated by reading its source in full. The collapsed worker node was curated from its handler, detection, commit, orphan and filer I/O code; its algorithm files (compaction, delete rewrite, row lineage, geometry) are summarized, not described one by one. The panel shows these fields:
 
 | Field | Content |
 | --- | --- |
 | character | One-line role |
 | what | What the code does |
-| why | The consequence if it fails, the design decision behind it, and any AWS compatibility constraint |
+| why | The consequence if it fails, the design decision behind it, and any compatibility constraint (AWS, Iceberg REST, Lance Namespace) |
 | when | When it runs |
 | ux | What users see |
 | if_broken | What breaks if it does |
 | gotchas | Non-obvious behavior to know before changing it |
 | issue / issue_note | The defect flag and its explanation, where one applies |
 
-## Flagged defects (20)
+## Flagged defects (28)
 
 "Probed" means the defect was reproduced with a throwaway test that was then deleted. "Read" means it was found by reading the code and is not reproduced.
 
@@ -44,33 +52,43 @@ Each node was curated by reading its source in full. The panel shows these field
 | bug | `chunked_reader_v4.go` | STREAMING-…-TRAILER uploads: chunk and trailer signatures are not enforced, so the body is unauthenticated. | probed |
 | bug | `policy_engine/` | `s3:authType` is not set for SigV4 presigned URLs, so "deny presigned" policies do not apply to them. | probed |
 | bug | `s3api_embedded_iam.go` | `CreatePolicyVersion` rejects Deny / non-s3 documents that `CreatePolicy` accepts, so such policies can never be updated (Terraform). | probed |
-| bug | `s3tables/` | After a cross-namespace `RenameTable`, every Iceberg commit fails ("metadata location must be within namespace"). | probed |
+| bug | `s3tables/` | After a cross-namespace `RenameTable`, every Iceberg commit fails; and `RenameTable` copies metadata from a torn read, so a commit landing during the rename is lost while the rename answers 200. | probed |
 | bug | `cors/` | A preflight uses the first rule whose origin matches even when its methods don't, so a later rule that allows PUT is never used. | probed |
 | bug | `s3bucket/` | `VerifyS3BucketName` accepts non-ASCII letters and digits ("bücket"), and CreateBucket relies on it alone. | probed |
+| bug | `s3api_put_handlers.go` | SSE-S3 multipart parts reuse the AES-CTR keystream (shared DEK and base IV, part offset 0). | probed |
+| bug | `iceberg/handlers_table.go` | DropTable ignores `purgeRequested` and always deletes the table's data; CreateTable answers 200 on an existing name and writes v1.metadata.json non-exclusively. | probed (drop) |
+| bug | `iceberg/handlers_namespace.go` | UpdateNamespaceProperties is a read-modify-write without a version check, so concurrent property updates drop each other. | probed |
+| bug | `worker/tasks/iceberg/` | The maintenance worker writes records that a rename or delete has claimed, leaving a table stuck in `Deleting=rename` (409 on every later commit and delete). | probed |
 | bug | `auth_signature_v2.go` | Header-signed SigV2 has no Date freshness check (replay), and several subresources are missing from the signed resource. | read |
-| bug | `s3api_put_handlers.go` | SSE-S3 multipart parts reuse the AES-CTR keystream (shared DEK and base IV, part offset 0). | read |
 | bug | `s3api_object_handlers_multipart.go` | `isVersioningEnabled` is passed as `objectLockEnabled`: lock headers are accepted on non-lock buckets and are not enforced. | read |
-| bug | `s3api_object_handlers_put.go` | An invalid storage class is rejected only after the upload, and the uploaded chunks leak. | read |
 | bug | `s3api_object_handlers_copy.go` | Copied chunks leak when finalize fails (for example a 412); UploadPartCopy misses `prefixObjectSource`. | read |
 | bug | `s3api_bucket_policy_handlers.go` | Unconditional whole-entry bucket rewrite: a concurrent versioning or Object Lock config write can be reverted. | read |
 | bug | `s3api_server.go` | `ValidateS3Credential` compares secrets with `!=` (a timing side channel on the OAuth token endpoints); low severity. | read |
+| bug | `iceberg/handlers_commit.go` | A non-conflict UpdateTable failure deletes the staged metadata file although the record may point at it. | read |
+| bug | `iceberg/commit_helpers.go` | Create-on-commit writes v{N}.metadata.json non-exclusively and deletes it on any CreateTable error, so concurrent creators can delete the winner's file. | read |
+| bug | `iceberg/handlers_transaction.go` | The rollback of a failed multi-table commit carries no version token and reverts commits other writers landed meanwhile. | read |
+| bug | `iceberg/handlers_view.go` | The loser of a concurrent CreateView overwrites the winner's metadata file and, if that write fails, drops the winner's view. | read |
+| bug | `lance/handlers_table.go` | Deregister and re-register change what every caller sees but require only read permission. | read |
 | dead | `s3_sse_kms.go` | The S3 Bucket Key data-key cache path is not wired in. | read |
 | dead | `s3api_copy_size_calculation.go` | Its only output is a V(2) log line. | read |
 | dead | `filer_util_tags.go` | `getTags` has no callers. | read |
 | duplicate | `s3api_object_handlers.go` | GET and HEAD each carry a ~90-line copy of versioned entry resolution. | read |
 | duplicate | `filer_multipart.go` | Three near-identical decorate closures in `completeMultipartUpload`. | read |
 | duplicate | `s3lifecycle/` | `version_time.go` copies the gateway's version-ID comparator. | read |
+| duplicate | `lance/handlers_oauth.go` | A near line-for-line copy of the Iceberg catalog's OAuth token code. | read |
 
 Use the **Defects** chips in the viewer to show only flagged nodes.
 
+### Fixed since the first curation
+
+- `s3api_object_handlers_put.go`: an invalid `x-amz-storage-class` was rejected only after the upload and leaked the chunks. Fixed upstream in [seaweedfs/seaweedfs#12354](https://github.com/seaweedfs/seaweedfs/pull/12354) (`validatePutHeaders` now runs before the body is read); the flag was removed.
+
 ## Provenance
 
-- Source: branch `claude/brave-carson-13bjg1` at base commit `984eac6`. `weed/` is unchanged since then; this folder is the only addition.
+- Source: branch `claude/brave-carson-13bjg1`, with `weed/` equal to upstream master `199b2e2`. This folder is the only addition.
+- The 109 nodes of the first build were curated at `984eac6` and drift-checked to `199b2e2`. Seven files in that scope changed in between: `s3_metadata_util.go`, `s3api_object_handlers_multipart.go`, `s3api_object_handlers_put.go`, and four files of `s3tables/` (`handler_namespace.go`, `handler_policy.go`, `manager.go`, `permissions.go`). Each was re-read and its node updated (tag merging inside the compare, bucket binding for DeleteNamespace and tag operations, `s3vectors:VectorBucketTag/` condition keys, the storage-class fix).
+- The 36 nodes added for lanes 8–11 were curated at `199b2e2`. The Iceberg nodes describe master, not the unmerged `fix/iceberg-create-table-exclusive-409` branch, which changes `handlers_table.go`, `commit_helpers.go` and `server.go`.
 - Edges come from graphify's AST extraction; descriptions and defect flags were curated by hand.
-- Drift check against upstream `master` at `b7b2a59` (8 commits past the base): inside the graph's scope only `s3tables/` changed (`handler_namespace.go`, `handler_policy.go`, `manager.go`).
-  - That makes one statement in the `s3tables/` node stale on master: TagResource and UntagResource now merge tags inside the compare-and-swap, so concurrent tag writes no longer lose each other.
-  - Master also binds namespace deletes and tag operations to the authorized bucket record, and adds an in-process tag cap. HTTP requests still go unvalidated.
-  - None of the 20 flagged defects is touched by those commits. `s3vectors/` also changed but is outside this graph.
 
 ## Regenerating
 
@@ -80,7 +98,7 @@ Run these from the repository root:
 python3 docs/code-graph/s3api/tools/extract.py <graphify-cache-dir> <ast-raw.json>
 ```
 
-`extract.py` needs graphify installed, and it hardcodes `REPO = /home/user/seaweedfs`; change that line when you run it from another checkout. Run it without `-I`, because it imports the installed `graphify` module.
+`extract.py` needs graphify installed, and it hardcodes `REPO = /home/user/seaweedfs`; change that line when you run it from another checkout. Run it without `-I`, because it imports the installed `graphify` module. Its seed lists (`NEIGH`, `FILE_PKGS`, `EXTRA_NEIGH`) and `arrange.py`'s `FILE_PKGS` / `COLLAPSED_EXTRA` must agree.
 
 ```bash
 python3 -I docs/code-graph/s3api/tools/arrange.py <ast-raw.json> docs/code-graph/s3api/layers.json docs/code-graph/s3api/data.json

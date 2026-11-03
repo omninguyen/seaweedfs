@@ -171,6 +171,306 @@
    "symbols": 4
   },
   {
+   "id": "weed/s3api/iceberg/commit_helpers.go",
+   "label": "iceberg/commit_helpers.go",
+   "file": "weed/s3api/iceberg/commit_helpers.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 3,
+   "out": 7,
+   "symbols": 13
+  },
+  {
+   "id": "weed/s3api/iceberg/commit_updates.go",
+   "label": "iceberg/commit_updates.go",
+   "file": "weed/s3api/iceberg/commit_updates.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 3,
+   "out": 0,
+   "symbols": 8
+  },
+  {
+   "id": "weed/s3api/iceberg/handlers_commit.go",
+   "label": "iceberg/handlers_commit.go",
+   "file": "weed/s3api/iceberg/handlers_commit.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 0,
+   "out": 11,
+   "symbols": 2
+  },
+  {
+   "id": "weed/s3api/iceberg/handlers_metrics.go",
+   "label": "iceberg/handlers_metrics.go",
+   "file": "weed/s3api/iceberg/handlers_metrics.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 0,
+   "out": 1,
+   "symbols": 2
+  },
+  {
+   "id": "weed/s3api/iceberg/handlers_namespace.go",
+   "label": "iceberg/handlers_namespace.go",
+   "file": "weed/s3api/iceberg/handlers_namespace.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 0,
+   "out": 4,
+   "symbols": 10
+  },
+  {
+   "id": "weed/s3api/iceberg/handlers_oauth.go",
+   "label": "iceberg/handlers_oauth.go",
+   "file": "weed/s3api/iceberg/handlers_oauth.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 0,
+   "out": 1,
+   "symbols": 13
+  },
+  {
+   "id": "weed/s3api/iceberg/handlers_table.go",
+   "label": "iceberg/handlers_table.go",
+   "file": "weed/s3api/iceberg/handlers_table.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 2,
+   "out": 8,
+   "symbols": 22
+  },
+  {
+   "id": "weed/s3api/iceberg/handlers_transaction.go",
+   "label": "iceberg/handlers_transaction.go",
+   "file": "weed/s3api/iceberg/handlers_transaction.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 0,
+   "out": 11,
+   "symbols": 13
+  },
+  {
+   "id": "weed/s3api/iceberg/handlers_view.go",
+   "label": "iceberg/handlers_view.go",
+   "file": "weed/s3api/iceberg/handlers_view.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 1,
+   "out": 5,
+   "symbols": 13
+  },
+  {
+   "id": "weed/s3api/iceberg/handlers_view_update.go",
+   "label": "iceberg/handlers_view_update.go",
+   "file": "weed/s3api/iceberg/handlers_view_update.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 0,
+   "out": 6,
+   "symbols": 2
+  },
+  {
+   "id": "weed/s3api/iceberg/iceberg.go",
+   "label": "iceberg/iceberg.go",
+   "file": "weed/s3api/iceberg/iceberg.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 0,
+   "out": 0,
+   "symbols": 1
+  },
+  {
+   "id": "weed/s3api/iceberg/manifest_repair.go",
+   "label": "iceberg/manifest_repair.go",
+   "file": "weed/s3api/iceberg/manifest_repair.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 0,
+   "out": 2,
+   "symbols": 28
+  },
+  {
+   "id": "weed/s3api/iceberg/metadata_compliance.go",
+   "label": "iceberg/metadata_compliance.go",
+   "file": "weed/s3api/iceberg/metadata_compliance.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 5,
+   "out": 0,
+   "symbols": 4
+  },
+  {
+   "id": "weed/s3api/iceberg/metadata_files.go",
+   "label": "iceberg/metadata_files.go",
+   "file": "weed/s3api/iceberg/metadata_files.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 1,
+   "out": 3,
+   "symbols": 7
+  },
+  {
+   "id": "weed/s3api/iceberg/name_mapping.go",
+   "label": "iceberg/name_mapping.go",
+   "file": "weed/s3api/iceberg/name_mapping.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 4,
+   "out": 0,
+   "symbols": 6
+  },
+  {
+   "id": "weed/s3api/iceberg/path_validation.go",
+   "label": "iceberg/path_validation.go",
+   "file": "weed/s3api/iceberg/path_validation.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 7,
+   "out": 2,
+   "symbols": 5
+  },
+  {
+   "id": "weed/s3api/iceberg/requirements.go",
+   "label": "iceberg/requirements.go",
+   "file": "weed/s3api/iceberg/requirements.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 2,
+   "out": 0,
+   "symbols": 2
+  },
+  {
+   "id": "weed/s3api/iceberg/server.go",
+   "label": "iceberg/server.go",
+   "file": "weed/s3api/iceberg/server.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 0,
+   "out": 4,
+   "symbols": 23
+  },
+  {
+   "id": "weed/s3api/iceberg/stage_create.go",
+   "label": "iceberg/stage_create.go",
+   "file": "weed/s3api/iceberg/stage_create.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 2,
+   "out": 2,
+   "symbols": 10
+  },
+  {
+   "id": "weed/s3api/iceberg/types.go",
+   "label": "iceberg/types.go",
+   "file": "weed/s3api/iceberg/types.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 5,
+   "out": 1,
+   "symbols": 32
+  },
+  {
+   "id": "weed/s3api/iceberg/utils.go",
+   "label": "iceberg/utils.go",
+   "file": "weed/s3api/iceberg/utils.go",
+   "kind": "file",
+   "layer": 8,
+   "in": 14,
+   "out": 2,
+   "symbols": 22
+  },
+  {
+   "id": "weed/s3api/lance/errors.go",
+   "label": "lance/errors.go",
+   "file": "weed/s3api/lance/errors.go",
+   "kind": "file",
+   "layer": 9,
+   "in": 5,
+   "out": 1,
+   "symbols": 6
+  },
+  {
+   "id": "weed/s3api/lance/handlers_namespace.go",
+   "label": "lance/handlers_namespace.go",
+   "file": "weed/s3api/lance/handlers_namespace.go",
+   "kind": "file",
+   "layer": 9,
+   "in": 1,
+   "out": 3,
+   "symbols": 11
+  },
+  {
+   "id": "weed/s3api/lance/handlers_oauth.go",
+   "label": "lance/handlers_oauth.go",
+   "file": "weed/s3api/lance/handlers_oauth.go",
+   "kind": "file",
+   "layer": 9,
+   "in": 0,
+   "out": 1,
+   "symbols": 13
+  },
+  {
+   "id": "weed/s3api/lance/handlers_table.go",
+   "label": "lance/handlers_table.go",
+   "file": "weed/s3api/lance/handlers_table.go",
+   "kind": "file",
+   "layer": 9,
+   "in": 0,
+   "out": 5,
+   "symbols": 16
+  },
+  {
+   "id": "weed/s3api/lance/identifier.go",
+   "label": "lance/identifier.go",
+   "file": "weed/s3api/lance/identifier.go",
+   "kind": "file",
+   "layer": 9,
+   "in": 2,
+   "out": 0,
+   "symbols": 8
+  },
+  {
+   "id": "weed/s3api/lance/markers.go",
+   "label": "lance/markers.go",
+   "file": "weed/s3api/lance/markers.go",
+   "kind": "file",
+   "layer": 9,
+   "in": 0,
+   "out": 1,
+   "symbols": 6
+  },
+  {
+   "id": "weed/s3api/lance/server.go",
+   "label": "lance/server.go",
+   "file": "weed/s3api/lance/server.go",
+   "kind": "file",
+   "layer": 9,
+   "in": 1,
+   "out": 4,
+   "symbols": 30
+  },
+  {
+   "id": "weed/s3api/lance/storage.go",
+   "label": "lance/storage.go",
+   "file": "weed/s3api/lance/storage.go",
+   "kind": "file",
+   "layer": 9,
+   "in": 2,
+   "out": 5,
+   "symbols": 15
+  },
+  {
+   "id": "weed/s3api/lance/types.go",
+   "label": "lance/types.go",
+   "file": "weed/s3api/lance/types.go",
+   "kind": "file",
+   "layer": 9,
+   "in": 0,
+   "out": 0,
+   "symbols": 23
+  },
+  {
    "id": "weed/s3api/lifecycle_xml/",
    "label": "lifecycle_xml/",
    "file": "weed/s3api/lifecycle_xml/",
@@ -206,7 +506,7 @@
    "file": "weed/s3api/policy_engine/",
    "kind": "package",
    "layer": 2,
-   "in": 10,
+   "in": 11,
    "out": 1,
    "symbols": 160
   },
@@ -246,7 +546,7 @@
    "file": "weed/s3api/s3_constants/",
    "kind": "package",
    "layer": 0,
-   "in": 71,
+   "in": 85,
    "out": 0,
    "symbols": 54
   },
@@ -277,7 +577,7 @@
    "kind": "file",
    "layer": 4,
    "in": 4,
-   "out": 3,
+   "out": 4,
    "symbols": 3
   },
   {
@@ -776,9 +1076,9 @@
    "file": "weed/s3api/s3api_object_handlers_put.go",
    "kind": "file",
    "layer": 4,
-   "in": 21,
+   "in": 22,
    "out": 36,
-   "symbols": 65
+   "symbols": 66
   },
   {
    "id": "weed/s3api/s3api_object_handlers_rename.go",
@@ -1036,7 +1336,7 @@
    "file": "weed/s3api/s3err/",
    "kind": "package",
    "layer": 0,
-   "in": 66,
+   "in": 69,
    "out": 1,
    "symbols": 38
   },
@@ -1066,9 +1366,59 @@
    "file": "weed/s3api/s3tables/",
    "kind": "package",
    "layer": 7,
-   "in": 6,
+   "in": 27,
    "out": 2,
-   "symbols": 421
+   "symbols": 427
+  },
+  {
+   "id": "weed/s3api/s3vectors/execute.go",
+   "label": "s3vectors/execute.go",
+   "file": "weed/s3api/s3vectors/execute.go",
+   "kind": "file",
+   "layer": 10,
+   "in": 0,
+   "out": 1,
+   "symbols": 4
+  },
+  {
+   "id": "weed/s3api/s3vectors/handlers.go",
+   "label": "s3vectors/handlers.go",
+   "file": "weed/s3api/s3vectors/handlers.go",
+   "kind": "file",
+   "layer": 10,
+   "in": 1,
+   "out": 4,
+   "symbols": 79
+  },
+  {
+   "id": "weed/s3api/s3vectors/server.go",
+   "label": "s3vectors/server.go",
+   "file": "weed/s3api/s3vectors/server.go",
+   "kind": "file",
+   "layer": 10,
+   "in": 1,
+   "out": 5,
+   "symbols": 16
+  },
+  {
+   "id": "weed/s3api/s3vectors/tagging.go",
+   "label": "s3vectors/tagging.go",
+   "file": "weed/s3api/s3vectors/tagging.go",
+   "kind": "file",
+   "layer": 10,
+   "in": 1,
+   "out": 3,
+   "symbols": 9
+  },
+  {
+   "id": "weed/s3api/s3vectors/types.go",
+   "label": "s3vectors/types.go",
+   "file": "weed/s3api/s3vectors/types.go",
+   "kind": "file",
+   "layer": 10,
+   "in": 3,
+   "out": 1,
+   "symbols": 54
   },
   {
    "id": "weed/s3api/stats.go",
@@ -1089,6 +1439,16 @@
    "in": 5,
    "out": 1,
    "symbols": 9
+  },
+  {
+   "id": "weed/worker/tasks/iceberg/",
+   "label": "worker/tasks/iceberg/",
+   "file": "weed/worker/tasks/iceberg/",
+   "kind": "package",
+   "layer": 11,
+   "in": 0,
+   "out": 1,
+   "symbols": 289
   }
  ],
  "edges": [
@@ -2258,6 +2618,1199 @@
    ]
   },
   {
+   "s": "weed/s3api/iceberg/commit_helpers.go",
+   "t": "weed/s3api/iceberg/commit_updates.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".finalizeCreateOnCommit() \u2192 applyStatisticsUpdates()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/commit_helpers.go",
+   "t": "weed/s3api/iceberg/commit_updates.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "createOnCommitInput \u2192 statisticsUpdate"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/commit_helpers.go",
+   "t": "weed/s3api/iceberg/metadata_compliance.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".finalizeCreateOnCommit() \u2192 ensureMetadataSpecCompliance()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/commit_helpers.go",
+   "t": "weed/s3api/iceberg/name_mapping.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".finalizeCreateOnCommit() \u2192 refreshDefaultNameMapping()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/commit_helpers.go",
+   "t": "weed/s3api/iceberg/path_validation.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".finalizeCreateOnCommit() \u2192 confineMetadataLocation()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/commit_helpers.go",
+   "t": "weed/s3api/iceberg/types.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".finalizeCreateOnCommit() \u2192 CommitTableResponse"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/commit_helpers.go",
+   "t": "weed/s3api/iceberg/utils.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".finalizeCreateOnCommit() \u2192 parseS3Location()",
+    ".finalizeCreateOnCommit() \u2192 flattenNamespacePath()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/commit_helpers.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 4,
+   "via": [
+    ".finalizeCreateOnCommit() \u2192 NewManagerClient()",
+    ".authorizeCommit() \u2192 NewManagerClient()",
+    ".authorizeCommit() \u2192 ParseBucketNameFromARN()",
+    ".authorizeViewCommit() \u2192 NewManagerClient()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/commit_helpers.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/commit_helpers.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "fitUpdateTableRequest() \u2192 UpdateTableRequest"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_commit.go",
+   "t": "weed/s3api/iceberg/commit_helpers.go",
+   "r": "calls",
+   "w": 5,
+   "via": [
+    ".handleUpdateTable() \u2192 isS3TablesNotFound()",
+    ".handleUpdateTable() \u2192 hasAssertCreateRequirement()",
+    ".handleUpdateTable() \u2192 fitUpdateTableRequest()",
+    ".handleUpdateTable() \u2192 isS3TablesConflict()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_commit.go",
+   "t": "weed/s3api/iceberg/commit_updates.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".handleUpdateTable() \u2192 parseCommitUpdates()",
+    ".handleUpdateTable() \u2192 applyStatisticsUpdates()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_commit.go",
+   "t": "weed/s3api/iceberg/handlers_table.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".handleUpdateTable() \u2192 newTableMetadata()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_commit.go",
+   "t": "weed/s3api/iceberg/metadata_compliance.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".handleUpdateTable() \u2192 ensureMetadataSpecCompliance()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_commit.go",
+   "t": "weed/s3api/iceberg/name_mapping.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".handleUpdateTable() \u2192 refreshDefaultNameMapping()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_commit.go",
+   "t": "weed/s3api/iceberg/path_validation.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".handleUpdateTable() \u2192 confineMetadataLocation()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_commit.go",
+   "t": "weed/s3api/iceberg/requirements.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".handleUpdateTable() \u2192 normalizeRequirements()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_commit.go",
+   "t": "weed/s3api/iceberg/stage_create.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".handleUpdateTable() \u2192 isStageCreateEnabled()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_commit.go",
+   "t": "weed/s3api/iceberg/utils.go",
+   "r": "calls",
+   "w": 10,
+   "via": [
+    ".handleUpdateTable() \u2192 parseNamespace()",
+    ".handleUpdateTable() \u2192 writeError()",
+    ".handleUpdateTable() \u2192 getBucketFromPrefix()",
+    ".handleUpdateTable() \u2192 buildTableBucketARN()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_commit.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".handleUpdateTable() \u2192 GetIdentityNameFromContext()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_commit.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_commit.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".handleUpdateTable() \u2192 NewManagerClient()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_commit.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_metrics.go",
+   "t": "weed/s3api/iceberg/utils.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".handleReportMetrics() \u2192 parseNamespace()",
+    ".handleReportMetrics() \u2192 writeError()",
+    ".handleReportMetrics() \u2192 flattenNamespacePath()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_namespace.go",
+   "t": "weed/s3api/iceberg/types.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "applyNamespacePropertyUpdates() \u2192 UpdateNamespacePropertiesResponse"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_namespace.go",
+   "t": "weed/s3api/iceberg/utils.go",
+   "r": "calls",
+   "w": 39,
+   "via": [
+    ".handleConfig() \u2192 resolveWarehouseBucket()",
+    ".handleListNamespaces() \u2192 getBucketFromPrefix()",
+    ".handleListNamespaces() \u2192 buildTableBucketARN()",
+    ".handleListNamespaces() \u2192 parsePagination()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_namespace.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "calls",
+   "w": 6,
+   "via": [
+    ".handleListNamespaces() \u2192 GetIdentityNameFromContext()",
+    ".handleCreateNamespace() \u2192 GetIdentityNameFromContext()",
+    ".handleGetNamespace() \u2192 GetIdentityNameFromContext()",
+    ".handleUpdateNamespaceProperties() \u2192 GetIdentityNameFromContext()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_namespace.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_namespace.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 6,
+   "via": [
+    ".handleListNamespaces() \u2192 NewManagerClient()",
+    ".handleCreateNamespace() \u2192 NewManagerClient()",
+    ".handleGetNamespace() \u2192 NewManagerClient()",
+    ".handleUpdateNamespaceProperties() \u2192 NewManagerClient()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_namespace.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_oauth.go",
+   "t": "weed/s3api/iceberg/utils.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".handleOAuthTokens() \u2192 writeJSON()",
+    ".handleTokenExchange() \u2192 writeJSON()",
+    "writeOAuthError() \u2192 writeJSON()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_table.go",
+   "t": "weed/s3api/iceberg/metadata_compliance.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".handleCreateTable() \u2192 ensureMetadataSpecCompliance()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_table.go",
+   "t": "weed/s3api/iceberg/name_mapping.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "newTableMetadata() \u2192 refreshDefaultNameMapping()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_table.go",
+   "t": "weed/s3api/iceberg/path_validation.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".handleCreateTable() \u2192 isValidTablePath()",
+    ".handleRegisterTable() \u2192 isValidTablePath()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_table.go",
+   "t": "weed/s3api/iceberg/stage_create.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".handleCreateTable() \u2192 isStageCreateEnabled()",
+    ".handleCreateTable() \u2192 stageCreateStagedTablePath()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_table.go",
+   "t": "weed/s3api/iceberg/types.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".buildLoadTableResult() \u2192 LoadTableResult",
+    ".buildFileIOConfig() \u2192 StorageCredential"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_table.go",
+   "t": "weed/s3api/iceberg/utils.go",
+   "r": "calls",
+   "w": 51,
+   "via": [
+    ".handleListTables() \u2192 parseNamespace()",
+    ".handleListTables() \u2192 writeError()",
+    ".handleListTables() \u2192 getBucketFromPrefix()",
+    ".handleListTables() \u2192 buildTableBucketARN()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_table.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "calls",
+   "w": 10,
+   "via": [
+    ".handleListTables() \u2192 GetIdentityNameFromContext()",
+    ".handleCreateTable() \u2192 GetIdentityNameFromContext()",
+    ".handleRegisterTable() \u2192 GetIdentityNameFromContext()",
+    ".handleLoadTable() \u2192 GetIdentityNameFromContext()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_table.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_table.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 11,
+   "via": [
+    ".handleListTables() \u2192 NewManagerClient()",
+    ".authorizeCreateTable() \u2192 NewManagerClient()",
+    ".handleCreateTable() \u2192 NewManagerClient()",
+    ".handleCreateTable() \u2192 ValidateMetadataLocation()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_table.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_table.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".buildLoadTableResult() \u2192 GetTableResponse"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_transaction.go",
+   "t": "weed/s3api/iceberg/commit_helpers.go",
+   "r": "calls",
+   "w": 4,
+   "via": [
+    ".handleCommitTransaction() \u2192 isS3TablesConflict()",
+    ".prepareTableCommit() \u2192 isS3TablesNotFound()",
+    ".flipTablePointer() \u2192 fitUpdateTableRequest()",
+    ".rollbackTablePointers() \u2192 fitUpdateTableRequest()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_transaction.go",
+   "t": "weed/s3api/iceberg/commit_helpers.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".prepareTableCommit() \u2192 icebergRequestError",
+    "parseTableChange() \u2192 icebergRequestError"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_transaction.go",
+   "t": "weed/s3api/iceberg/commit_updates.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".prepareTableCommit() \u2192 applyStatisticsUpdates()",
+    "parseTableChange() \u2192 parseCommitUpdates()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_transaction.go",
+   "t": "weed/s3api/iceberg/commit_updates.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "parseTableChange() \u2192 statisticsUpdate"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_transaction.go",
+   "t": "weed/s3api/iceberg/handlers_table.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".prepareTableCommit() \u2192 newTableMetadata()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_transaction.go",
+   "t": "weed/s3api/iceberg/metadata_compliance.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".prepareTableCommit() \u2192 ensureMetadataSpecCompliance()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_transaction.go",
+   "t": "weed/s3api/iceberg/name_mapping.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".prepareTableCommit() \u2192 refreshDefaultNameMapping()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_transaction.go",
+   "t": "weed/s3api/iceberg/path_validation.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".prepareTableCommit() \u2192 confineMetadataLocation()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_transaction.go",
+   "t": "weed/s3api/iceberg/requirements.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "parseTableChange() \u2192 normalizeRequirements()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_transaction.go",
+   "t": "weed/s3api/iceberg/types.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "tableChangeRequest \u2192 TableIdentifier"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_transaction.go",
+   "t": "weed/s3api/iceberg/utils.go",
+   "r": "calls",
+   "w": 8,
+   "via": [
+    ".handleCommitTransaction() \u2192 getBucketFromPrefix()",
+    ".handleCommitTransaction() \u2192 buildTableBucketARN()",
+    ".handleCommitTransaction() \u2192 writeError()",
+    ".handleCommitTransaction() \u2192 logManagerError()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_transaction.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".handleCommitTransaction() \u2192 GetIdentityNameFromContext()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_transaction.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_transaction.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".prepareTableCommit() \u2192 NewManagerClient()",
+    ".flipTablePointer() \u2192 NewManagerClient()",
+    ".rollbackTablePointers() \u2192 NewManagerClient()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_transaction.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_transaction.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "references",
+   "w": 4,
+   "via": [
+    "preparedTableCommit \u2192 TableMetadata",
+    "cloneTableMetadata() \u2192 TableMetadata",
+    "cloneTableMetadata() \u2192 TableMetadata",
+    "buildTableRestoreRequest() \u2192 UpdateTableRequest"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_view.go",
+   "t": "weed/s3api/iceberg/path_validation.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".handleCreateView() \u2192 isValidTablePath()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_view.go",
+   "t": "weed/s3api/iceberg/types.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".buildViewResponse() \u2192 ViewResponse"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_view.go",
+   "t": "weed/s3api/iceberg/utils.go",
+   "r": "calls",
+   "w": 37,
+   "via": [
+    ".handleListViews() \u2192 parseNamespace()",
+    ".handleListViews() \u2192 writeError()",
+    ".handleListViews() \u2192 getBucketFromPrefix()",
+    ".handleListViews() \u2192 buildTableBucketARN()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_view.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "calls",
+   "w": 5,
+   "via": [
+    ".handleListViews() \u2192 GetIdentityNameFromContext()",
+    ".handleCreateView() \u2192 GetIdentityNameFromContext()",
+    ".dropView() \u2192 GetIdentityNameFromContext()",
+    ".getView() \u2192 GetIdentityNameFromContext()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_view.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_view.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 5,
+   "via": [
+    ".handleListViews() \u2192 NewManagerClient()",
+    ".handleCreateView() \u2192 NewManagerClient()",
+    ".dropView() \u2192 NewManagerClient()",
+    ".getView() \u2192 NewManagerClient()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_view.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_view.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".getView() \u2192 GetViewResponse",
+    ".buildViewResponse() \u2192 GetViewResponse"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_view_update.go",
+   "t": "weed/s3api/iceberg/commit_helpers.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".handleUpdateView() \u2192 isS3TablesConflict()",
+    ".handleUpdateView() \u2192 sleepBeforeCommitRetry()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_view_update.go",
+   "t": "weed/s3api/iceberg/handlers_view.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".handleUpdateView() \u2192 isViewNotFound()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_view_update.go",
+   "t": "weed/s3api/iceberg/path_validation.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".handleUpdateView() \u2192 confineMetadataLocation()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_view_update.go",
+   "t": "weed/s3api/iceberg/utils.go",
+   "r": "calls",
+   "w": 8,
+   "via": [
+    ".handleUpdateView() \u2192 parseNamespace()",
+    ".handleUpdateView() \u2192 writeError()",
+    ".handleUpdateView() \u2192 getBucketFromPrefix()",
+    ".handleUpdateView() \u2192 buildTableBucketARN()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_view_update.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".handleUpdateView() \u2192 GetIdentityNameFromContext()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_view_update.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_view_update.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".handleUpdateView() \u2192 NewManagerClient()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_view_update.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/manifest_repair.go",
+   "t": "weed/s3api/iceberg/metadata_files.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".loadTableMetadataBlob() \u2192 metadataDirPath()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/manifest_repair.go",
+   "t": "weed/s3api/iceberg/utils.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    "absolutizeLocation() \u2192 parseS3Location()",
+    ".split() \u2192 parseS3Location()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/metadata_files.go",
+   "t": "weed/s3api/iceberg/path_validation.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".currentMetadataBytes() \u2192 confineMetadataLocation()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/metadata_files.go",
+   "t": "weed/s3api/iceberg/utils.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".currentMetadataBytes() \u2192 parseS3Location()",
+    ".currentMetadataBytes() \u2192 tableLocationFromMetadataLocation()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/metadata_files.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/metadata_files.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".currentMetadataBytes() \u2192 GetTableResponse"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/path_validation.go",
+   "t": "weed/s3api/iceberg/utils.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "validateRequestPath() \u2192 writeError()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/path_validation.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "validateRequestPath() \u2192 IsValidBucketName()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/path_validation.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/server.go",
+   "t": "weed/s3api/iceberg/utils.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".RegisterRoutes() \u2192 writeError()",
+    ".Auth() \u2192 writeError()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/server.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "calls",
+   "w": 6,
+   "via": [
+    "collapseDoubledV1Middleware() \u2192 SetOriginalRequestPathInContext()",
+    ".Auth() \u2192 SetIdentityNameInContext()",
+    ".Auth() \u2192 SetAccessKeyIdInContext()",
+    ".Auth() \u2192 SetStoredAccessKeyIdInContext()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/server.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/server.go",
+   "t": "weed/s3api/s3err/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".Auth() \u2192 GetAPIError()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/server.go",
+   "t": "weed/s3api/s3err/",
+   "r": "imports_from",
+   "w": 4,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/server.go",
+   "t": "weed/s3api/s3err/",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".AuthenticateRequest() \u2192 ErrorCode"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/server.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "NewServer() \u2192 NewManager()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/server.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/server.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "Server \u2192 Manager"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/stage_create.go",
+   "t": "weed/s3api/iceberg/utils.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "stageCreateMarkerNamespaceKey() \u2192 encodeNamespace()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/stage_create.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/types.go",
+   "t": "weed/s3api/iceberg/metadata_compliance.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".MarshalJSON() \u2192 ensureMetadataSpecCompliance()",
+    ".MarshalJSON() \u2192 ensureMetadataSpecCompliance()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/utils.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/utils.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    "resolveWarehouseBucket() \u2192 ParseBucketNameFromARN()",
+    "resolveWarehouseBucket() \u2192 IsValidBucketName()",
+    "buildTableBucketARN() \u2192 BuildBucketARN()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/utils.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/lance/errors.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/lance/handlers_namespace.go",
+   "t": "weed/s3api/lance/errors.go",
+   "r": "calls",
+   "w": 15,
+   "via": [
+    ".handleCreateNamespace() \u2192 writeError()",
+    ".handleCreateNamespace() \u2192 writeStorageError()",
+    ".handleCreateNamespace() \u2192 writeJSON()",
+    ".handleListNamespaces() \u2192 writeStorageError()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/handlers_namespace.go",
+   "t": "weed/s3api/lance/storage.go",
+   "r": "calls",
+   "w": 19,
+   "via": [
+    ".handleCreateNamespace() \u2192 routeIdentifier()",
+    ".handleCreateNamespace() \u2192 decodeBody()",
+    ".handleCreateNamespace() \u2192 checkBodyIdentifier()",
+    ".handleListNamespaces() \u2192 routeIdentifier()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/handlers_namespace.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/lance/handlers_oauth.go",
+   "t": "weed/s3api/lance/errors.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".handleOAuthTokens() \u2192 writeJSON()",
+    "writeOAuthError() \u2192 writeJSON()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/handlers_table.go",
+   "t": "weed/s3api/lance/errors.go",
+   "r": "calls",
+   "w": 28,
+   "via": [
+    ".handleListTables() \u2192 writeError()",
+    ".handleListTables() \u2192 writeStorageError()",
+    ".handleListTables() \u2192 writeJSON()",
+    ".handleListAllTables() \u2192 writeStorageError()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/handlers_table.go",
+   "t": "weed/s3api/lance/handlers_namespace.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".handleRegisterTable() \u2192 normalizeMode()",
+    ".handleRegisterTable() \u2192 normalizeProperties()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/handlers_table.go",
+   "t": "weed/s3api/lance/identifier.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".handleListAllTables() \u2192 requestDelimiter()",
+    ".lanceTableIDs() \u2192 identifier",
+    ".handleRenameTable() \u2192 identifier"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/handlers_table.go",
+   "t": "weed/s3api/lance/storage.go",
+   "r": "calls",
+   "w": 40,
+   "via": [
+    ".handleListTables() \u2192 routeIdentifier()",
+    ".handleListTables() \u2192 bucketARN()",
+    ".handleListTables() \u2192 pageSize()",
+    ".handleListTables() \u2192 boolQuery()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/handlers_table.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/lance/handlers_table.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".lanceTableIDs() \u2192 TableSummary"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/markers.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "datasetDir() \u2192 TableDataDirFromMetadataLocation()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/markers.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/lance/server.go",
+   "t": "weed/s3api/lance/errors.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".RegisterRoutes() \u2192 writeError()",
+    ".handleUnsupported() \u2192 writeError()",
+    ".Auth() \u2192 writeError()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/server.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "calls",
+   "w": 5,
+   "via": [
+    ".Auth() \u2192 SetIdentityNameInContext()",
+    ".Auth() \u2192 SetAccessKeyIdInContext()",
+    ".Auth() \u2192 SetStoredAccessKeyIdInContext()",
+    ".Auth() \u2192 SetIdentityInContext()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/server.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/lance/server.go",
+   "t": "weed/s3api/s3err/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".Auth() \u2192 GetAPIError()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/server.go",
+   "t": "weed/s3api/s3err/",
+   "r": "imports_from",
+   "w": 4,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/lance/server.go",
+   "t": "weed/s3api/s3err/",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".AuthenticateRequest() \u2192 ErrorCode"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/server.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "NewServer() \u2192 NewManager()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/server.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/lance/server.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "Server \u2192 Manager"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/storage.go",
+   "t": "weed/s3api/lance/errors.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    "routeIdentifier() \u2192 writeError()",
+    "checkBodyIdentifier() \u2192 writeError()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/storage.go",
+   "t": "weed/s3api/lance/identifier.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    "routeIdentifier() \u2192 requestDelimiter()",
+    "routeIdentifier() \u2192 parseIdentifier()",
+    "checkBodyIdentifier() \u2192 .matchesBody()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/storage.go",
+   "t": "weed/s3api/lance/identifier.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "routeIdentifier() \u2192 identifier",
+    "checkBodyIdentifier() \u2192 identifier"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/storage.go",
+   "t": "weed/s3api/lance/server.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".mayWriteNamespace() \u2192 isTrustedCaller()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/storage.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".execute() \u2192 GetIdentityNameFromContext()",
+    ".storageOptions() \u2192 GetIdentityNameFromContext()",
+    ".mayUpdateTable() \u2192 GetIdentityNameFromContext()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/storage.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/lance/storage.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".execute() \u2192 NewManagerClient()",
+    "bucketARN() \u2192 BuildBucketARN()",
+    ".mayUpdateTable() \u2192 NewManagerClient()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/storage.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
    "s": "weed/s3api/lifecycle_xml/",
    "t": "weed/s3api/s3lifecycle/",
    "r": "imports_from",
@@ -2482,6 +4035,15 @@
    "r": "imports_from",
    "w": 13,
    "via": []
+  },
+  {
+   "s": "weed/s3api/s3_metadata_util.go",
+   "t": "weed/s3api/s3api_object_handlers_put.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "ParseS3Metadata() \u2192 validateStorageClass()"
+   ]
   },
   {
    "s": "weed/s3api/s3_metadata_util.go",
@@ -6942,12 +8504,12 @@
    "s": "weed/s3api/s3api_object_handlers_multipart.go",
    "t": "weed/s3api/s3api_object_handlers_put.go",
    "r": "calls",
-   "w": 8,
+   "w": 9,
    "via": [
     ".NewMultipartUploadHandler() \u2192 mapValidationErrorToS3Error()",
+    ".PutObjectPartHandler() \u2192 validatePutHeaders()",
     ".PutObjectPartHandler() \u2192 detectRequestedChecksumAlgorithm()",
-    ".PutObjectPartHandler() \u2192 withMultipartPart()",
-    ".PutObjectPartHandler() \u2192 setEtag()"
+    ".PutObjectPartHandler() \u2192 withMultipartPart()"
    ]
   },
   {
@@ -7556,7 +9118,7 @@
    "s": "weed/s3api/s3api_object_handlers_put.go",
    "t": "weed/s3api/s3err/",
    "r": "references",
-   "w": 17,
+   "w": 18,
    "via": [
     ".withObjectWriteLock() \u2192 ErrorCode",
     ".withObjectWriteLock() \u2192 ErrorCode",
@@ -7579,8 +9141,8 @@
    "r": "calls",
    "w": 2,
    "via": [
-    ".putToFiler() \u2192 parseTagsHeader()",
-    ".putToFiler() \u2192 ValidateTags()"
+    "validatePutHeaders() \u2192 parseTagsHeader()",
+    "validatePutHeaders() \u2192 ValidateTags()"
    ]
   },
   {
@@ -10018,6 +11580,269 @@
    "via": []
   },
   {
+   "s": "weed/s3api/s3vectors/execute.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".Execute() \u2192 SetIdentityNameInContext()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/execute.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3vectors/handlers.go",
+   "t": "weed/s3api/policy_engine/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "validateVectorPolicy() \u2192 GetConditionEvaluator()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/handlers.go",
+   "t": "weed/s3api/policy_engine/",
+   "r": "imports_from",
+   "w": 6,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3vectors/handlers.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 15,
+   "via": [
+    ".handleCreateVectorBucket() \u2192 ValidateEncryptionConfiguration()",
+    ".handleCreateVectorBucket() \u2192 ValidateTagsWithLimit()",
+    ".handleCreateVectorBucket() \u2192 CheckPermissionWithContext()",
+    ".handleListVectorBuckets() \u2192 CheckPermissionWithContext()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/handlers.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3vectors/handlers.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "references",
+   "w": 6,
+   "via": [
+    ".vectorBucket() \u2192 GetTableBucketResponse",
+    ".policyContext() \u2192 PolicyContext",
+    "isVectorBucket() \u2192 GetTableBucketResponse",
+    ".checkVectorPolicyDoc() \u2192 GetTableBucketResponse"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/handlers.go",
+   "t": "weed/s3api/s3vectors/server.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "vectorErr() \u2192 operationFromRequest()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/handlers.go",
+   "t": "weed/s3api/s3vectors/server.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "indexFromRecord() \u2192 Server"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/handlers.go",
+   "t": "weed/s3api/s3vectors/types.go",
+   "r": "calls",
+   "w": 51,
+   "via": [
+    "catalogErr() \u2192 writeError()",
+    "vectorErr() \u2192 writeError()",
+    ".handleCreateVectorBucket() \u2192 readJSON()",
+    ".handleCreateVectorBucket() \u2192 writeError()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/handlers.go",
+   "t": "weed/s3api/s3vectors/types.go",
+   "r": "references",
+   "w": 9,
+   "via": [
+    ".arnParts() \u2192 vectorBucketARNs",
+    ".bucketARNs() \u2192 vectorBucketARNs",
+    ".resolveIndexARNs() \u2192 vectorBucketARNs",
+    "vectorErr() \u2192 vectorBucketARNs"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/server.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".Auth() \u2192 SetRequestBodyLimitInContext()",
+    ".Auth() \u2192 SetIdentityInContext()",
+    ".Auth() \u2192 SetIdentityNameInContext()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/server.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3vectors/server.go",
+   "t": "weed/s3api/s3err/",
+   "r": "imports_from",
+   "w": 4,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3vectors/server.go",
+   "t": "weed/s3api/s3err/",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".AuthenticateRequest() \u2192 ErrorCode"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/server.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "NewServer() \u2192 NewManager()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/server.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3vectors/server.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "Server \u2192 Manager",
+    "Server \u2192 Manager"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/server.go",
+   "t": "weed/s3api/s3vectors/tagging.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "operationFromRequest() \u2192 tagOperation()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/server.go",
+   "t": "weed/s3api/s3vectors/types.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".dispatch() \u2192 writeError()",
+    ".Auth() \u2192 writeError()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/tagging.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 4,
+   "via": [
+    ".authorizeTagging() \u2192 WithTableBucketCreatedAt()",
+    ".handleTagResource() \u2192 ValidateTagsWithLimit()",
+    ".handleTagResource() \u2192 WithMaxTags()",
+    ".handleUntagResource() \u2192 ValidateTagsWithLimit()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/tagging.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3vectors/tagging.go",
+   "t": "weed/s3api/s3vectors/handlers.go",
+   "r": "calls",
+   "w": 4,
+   "via": [
+    ".handleTagResource() \u2192 setTags()",
+    ".handleTagResource() \u2192 catalogErr()",
+    ".handleUntagResource() \u2192 catalogErr()",
+    ".handleListTagsForResource() \u2192 catalogErr()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/tagging.go",
+   "t": "weed/s3api/s3vectors/handlers.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".authorizeTagging() \u2192 tagRequest"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/tagging.go",
+   "t": "weed/s3api/s3vectors/types.go",
+   "r": "calls",
+   "w": 7,
+   "via": [
+    "readTagRequest() \u2192 readJSON()",
+    ".handleTagResource() \u2192 writeError()",
+    ".handleTagResource() \u2192 writeJSON()",
+    ".handleUntagResource() \u2192 writeError()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/tagging.go",
+   "t": "weed/s3api/s3vectors/types.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".tagTarget() \u2192 vectorBucketARNs",
+    ".authorizeTagging() \u2192 vectorBucketARNs"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/types.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    "contextWithIdentity() \u2192 SetIdentityNameInContext()",
+    "identityOf() \u2192 GetIdentityNameFromContext()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/types.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
    "s": "weed/s3api/stats.go",
    "t": "weed/s3api/s3_constants/",
    "r": "calls",
@@ -10070,6 +11895,37 @@
    "r": "imports_from",
    "w": 18,
    "via": []
+  },
+  {
+   "s": "weed/worker/tasks/iceberg/",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 16,
+   "via": [
+    ".compactDataFiles() \u2192 ReadManifestList()",
+    ".compactDataFiles() \u2192 ReadManifest()",
+    "collectDeleteRewriteGroups() \u2192 ReadManifest()",
+    ".rewritePositionDeleteFiles() \u2192 ReadManifestList()"
+   ]
+  },
+  {
+   "s": "weed/worker/tasks/iceberg/",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 144,
+   "via": []
+  },
+  {
+   "s": "weed/worker/tasks/iceberg/",
+   "t": "weed/s3api/s3tables/",
+   "r": "references",
+   "w": 16,
+   "via": [
+    "buildJobStatus() \u2192 MaintenanceJobStatus",
+    "recordJobStatus() \u2192 MaintenanceJobStatus",
+    "resolveTableConfig() \u2192 MaintenanceConfiguration",
+    "applyMaintenanceConfig() \u2192 MaintenanceConfiguration"
+   ]
   }
  ]
 }

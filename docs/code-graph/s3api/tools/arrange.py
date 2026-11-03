@@ -6,11 +6,17 @@ raw = json.load(open(sys.argv[1]))
 layers = json.load(open(sys.argv[2])) if len(sys.argv) > 3 else {}
 out = sys.argv[-1]
 CORE = 'weed/s3api/'
+FILE_PKGS = ('iceberg/', 'lance/', 's3vectors/')     # graphed file by file
+COLLAPSED_EXTRA = ('weed/worker/tasks/iceberg/',)    # outside s3api, one node
 def node_key(sf):
-    if not sf or not sf.startswith(CORE): return None
+    if not sf: return None
+    for pkg in COLLAPSED_EXTRA:
+        if sf.startswith(pkg) and '/' not in sf[len(pkg):]: return pkg
+    if not sf.startswith(CORE): return None
     rest = sf[len(CORE):]
     if '/' not in rest: return sf                      # core file
     pkg = rest.rsplit('/', 1)[0]                       # e.g. s3lifecycle/scheduler
+    if pkg + '/' in FILE_PKGS: return sf               # satellite file node
     return CORE + pkg + '/'
 nodes = {n['id']: n for n in raw['nodes']}
 fmap = {nid: node_key(n.get('source_file')) for nid, n in nodes.items()}
@@ -36,7 +42,7 @@ symcount = collections.Counter(fmap[nid] for nid in nodes if fmap[nid])
 out_nodes = []
 for f in files:
     core = not f.endswith('/')
-    label = f[len(CORE):] if core else f[len(CORE):]
+    label = f[len(CORE):] if f.startswith(CORE) else f[len('weed/'):]
     out_nodes.append({'id': f, 'label': label, 'file': f, 'kind': 'file' if core else 'package',
                       'layer': layers.get(f), 'in': deg_in[f], 'out': deg_out[f], 'symbols': symcount[f]})
 json.dump({'nodes': out_nodes, 'edges': edges}, open(out, 'w'), indent=1)
