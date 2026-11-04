@@ -7,9 +7,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::time::sleep;
-use tonic::transport::Endpoint;
+use tonic::transport::{Channel, Endpoint};
 
 use crate::master_pb::{KeepConnectedRequest, seaweed_client::SeaweedClient};
+use crate::security::GrpcTls;
 
 fn registration(client_addr: &str) -> KeepConnectedRequest {
     KeepConnectedRequest {
@@ -68,11 +69,12 @@ fn http_addr(master: &str) -> String {
 
 /// Retry forever: try each master until a stream opens, hold it until it
 /// errors, then rediscover — same shape as wdclient.KeepConnectedToMaster.
-pub async fn keep_connected(masters: Vec<String>, client_addr: String) {
+pub async fn keep_connected(masters: Vec<String>, client_addr: String, tls: Option<GrpcTls>) {
     let client_addr = client_addr.as_str();
+    let tls = tls.as_ref();
     loop {
         try_all_masters(&masters, |master| async move {
-            stream_to(&master, client_addr).await
+            stream_to(&master, client_addr, tls).await
         })
         .await;
         sleep(Duration::from_secs(3)).await;
@@ -108,16 +110,37 @@ where
     }
 }
 
-/// Bounds the TCP connect and then the master's first answer, the 5s wdclient
-/// gives a master call; a black-holed or silent master otherwise holds up the
-/// other masters.
+/// Bounds the credential reads and the connect, TLS handshake included, and
+/// then the master's first answer, the 5s wdclient gives a master call; a
+/// black-holed or silent master otherwise holds up the other masters.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-async fn stream_to(master: &str, client_addr: &str) -> Result<Option<String>> {
-    let channel = Endpoint::new(grpc_addr(master)?)?
-        .connect_timeout(CONNECT_TIMEOUT)
-        .connect()
-        .await?;
+/// A channel to the master's gRPC, over TLS with `grpc.client`'s credentials
+/// when the cluster has them.
+pub async fn connect(master: &str, tls: Option<&GrpcTls>) -> Result<Channel> {
+    let addr = grpc_addr(master)?;
+    tokio::time::timeout(CONNECT_TIMEOUT, async {
+        Ok(match tls {
+            None => Endpoint::new(addr)?.connect().await?,
+            // The connector does the TLS; tonic adds its own only for an
+            // https URI, which it refuses without a tls_config.
+            Some(tls) => {
+                Endpoint::new(addr.replacen("https://", "http://", 1))?
+                    .connect_with_connector(crate::tls::connector(tls.clone()))
+                    .await?
+            }
+        })
+    })
+    .await
+    .context("master did not complete the connection")?
+}
+
+async fn stream_to(
+    master: &str,
+    client_addr: &str,
+    tls: Option<&GrpcTls>,
+) -> Result<Option<String>> {
+    let channel = connect(master, tls).await?;
     // A master answers at once, a follower with its leader hint.
     let answer_by = tokio::time::Instant::now() + CONNECT_TIMEOUT;
     let mut client = SeaweedClient::new(channel);
@@ -215,7 +238,7 @@ mod tests {
     #[tokio::test]
     async fn dial_to_a_black_holed_master_is_bounded() {
         // TEST-NET-1 (RFC 5737) is reserved, so nothing answers the SYN.
-        let dial = stream_to("192.0.2.1:9333", "127.0.0.1:8080");
+        let dial = stream_to("192.0.2.1:9333", "127.0.0.1:8080", None);
         let result = tokio::time::timeout(CONNECT_TIMEOUT * 3, dial).await;
         assert!(matches!(result, Ok(Err(_))), "dial was not bounded");
     }
@@ -229,10 +252,80 @@ mod tests {
             let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
         });
         let master = format!("127.0.0.1:9333.{port}");
-        let open = stream_to(&master, "127.0.0.1:8080");
+        let open = stream_to(&master, "127.0.0.1:8080", None);
         match tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await {
             Ok(Err(e)) => assert!(format!("{e:#}").contains("did not answer"), "{e:#}"),
             other => panic!("open was not bounded: {other:?}"),
+        }
+    }
+
+    /// `tests/tls`: a CA and the `engine-a` leaf it signed.
+    fn credentials() -> GrpcTls {
+        let fixture = |name: &str| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/tls")
+                .join(name)
+                .display()
+                .to_string()
+        };
+        GrpcTls {
+            ca_path: fixture("ca.pem"),
+            cert_path: fixture("a.pem"),
+            key_path: fixture("a.key"),
+            allowed_server_names: Vec::new(),
+            allowed_server_wildcard_domain: String::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_master_that_stalls_the_tls_handshake_is_bounded() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut conn, _) = listener.accept().await.unwrap();
+            let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
+        });
+        let master = format!("127.0.0.1:9333.{port}");
+        let tls = credentials();
+        let open = stream_to(&master, "127.0.0.1:8080", Some(&tls));
+        match tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await {
+            Ok(Err(e)) => assert!(format!("{e:#}").contains("did not complete"), "{e:#}"),
+            other => panic!("handshake was not bounded: {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_credential_read_that_stalls_is_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("ca.pem");
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+        assert!(made.unwrap().success());
+        // Every connection is dropped at once, so a dial that skipped the read
+        // fails its handshake instead of timing out.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((conn, _)) = listener.accept().await {
+                drop(conn);
+            }
+        });
+        let mut tls = credentials();
+        tls.ca_path = fifo.display().to_string();
+        let master = format!("127.0.0.1:9333.{port}");
+        let open = stream_to(&master, "127.0.0.1:8080", Some(&tls));
+        let result = tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await;
+        // A read+write open of a FIFO does not block, and it lets the
+        // blocked read finish so the runtime can shut down.
+        drop(
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&fifo),
+        );
+        match result {
+            Ok(Err(e)) => assert!(format!("{e:#}").contains("did not complete"), "{e:#}"),
+            other => panic!("credential read was not bounded: {other:?}"),
         }
     }
 

@@ -233,7 +233,7 @@ func TestFetchAndWriteRejectsZeroByteSource(t *testing.T) {
 		err    error
 	}, 1)
 	go func() {
-		gotFileId, gotErr := fs.fetchAndWrite(sourceChunk, "/dst/index.bin", 0, "")
+		gotFileId, gotErr := fs.fetchAndWrite(sourceChunk, "/dst/index.bin", nil, "")
 		done <- struct {
 			fileId string
 			err    error
@@ -331,7 +331,7 @@ func TestReplicateChunksPreservesSizeMismatchSentinel(t *testing.T) {
 
 	sourceChunks := []*filer_pb.FileChunk{{FileId: fid, Size: expectedSize}}
 
-	_, err := fs.replicateChunks(nil, sourceChunks, "/dst/index.bin", 0, "")
+	_, err := fs.replicateChunks(nil, sourceChunks, "/dst/index.bin", nil, "")
 	if err == nil {
 		t.Fatal("expected error from replicateChunks, got nil")
 	}
@@ -396,7 +396,7 @@ func TestSourceSupersedesEpochMtime(t *testing.T) {
 // attempts and propagate instead of spinning forever.
 func TestManifestResolveRetryGateUnverifiableSupersessionBounded(t *testing.T) {
 	fs := &FilerSink{isIncremental: true, dir: "/backup"}
-	gate := fs.manifestResolveRetryGate("/backup/2026-07-10/buckets/x/f.pt", 123, "3,01abc", fs.newMissingSourceChunkGate("3,01abc"))
+	gate := fs.manifestResolveRetryGate("/backup/2026-07-10/buckets/x/f.pt", entryWithMtimeNs(123), "3,01abc", fs.newMissingSourceChunkGate("3,01abc"))
 	resolveErr := errors.New("LookupFileId volume id 3: not found")
 	for i := 1; i < maxUnverifiableResolveAttempts; i++ {
 		if !gate(resolveErr) {
@@ -414,7 +414,7 @@ func TestManifestResolveRetryGateUnverifiableSupersessionBounded(t *testing.T) {
 // retrying until the source is superseded.
 func TestManifestResolveRetryGateNonTransientPropagates(t *testing.T) {
 	fs := &FilerSink{dir: "/backup"}
-	gate := fs.manifestResolveRetryGate("/backup/buckets/x/f.pt", 123, "3,01abc", fs.newMissingSourceChunkGate("3,01abc"))
+	gate := fs.manifestResolveRetryGate("/backup/buckets/x/f.pt", entryWithMtimeNs(123), "3,01abc", fs.newMissingSourceChunkGate("3,01abc"))
 	permanentErrs := []error{
 		errors.New("fail to unmarshal manifest 3,01abc: proto: cannot parse invalid wire-format data"),
 		errors.New("invalid fileId abc"),
@@ -616,7 +616,7 @@ func TestFetchAndWriteStopsOnMissingSourceChunk(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10}, "/dst/x.bin", 5*int64(time.Second), "")
+		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10}, "/dst/x.bin", live, "")
 		done <- fetchErr
 	}()
 
@@ -800,7 +800,7 @@ func TestFetchAndWriteMissingSourceChunkUnverifiableSupersession(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10},
-			"/backup/2026-07-10/x.bin", 5*int64(time.Second), "")
+			"/backup/2026-07-10/x.bin", entryWithMtimeNs(5*int64(time.Second)), "")
 		done <- fetchErr
 	}()
 
@@ -823,17 +823,34 @@ func TestSourceDroppedChunk(t *testing.T) {
 		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,02def", Size: 10}},
 	}
 	fs := &FilerSink{filerSource: startSourceFilerWithEntry(t, live, ""), dir: "/dst"}
+	replayed := entryWithMtimeNs(5 * int64(time.Second))
 
-	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc", 5*int64(time.Second)) {
+	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc", replayed) {
 		t.Fatal("live entry no longer referencing the chunk must count as dropped")
 	}
-	if fs.sourceDroppedChunk("/dst/x.bin", "5617,02def", 5*int64(time.Second)) {
+	if fs.sourceDroppedChunk("/dst/x.bin", "5617,02def", replayed) {
 		t.Fatal("a chunk the live entry still lists must not count as dropped")
 	}
 	live.Attributes.Mtime = 4
-	if fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc", 5*int64(time.Second)) {
-		t.Fatal("a live entry older than the replayed version cannot prove the chunk dropped")
+	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc", replayed) {
+		t.Fatal("a live entry stamped older than the replayed version still dropped the chunk")
 	}
+
+	replayed.CommitTsNs, live.CommitTsNs = 100, 200
+	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc", replayed) {
+		t.Fatal("a live entry committed after the replay dropped the chunk")
+	}
+	live.CommitTsNs, live.Attributes.Mtime = 50, 6
+	if fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc", replayed) {
+		t.Fatal("a live entry committed before the replay lags the event and cannot prove the chunk dropped")
+	}
+}
+
+func entryWithMtimeNs(mtimeNs int64) *filer_pb.Entry {
+	return &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{
+		Mtime:   mtimeNs / int64(time.Second),
+		MtimeNs: int32(mtimeNs % int64(time.Second)),
+	}}
 }
 
 func TestSourceMovedOn(t *testing.T) {
@@ -859,9 +876,28 @@ func TestSourceMovedOn(t *testing.T) {
 		t.Fatal("newer mtime is still moved on")
 	}
 	live.Attributes.Mtime = 4
-	replayed.Chunks = []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}}
 	if fs.sourceMovedOn("/dst/x.bin", replayed) {
-		t.Fatal("an older live entry cannot supersede the replayed version")
+		t.Fatal("identical chunks under an older mtime is a timestamp change, not a new version")
+	}
+	replayed.Chunks = []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}}
+	if !fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("a live entry stamped older but holding different chunks has moved on")
+	}
+	live.CommitTsNs, replayed.CommitTsNs = 20, 10
+	if !fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("a rewrite committed after the replay has moved on whatever its mtime")
+	}
+	live.CommitTsNs = 5
+	if fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("a live entry committed before the replay lags the event and proves nothing")
+	}
+	live.CommitTsNs = 0
+	if fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("an unstamped live entry predates a stamped replay")
+	}
+	live.CommitTsNs, live.Attributes.Mtime = 5, 6
+	if fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("a lagging live entry with a newer mtime still predates the replay")
 	}
 }
 
@@ -918,7 +954,54 @@ func TestFetchAndWriteStopsWhenSourceDroppedChunk(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10},
-			"/dst/x.bin", 5*int64(time.Second), "")
+			"/dst/x.bin", entryWithMtimeNs(5*int64(time.Second)), "")
+		done <- fetchErr
+	}()
+
+	select {
+	case fetchErr := <-done:
+		if !errors.Is(fetchErr, util_http.ErrNotFound) {
+			t.Fatalf("expected the 404 to propagate, got %v", fetchErr)
+		}
+		if errors.Is(fetchErr, errSourceChunkMissing) {
+			t.Fatalf("an obsolete version must not wait for the give-up gate: %v", fetchErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("fetchAndWrite kept retrying a chunk the live entry no longer lists")
+	}
+}
+
+// Mtime order says nothing about which version is current: a client that
+// preserves timestamps (cp -p, rsync -a, tar) rewrites a file and then stamps
+// it with an older mtime, so the live entry reads older than the replay whose
+// chunk it no longer lists. The missing chunk is still gone for good.
+func TestFetchAndWriteStopsWhenOlderLiveEntryDroppedChunk(t *testing.T) {
+	prevRetryWaitTime := util.RetryWaitTime
+	util.RetryWaitTime = 100 * time.Millisecond
+	t.Cleanup(func() { util.RetryWaitTime = prevRetryWaitTime })
+
+	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer gone.Close()
+
+	live := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,02def", Size: 10}},
+	}
+	filerSrc := startSourceFilerWithEntry(t, live, strings.TrimPrefix(gone.URL, "http://"), "5617")
+
+	fs := &FilerSink{
+		filerSource: filerSrc,
+		dir:         "/dst",
+		executor:    util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	done := make(chan error, 1)
+	go func() {
+		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10},
+			"/dst/x.bin", entryWithMtimeNs(5*int64(time.Second)), "")
 		done <- fetchErr
 	}()
 
@@ -969,7 +1052,7 @@ func TestFetchAndWriteManifestChildKeepsRetrying(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10},
-			"/dst/x.bin", 5*int64(time.Second), "5617,09fed")
+			"/dst/x.bin", live, "5617,09fed")
 		done <- fetchErr
 	}()
 
@@ -980,6 +1063,165 @@ func TestFetchAndWriteManifestChildKeepsRetrying(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("a still-listed manifest's missing child must not retry past the gate")
+	}
+}
+
+// A transient read error must not keep retrying a version the source has
+// since committed over, even when the later version carries an older mtime.
+func TestFetchAndWriteStopsOnTransientErrorWhenCommittedOver(t *testing.T) {
+	refused, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	refusedAddr := refused.Addr().String()
+	refused.Close()
+
+	live, replayed := committedOverWithOlderMtime()
+	fs := &FilerSink{
+		filerSource: startSourceFilerWithEntry(t, live, refusedAddr, "5617"),
+		dir:         "/dst",
+		executor:    util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	done := make(chan error, 1)
+	go func() {
+		_, fetchErr := fs.fetchAndWrite(replayed.Chunks[0], "/dst/x.bin", replayed, "")
+		done <- fetchErr
+	}()
+
+	select {
+	case fetchErr := <-done:
+		if fetchErr == nil {
+			t.Fatal("a read against a refused volume server cannot succeed")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("fetchAndWrite kept retrying a version the source committed over")
+	}
+}
+
+// The resolve gate stops on the same supersession check, and like it ignores a
+// live lookup that lags the replay: an entry committed earlier proves nothing,
+// even with a newer mtime or without the replayed manifest.
+func TestManifestResolveRetryGateOrdersByCommit(t *testing.T) {
+	transient := errors.New("dial tcp: connection refused")
+	live, replayed := committedOverWithOlderMtime()
+	manifestId := replayed.Chunks[0].GetFileIdString()
+
+	fs := &FilerSink{filerSource: startSourceFilerWithEntry(t, live, ""), dir: "/dst"}
+	gate := fs.manifestResolveRetryGate("/dst/x.bin", replayed, manifestId, fs.newMissingSourceChunkGate(manifestId))
+	if gate(transient) {
+		t.Fatal("a transient resolve error must not keep retrying a version the source committed over")
+	}
+
+	lagging := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 6},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,00aaa", Size: 10}},
+		CommitTsNs: 50,
+	}
+	fs = &FilerSink{filerSource: startSourceFilerWithEntry(t, lagging, ""), dir: "/dst"}
+	gate = fs.manifestResolveRetryGate("/dst/x.bin", replayed, manifestId, fs.newMissingSourceChunkGate(manifestId))
+	if !gate(transient) {
+		t.Fatal("a live lookup committed before the replay must not stop its retries")
+	}
+
+	volumeGone := fmt.Errorf("LookupFileId locate volume id 5617: %w", source.ErrVolumeNotFound)
+	gate = fs.manifestResolveRetryGate("/dst/x.bin", replayed, manifestId, fs.newMissingSourceChunkGate(manifestId))
+	if !gate(volumeGone) {
+		t.Fatal("a live lookup committed before the replay must not cut a missing volume's wait short")
+	}
+}
+
+// A replicate failure on a version the source has moved past is skipped: the
+// later event carries the current content. The error here is transient, not a
+// missing chunk, so only the supersession check can turn it into a skip.
+func TestOnReplicateChunkErrorSkipsSupersededVersion(t *testing.T) {
+	transient := errors.New("copy 5617,01abc: dial tcp: connection refused")
+	live, replayed := committedOverWithOlderMtime()
+
+	t.Run("source entry gone", func(t *testing.T) {
+		fs := &FilerSink{filerSource: startSourceFilerServer(t, &sourceFilerServer{
+			lookupFn: func(dir, name string) (*filer_pb.Entry, error) {
+				return nil, filer_pb.ErrNotFound
+			},
+		}), dir: "/dst"}
+		if err := fs.onReplicateChunkError("/dst/x.bin", replayed, transient); err != nil {
+			t.Fatalf("a deleted source entry must skip the replay, got %v", err)
+		}
+	})
+
+	t.Run("committed over with an older mtime", func(t *testing.T) {
+		fs := &FilerSink{filerSource: startSourceFilerWithEntry(t, live, ""), dir: "/dst"}
+		if err := fs.onReplicateChunkError("/dst/x.bin", replayed, transient); err != nil {
+			t.Fatalf("a later commit that dropped the replayed chunks must skip the replay, got %v", err)
+		}
+	})
+
+	t.Run("source unchanged", func(t *testing.T) {
+		fs := &FilerSink{filerSource: startSourceFilerWithEntry(t, replayed, ""), dir: "/dst"}
+		if err := fs.onReplicateChunkError("/dst/x.bin", replayed, transient); !errors.Is(err, transient) {
+			t.Fatalf("a failure on the current version must propagate, got %v", err)
+		}
+	})
+}
+
+func committedOverWithOlderMtime() (live, replayed *filer_pb.Entry) {
+	live = &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,02def", Size: 10}},
+		CommitTsNs: 200,
+	}
+	replayed = &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}},
+		CommitTsNs: 100,
+	}
+	return live, replayed
+}
+
+// A peer filer's event can reach the sink before the source store applies it,
+// so the live lookup returns the version the replay replaces, which never
+// listed the replay's chunk. That lagging entry cannot prove the chunk dropped:
+// the 404 must be waited out like any other, not cut short.
+func TestFetchAndWriteLaggingLookupKeepsRetrying(t *testing.T) {
+	prevRetryWaitTime, prevGrace := util.RetryWaitTime, missingSourceChunkGrace
+	util.RetryWaitTime = 100 * time.Millisecond
+	missingSourceChunkGrace = 500 * time.Millisecond
+	t.Cleanup(func() {
+		util.RetryWaitTime, missingSourceChunkGrace = prevRetryWaitTime, prevGrace
+	})
+
+	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer gone.Close()
+
+	lagging := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,00aaa", Size: 10}},
+		CommitTsNs: 50,
+	}
+	_, replayed := committedOverWithOlderMtime()
+	fs := &FilerSink{
+		filerSource: startSourceFilerWithEntry(t, lagging, strings.TrimPrefix(gone.URL, "http://"), "5617"),
+		dir:         "/dst",
+		executor:    util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	done := make(chan error, 1)
+	go func() {
+		_, fetchErr := fs.fetchAndWrite(replayed.Chunks[0], "/dst/x.bin", replayed, "")
+		done <- fetchErr
+	}()
+
+	select {
+	case fetchErr := <-done:
+		if !errors.Is(fetchErr, errSourceChunkMissing) {
+			t.Fatalf("a lagging live lookup must not cut the missing-chunk wait short, got %v", fetchErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the missing chunk must still expire via the gate")
 	}
 }
 
@@ -1196,6 +1438,144 @@ func TestUpdateEntrySyncsLiveVersion(t *testing.T) {
 	updated := dst.lastUpdate.Load()
 	if updated == nil || string(updated.GetContent()) != "live" || updated.GetAttributes().GetMtime() != 6 {
 		t.Fatalf("the destination must get the live version, got %+v", updated)
+	}
+}
+
+// A timestamp-preserving rewrite leaves the live source older than the replay
+// whose chunks it dropped, and older than a destination that already took an
+// earlier version. The destination must still converge on the live version
+// instead of fetching chunks the source vacuumed or keeping its newer-stamped
+// stale bytes.
+func TestUpdateEntrySyncsOlderLiveVersion(t *testing.T) {
+	var volumeLookups atomic.Int32
+	existing := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "4,00aaa", SourceFileId: "5617,00aaa", Size: 10}},
+	}
+	oldEntry := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,00aaa", Size: 10}},
+	}
+	live := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
+		Content:    []byte("live"),
+	}
+	filerSrc := startSourceFilerServer(t, &sourceFilerServer{entry: live, volumeLookups: &volumeLookups})
+	dst, dstAddr := startRecordingFiler(t, existing)
+
+	fs := &FilerSink{
+		filerSource:    filerSrc,
+		dir:            "/dst",
+		grpcAddress:    dstAddr,
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		executor:       util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	replayed := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 6},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}},
+	}
+	if _, err := fs.UpdateEntry("/dst/x.bin", oldEntry, "", replayed, true, nil); err != nil {
+		t.Fatalf("syncing the live version should succeed: %v", err)
+	}
+	if dst.updates.Load() != 1 {
+		t.Fatal("the live version must be committed to the destination")
+	}
+	updated := dst.lastUpdate.Load()
+	if updated == nil || string(updated.GetContent()) != "live" || updated.GetAttributes().GetMtime() != 4 {
+		t.Fatalf("the destination must get the live version, got %+v", updated)
+	}
+	if volumeLookups.Load() != 0 {
+		t.Fatal("the superseded version's chunks must not be fetched")
+	}
+}
+
+// A peer filer's event reaches subscribers before the local store applies it,
+// so the live lookup can still return the version the replay replaces. That
+// lagging entry was committed earlier and must not be synced over the replay.
+func TestUpdateEntryAppliesReplayAheadOfLiveLookup(t *testing.T) {
+	var volumeLookups atomic.Int32
+	existing := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "4,00aaa", SourceFileId: "5617,00aaa", Size: 10}},
+	}
+	oldEntry := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,00aaa", Size: 10}},
+		CommitTsNs: 5,
+	}
+	filerSrc := startSourceFilerServer(t, &sourceFilerServer{entry: oldEntry, volumeLookups: &volumeLookups})
+	dst, dstAddr := startRecordingFiler(t, existing)
+
+	fs := &FilerSink{
+		filerSource:    filerSrc,
+		dir:            "/dst",
+		grpcAddress:    dstAddr,
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		executor:       util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	replayed := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 6},
+		Content:    []byte("new"),
+		CommitTsNs: 10,
+	}
+	if _, err := fs.UpdateEntry("/dst/x.bin", oldEntry, "", replayed, true, nil); err != nil {
+		t.Fatalf("applying the replay should succeed: %v", err)
+	}
+	updated := dst.lastUpdate.Load()
+	if updated == nil || string(updated.GetContent()) != "new" || len(updated.GetChunks()) != 0 {
+		t.Fatalf("the destination must get the replayed version, got %+v", updated)
+	}
+	if volumeLookups.Load() != 0 {
+		t.Fatal("the lagging live entry's chunks must not be fetched")
+	}
+}
+
+// Once the destination already holds the live version, the same stale replay
+// must not re-replicate it.
+func TestUpdateEntryKeepsDestinationHoldingLiveVersion(t *testing.T) {
+	live := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
+		Content:    []byte("live"),
+	}
+	filerSrc := startSourceFilerServer(t, &sourceFilerServer{entry: live})
+	dst, dstAddr := startRecordingFiler(t, live)
+
+	fs := &FilerSink{
+		filerSource:    filerSrc,
+		dir:            "/dst",
+		grpcAddress:    dstAddr,
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		executor:       util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	oldEntry := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 3},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,00aaa", Size: 10}},
+	}
+	replayed := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}},
+	}
+	if _, err := fs.UpdateEntry("/dst/x.bin", oldEntry, "", replayed, true, nil); err != nil {
+		t.Fatalf("a destination holding the live version should be left alone: %v", err)
+	}
+	if dst.updates.Load() != 0 {
+		t.Fatal("a destination already holding the live version must not be rewritten")
 	}
 }
 

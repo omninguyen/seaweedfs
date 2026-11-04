@@ -553,6 +553,43 @@ pub(crate) mod needle_read_hook {
 }
 
 #[cfg(test)]
+pub(crate) mod commit_swap_hook {
+    use super::VolumeId;
+    use std::sync::{Arc, Mutex};
+
+    type Hook = Arc<dyn Fn() + Send + Sync>;
+    static HOOKS: Mutex<Vec<(VolumeId, Hook)>> = Mutex::new(Vec::new());
+
+    pub(crate) struct Registration(VolumeId);
+
+    impl Drop for Registration {
+        fn drop(&mut self) {
+            HOOKS.lock().unwrap().retain(|(id, _)| *id != self.0);
+        }
+    }
+
+    /// Runs inside a compaction commit, after the needle map is closed and
+    /// before the swap. Volume ids are the key, so parallel tests must use
+    /// distinct ones.
+    pub(crate) fn register(id: VolumeId, hook: impl Fn() + Send + Sync + 'static) -> Registration {
+        HOOKS.lock().unwrap().push((id, Arc::new(hook)));
+        Registration(id)
+    }
+
+    pub(crate) fn fire(id: VolumeId) {
+        let hook = HOOKS
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(hook_id, _)| *hook_id == id)
+            .map(|(_, hook)| hook.clone());
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+}
+
+#[cfg(test)]
 pub(crate) mod needle_write_hook {
     use super::NeedleId;
     use std::sync::{Arc, Mutex};
@@ -797,9 +834,8 @@ impl IoUnavailable {
     }
 }
 
-/// A needle read resolved under a store guard and run after it is released;
-/// the handle pins the inode, as for `DatScanPlan`. It takes no data-file
-/// lease: writers wait for one while holding the store write lock.
+/// A needle read resolved under the data-file read lease and run after it is
+/// released; the handle pins the inode, as for `DatScanPlan`.
 pub(crate) struct NeedleReadPlan {
     source: NeedleStreamSource,
     offset: i64,
@@ -2641,12 +2677,17 @@ impl Volume {
         Ok(())
     }
 
-    /// Resolve a needle read under the caller's store guard, without data I/O.
+    /// Resolve a needle read without data I/O. It takes the data-file read
+    /// lease, as `read_needle_with_option` does, so a plan made while a vacuum
+    /// commit has the needle map closed waits for the commit, as Go's
+    /// readNeedle does, instead of answering NotFound for a live needle.
+    /// Callers must not hold the store guard; see `Store::needle_read_plan`.
     pub(crate) fn needle_read_plan(
         &self,
         id: NeedleId,
         read_deleted: bool,
     ) -> Result<NeedleReadPlan, VolumeError> {
+        let _guard = self.data_file_access_control.read_lock();
         if let Some(e) = self.unavailable_error() {
             return Err(e);
         }
@@ -5558,6 +5599,8 @@ impl Volume {
             io.dat_file = None;
             io.remote_dat_file = None;
         }
+        #[cfg(test)]
+        commit_swap_hook::fire(self.id);
 
         // makeup_diff has fsynced the .cpd/.cpx contents. Persist a durable .cpc
         // commit marker BEFORE the renames so the two-rename swap is atomic
@@ -11428,6 +11471,75 @@ mod tests {
             ..Needle::default()
         };
         v.write_needle(&mut n, true, false).unwrap();
+    }
+
+    // After a restart a canDelete volume is served from .sdx; its deletes must
+    // still move the counters volume.deleteEmpty and vacuum read, and land them
+    // where the next reload would.
+    #[test]
+    fn test_read_only_can_delete_counts_deletes_after_restart() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let ids = 1..=3u64;
+        {
+            let v = make_test_volume(dir);
+            for id in ids.clone() {
+                let mut n = Needle {
+                    id: NeedleId(id),
+                    cookie: Cookie(id as u32),
+                    data: b"payload".to_vec(),
+                    data_size: 7,
+                    ..Needle::default()
+                };
+                v.write_needle(&mut n, true, false).unwrap();
+            }
+            v.set_read_only_persist(true, true).unwrap();
+            v.close();
+        }
+        let reopen = || {
+            Volume::new(
+                dir,
+                dir,
+                VolumeId(1),
+                NeedleMapKind::InMemory,
+                &VolumeSpec::default(),
+            )
+            .unwrap()
+        };
+        let counters = |v: &Volume| {
+            (
+                v.file_count(),
+                v.deleted_count(),
+                v.content_size(),
+                v.deleted_size(),
+            )
+        };
+
+        let v = reopen();
+        assert!(matches!(
+            v.io.read().unwrap().nm,
+            Some(NeedleMap::SortedFile(_))
+        ));
+        for id in ids.clone() {
+            v.delete_needle(&mut Needle {
+                id: NeedleId(id),
+                cookie: Cookie(id as u32),
+                ..Needle::default()
+            })
+            .unwrap();
+        }
+        let after_deletes = counters(&v);
+        assert_eq!(after_deletes.0, 3);
+        assert_eq!(
+            after_deletes.0, after_deletes.1,
+            "an emptied volume must report every file deleted"
+        );
+        assert_eq!(after_deletes.2, after_deletes.3);
+        v.close();
+        drop(v);
+
+        let v = reopen();
+        assert_eq!(counters(&v), after_deletes);
     }
 
     // Upgrading a volume that booted plain persisted-readonly to canDelete
