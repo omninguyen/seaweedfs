@@ -52,7 +52,7 @@ Each node was curated by reading its source in full. The collapsed worker node w
 | bug | `chunked_reader_v4.go` | STREAMING-…-TRAILER uploads: chunk and trailer signatures are not enforced, so the body is unauthenticated. | probed |
 | bug | `policy_engine/` | `s3:authType` is not set for SigV4 presigned URLs, so "deny presigned" policies do not apply to them. | probed |
 | bug | `s3api_embedded_iam.go` | `CreatePolicyVersion` rejects Deny / non-s3 documents that `CreatePolicy` accepts, so such policies can never be updated (Terraform). | probed |
-| bug | `s3tables/` | After a cross-namespace `RenameTable`, every Iceberg commit fails; and `RenameTable` copies metadata from a torn read, so a commit landing during the rename is lost while the rename answers 200. | probed |
+| bug | `s3tables/` | After a cross-namespace `RenameTable`, every Iceberg commit fails; `RenameTable` copies metadata from a torn read, so a commit landing during the rename is lost while the rename answers 200; and policy `Condition` blocks are never validated, so a null or empty operator map applies a statement unconditionally, a misspelled operator silently disables a Deny, and a null condition value makes every request on the bucket panic, with no way to remove the policy through the API. | probed |
 | bug | `cors/` | A preflight uses the first rule whose origin matches even when its methods don't, so a later rule that allows PUT is never used. | probed |
 | bug | `s3bucket/` | `VerifyS3BucketName` accepts non-ASCII letters and digits ("bücket"), and CreateBucket relies on it alone. | probed |
 | bug | `s3api_put_handlers.go` | SSE-S3 multipart parts reuse the AES-CTR keystream (shared DEK and base IV, part offset 0). | probed |
