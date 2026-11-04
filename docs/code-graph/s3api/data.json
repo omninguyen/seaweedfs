@@ -516,7 +516,7 @@
    "file": "weed/s3api/request_body.go",
    "kind": "file",
    "layer": 0,
-   "in": 5,
+   "in": 6,
    "out": 0,
    "symbols": 2
   },
@@ -546,7 +546,7 @@
    "file": "weed/s3api/s3_constants/",
    "kind": "package",
    "layer": 0,
-   "in": 85,
+   "in": 86,
    "out": 0,
    "symbols": 54
   },
@@ -666,7 +666,7 @@
    "file": "weed/s3api/s3api_acl_helper.go",
    "kind": "file",
    "layer": 2,
-   "in": 4,
+   "in": 5,
    "out": 3,
    "symbols": 20
   },
@@ -696,8 +696,8 @@
    "file": "weed/s3api/s3api_bucket_config.go",
    "kind": "file",
    "layer": 3,
-   "in": 32,
-   "out": 16,
+   "in": 34,
+   "out": 17,
    "symbols": 62
   },
   {
@@ -726,8 +726,8 @@
    "file": "weed/s3api/s3api_bucket_handlers.go",
    "kind": "file",
    "layer": 3,
-   "in": 15,
-   "out": 25,
+   "in": 16,
+   "out": 26,
    "symbols": 41
   },
   {
@@ -797,7 +797,7 @@
    "kind": "file",
    "layer": 3,
    "in": 4,
-   "out": 7,
+   "out": 11,
    "symbols": 16
   },
   {
@@ -957,7 +957,7 @@
    "kind": "file",
    "layer": 4,
    "in": 2,
-   "out": 12,
+   "out": 13,
    "symbols": 4
   },
   {
@@ -1067,7 +1067,7 @@
    "kind": "file",
    "layer": 4,
    "in": 1,
-   "out": 11,
+   "out": 13,
    "symbols": 8
   },
   {
@@ -1157,7 +1157,7 @@
    "kind": "file",
    "layer": 4,
    "in": 7,
-   "out": 11,
+   "out": 12,
    "symbols": 7
   },
   {
@@ -1189,6 +1189,16 @@
    "in": 1,
    "out": 2,
    "symbols": 5
+  },
+  {
+   "id": "weed/s3api/s3api_public_access_block.go",
+   "label": "s3api_public_access_block.go",
+   "file": "weed/s3api/s3api_public_access_block.go",
+   "kind": "file",
+   "layer": 2,
+   "in": 6,
+   "out": 3,
+   "symbols": 7
   },
   {
    "id": "weed/s3api/s3api_put_handlers.go",
@@ -1336,7 +1346,7 @@
    "file": "weed/s3api/s3err/",
    "kind": "package",
    "layer": 0,
-   "in": 69,
+   "in": 70,
    "out": 1,
    "symbols": 38
   },
@@ -4588,6 +4598,24 @@
   },
   {
    "s": "weed/s3api/s3api_bucket_config.go",
+   "t": "weed/s3api/s3api_public_access_block.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".newBucketConfigFromEntry() \u2192 parsePublicAccessBlock()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_bucket_config.go",
+   "t": "weed/s3api/s3api_public_access_block.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "BucketConfig \u2192 PublicAccessBlockConfiguration"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_bucket_config.go",
    "t": "weed/s3api/s3api_server.go",
    "r": "calls",
    "w": 1,
@@ -5062,6 +5090,15 @@
   },
   {
    "s": "weed/s3api/s3api_bucket_handlers.go",
+   "t": "weed/s3api/s3api_public_access_block.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".PutBucketAclHandler() \u2192 rejectPublicGrants()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_bucket_handlers.go",
    "t": "weed/s3api/s3api_xsd_generated.go",
    "r": "references",
    "w": 1,
@@ -5530,6 +5567,15 @@
   },
   {
    "s": "weed/s3api/s3api_bucket_policy_handlers.go",
+   "t": "weed/s3api/request_body.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".PutPublicAccessBlockHandler() \u2192 readRequestBody()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_bucket_policy_handlers.go",
    "t": "weed/s3api/s3_bucket_encryption.go",
    "r": "calls",
    "w": 2,
@@ -5542,11 +5588,12 @@
    "s": "weed/s3api/s3api_bucket_policy_handlers.go",
    "t": "weed/s3api/s3_constants/",
    "r": "calls",
-   "w": 3,
+   "w": 6,
    "via": [
     ".GetBucketPolicyHandler() \u2192 GetBucketAndObject()",
     ".PutBucketPolicyHandler() \u2192 GetBucketAndObject()",
-    ".DeleteBucketPolicyHandler() \u2192 GetBucketAndObject()"
+    ".DeleteBucketPolicyHandler() \u2192 GetBucketAndObject()",
+    ".GetPublicAccessBlockHandler() \u2192 GetBucketAndObject()"
    ]
   },
   {
@@ -5555,6 +5602,26 @@
    "r": "imports_from",
    "w": 13,
    "via": []
+  },
+  {
+   "s": "weed/s3api/s3api_bucket_policy_handlers.go",
+   "t": "weed/s3api/s3api_bucket_config.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".GetPublicAccessBlockHandler() \u2192 .getBucketConfig()",
+    ".PutPublicAccessBlockHandler() \u2192 .updateBucketConfig()",
+    ".DeletePublicAccessBlockHandler() \u2192 .updateBucketConfig()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_bucket_policy_handlers.go",
+   "t": "weed/s3api/s3api_bucket_handlers.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".PutPublicAccessBlockHandler() \u2192 .checkBucket()"
+   ]
   },
   {
    "s": "weed/s3api/s3api_bucket_policy_handlers.go",
@@ -5570,18 +5637,28 @@
    "s": "weed/s3api/s3api_bucket_policy_handlers.go",
    "t": "weed/s3api/s3api_handlers.go",
    "r": "calls",
-   "w": 3,
+   "w": 5,
    "via": [
+    ".GetPublicAccessBlockHandler() \u2192 writeSuccessResponseXML()",
+    ".PutPublicAccessBlockHandler() \u2192 writeSuccessResponseEmpty()",
     ".getBucketPolicy() \u2192 .WithFilerClient()",
-    ".setBucketPolicy() \u2192 .WithFilerClient()",
-    ".deleteBucketPolicy() \u2192 .WithFilerClient()"
+    ".setBucketPolicy() \u2192 .WithFilerClient()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_bucket_policy_handlers.go",
+   "t": "weed/s3api/s3api_public_access_block.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".PutPublicAccessBlockHandler() \u2192 parsePublicAccessBlock()"
    ]
   },
   {
    "s": "weed/s3api/s3api_bucket_policy_handlers.go",
    "t": "weed/s3api/s3err/",
    "r": "calls",
-   "w": 6,
+   "w": 7,
    "via": [
     ".GetBucketPolicyHandler() \u2192 WriteErrorResponse()",
     ".PutBucketPolicyHandler() \u2192 WriteErrorResponse()",
@@ -6984,6 +7061,15 @@
     ".GetObjectAclHandler() \u2192 .getLatestObjectVersion()",
     ".PutObjectAclHandler() \u2192 .getSpecificObjectVersion()",
     ".PutObjectAclHandler() \u2192 .getLatestObjectVersion()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_acl.go",
+   "t": "weed/s3api/s3api_public_access_block.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".PutObjectAclHandler() \u2192 rejectPublicGrants()"
    ]
   },
   {
@@ -8653,10 +8739,20 @@
   },
   {
    "s": "weed/s3api/s3api_object_handlers_postpolicy.go",
+   "t": "weed/s3api/s3api_acl_helper.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".PostPolicyBucketHandler() \u2192 ParseAclHeaders()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_postpolicy.go",
    "t": "weed/s3api/s3api_bucket_config.go",
    "r": "calls",
-   "w": 2,
+   "w": 3,
    "via": [
+    ".PostPolicyBucketHandler() \u2192 .getBucketConfig()",
     ".PostPolicyBucketHandler() \u2192 .getVersioningState()",
     ".PostPolicyBucketHandler() \u2192 .isObjectLockEnabled()"
    ]
@@ -8689,6 +8785,15 @@
    "w": 1,
    "via": [
     ".PostPolicyBucketHandler() \u2192 .lifecycleTTLForObjectWrite()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_postpolicy.go",
+   "t": "weed/s3api/s3api_public_access_block.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".PostPolicyBucketHandler() \u2192 rejectPublicGrants()"
    ]
   },
   {
@@ -9929,6 +10034,15 @@
   },
   {
    "s": "weed/s3api/s3api_object_upload_acl.go",
+   "t": "weed/s3api/s3api_public_access_block.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".preparePutObjectACL() \u2192 rejectPublicGrants()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_upload_acl.go",
    "t": "weed/s3api/s3api_server.go",
    "r": "calls",
    "w": 1,
@@ -10335,6 +10449,38 @@
    "r": "imports_from",
    "w": 4,
    "via": []
+  },
+  {
+   "s": "weed/s3api/s3api_public_access_block.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3api_public_access_block.go",
+   "t": "weed/s3api/s3api_bucket_config.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "rejectPublicGrants() \u2192 BucketConfig"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_public_access_block.go",
+   "t": "weed/s3api/s3err/",
+   "r": "imports_from",
+   "w": 4,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3api_public_access_block.go",
+   "t": "weed/s3api/s3err/",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "rejectPublicGrants() \u2192 ErrorCode"
+   ]
   },
   {
    "s": "weed/s3api/s3api_put_handlers.go",

@@ -118,6 +118,7 @@
  "weed/s3api/s3api_object_versioned_finalize.go": 5,
  "weed/s3api/s3api_object_versioning.go": 5,
  "weed/s3api/s3api_path_validation.go": 1,
+ "weed/s3api/s3api_public_access_block.go": 2,
  "weed/s3api/s3api_put_handlers.go": 4,
  "weed/s3api/s3api_put_object_helper.go": 4,
  "weed/s3api/s3api_server.go": 1,

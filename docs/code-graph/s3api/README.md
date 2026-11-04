@@ -4,11 +4,11 @@ A file-level map of the SeaweedFS S3 gateway and the catalog APIs that run besid
 
 ## What is in it
 
-- **145 nodes:**
-  - the 98 non-test files of package `weed/s3api`;
+- **146 nodes:**
+  - the 99 non-test files of package `weed/s3api`;
   - the 35 non-test files of the three catalog servers wired next to the gateway in `command/s3.go`: the Iceberg REST catalog (`weed/s3api/iceberg`, 21 files), the Lance Namespace REST server (`weed/s3api/lance`, 9) and the S3 Vectors API (`weed/s3api/s3vectors`, 5);
   - 12 collapsed packages, one node each: the 11 neighbor packages package `s3api` imports (`s3err`, `s3_constants`, `policy_engine`, `s3tables`, `s3lifecycle` (top-level files only), `s3lifecycle/scheduler`, `lifecycle_xml`, `s3bucket`, `cors`, `s3_objectlock`, `policy`) and the Iceberg maintenance worker `weed/worker/tasks/iceberg`.
-- **1,088 edges** (807 distinct node pairs), extracted with graphify and aggregated from symbols to files. Edge types are `calls`, `indirect_call` (function values such as route registration), `references`, `embeds` and `imports_from`. No edge was added by hand.
+- **1,103 edges** (820 distinct node pairs), extracted with graphify and aggregated from symbols to files. Edge types are `calls`, `indirect_call` (function values such as route registration), `references`, `embeds` and `imports_from`. No edge was added by hand.
 - **12 lanes, ordered by request flow:**
 
 | Lane | Contents |
@@ -42,7 +42,7 @@ Each node was curated by reading its source in full. The collapsed worker node w
 | gotchas | Non-obvious behavior to know before changing it |
 | issue / issue_note | The defect flag and its explanation, where one applies |
 
-## Flagged defects (28)
+## Flagged defects (29)
 
 "Probed" means the defect was reproduced with a throwaway test that was then deleted. "Read" means it was found by reading the code and is not reproduced.
 
@@ -58,6 +58,7 @@ Each node was curated by reading its source in full. The collapsed worker node w
 | bug | `s3api_put_handlers.go` | SSE-S3 multipart parts reuse the AES-CTR keystream (shared DEK and base IV, part offset 0). | probed |
 | bug | `iceberg/handlers_table.go` | DropTable ignores `purgeRequested` and always deletes the table's data; CreateTable answers 200 on an existing name and writes v1.metadata.json non-exclusively. | probed (drop) |
 | bug | `iceberg/handlers_namespace.go` | UpdateNamespaceProperties is a read-modify-write without a version check, so concurrent property updates drop each other. | probed |
+| bug | `s3api_public_access_block.go` | `BlockPublicPolicy` and `RestrictPublicBuckets` are accepted and returned but never enforced, so a public bucket policy is still accepted on a bucket that claims to block it. | probed |
 | bug | `worker/tasks/iceberg/` | The maintenance worker writes records that a rename or delete has claimed, leaving a table stuck in `Deleting=rename` (409 on every later commit and delete). | probed |
 | bug | `auth_signature_v2.go` | Header-signed SigV2 has no Date freshness check (replay), and several subresources are missing from the signed resource. | read |
 | bug | `s3api_object_handlers_multipart.go` | `isVersioningEnabled` is passed as `objectLockEnabled`: lock headers are accepted on non-lock buckets and are not enforced. | read |
@@ -85,9 +86,10 @@ Use the **Defects** chips in the viewer to show only flagged nodes.
 
 ## Provenance
 
-- Source: branch `claude/brave-carson-13bjg1`, with `weed/` equal to upstream master `199b2e2`. This folder is the only addition.
+- Source: branch `claude/brave-carson-13bjg1`, with `weed/` equal to master `995084f`. This folder is the only addition.
 - The 109 nodes of the first build were curated at `984eac6` and drift-checked to `199b2e2`. Seven files in that scope changed in between: `s3_metadata_util.go`, `s3api_object_handlers_multipart.go`, `s3api_object_handlers_put.go`, and four files of `s3tables/` (`handler_namespace.go`, `handler_policy.go`, `manager.go`, `permissions.go`). Each was re-read and its node updated (tag merging inside the compare, bucket binding for DeleteNamespace and tag operations, `s3vectors:VectorBucketTag/` condition keys, the storage-class fix).
-- The 36 nodes added for lanes 8–11 were curated at `199b2e2`. The Iceberg nodes describe master, not the unmerged `fix/iceberg-create-table-exclusive-409` branch, which changes `handlers_table.go`, `commit_helpers.go` and `server.go`.
+- Second sync, `199b2e2` → `995084f`: two commits touched the scope. `af45ab8` changed only test files. `b0c6297` (per-bucket Block Public Access) added `s3api_public_access_block.go`, curated as a new node in lane 2, and changed nine files whose nodes were re-read and updated: `s3api_bucket_config.go`, `s3api_bucket_handlers.go`, `s3api_bucket_policy_handlers.go`, `s3api_object_anonymous_read.go`, `s3api_object_handlers_acl.go`, `s3api_object_handlers_postpolicy.go`, `s3api_object_upload_acl.go`, `s3_constants/` and `s3err/` (the existing flags on `s3err/` and `s3api_bucket_policy_handlers.go` still hold).
+- The 36 nodes added for lanes 8–11 were curated at `199b2e2`; none of their files changed in the second sync. The Iceberg nodes describe master, not the unmerged `fix/iceberg-create-table-exclusive-409` branch, which changes `handlers_table.go`, `commit_helpers.go` and `server.go`.
 - Edges come from graphify's AST extraction; descriptions and defect flags were curated by hand.
 
 ## Regenerating

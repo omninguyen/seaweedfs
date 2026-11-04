@@ -1,6 +1,6 @@
 {
  "title": "weed/s3api — code graph",
- "subtitle": "File-level map of SeaweedFS's S3 gateway and its satellite catalog APIs: 98 files of package s3api, 35 files of the Iceberg REST catalog, Lance namespace and S3 Vectors servers, 11 collapsed neighbor packages and the collapsed Iceberg maintenance worker; lanes ordered by request flow.",
+ "subtitle": "File-level map of SeaweedFS's S3 gateway and its satellite catalog APIs: 99 files of package s3api, 35 files of the Iceberg REST catalog, Lance namespace and S3 Vectors servers, 11 collapsed neighbor packages and the collapsed Iceberg maintenance worker; lanes ordered by request flow.",
  "intro": "weed/s3api is SeaweedFS's S3-compatible gateway. It is a gorilla/mux HTTP server that authenticates each request (SigV4/V2, presigned URLs, STS/JWT, embedded IAM and bucket policies) and maps the S3 operation onto the filer tree under BucketsPath. On top of filer entries and volume chunks it implements the features S3 clients expect: multipart uploads, versioning, SSE-C/KMS/S3, object lock, tagging, ACLs, CORS and lifecycle. Edges come only from the AST (graphify): symbol-level calls, type references, function values passed (indirect_call, e.g. route registration), embeds and imports, aggregated to file level. Lanes 8-10 add the three catalog servers that run beside the gateway on their own ports (wired in command/s3.go): the Iceberg REST catalog, the Lance Namespace REST server and the AWS-compatible S3 Vectors API. All three keep their records in the S3 Tables catalog (the s3tables/ node); lane 11 is the plugin worker that maintains Iceberg tables by writing the filer directly. No dependency rule is enforced. Those servers register their routes with unexported method values, which the extractor does not draw, so their handler files show no incoming edge from server.go.",
  "output": "s3api-graph.html",
  "scope": {
@@ -9,7 +9,7 @@
   "excluded": "*_test.go, s3tables/s3tablestest, s3lifecycle/lifecycletest, iceberg/testdata, worker/tasks/iceberg/testdata, policy_engine/examples.go (go:build ignore), kms_azure.go (azurekms build tag)",
   "why_criterion": "consequence if it fails + design decision + AWS compatibility constraint",
   "dependency_rule": "none",
-  "baseline": "curated against master 199b2e2 (core nodes first curated at 984eac6 and drift-checked to 199b2e2)"
+  "baseline": "curated against master 995084f (core nodes first curated at 984eac6, drift-checked to 199b2e2 and then to 995084f)"
  },
  "layers": [
   {
