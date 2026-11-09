@@ -42,7 +42,7 @@ Each node was curated by reading its source in full. The collapsed worker node w
 | gotchas | Non-obvious behavior to know before changing it |
 | issue / issue_note | The defect flag and its explanation, where one applies |
 
-## Flagged defects (29)
+## Flagged defects (28)
 
 "Probed" means the defect was reproduced with a throwaway test that was then deleted. "Read" means it was found by reading the code and is not reproduced.
 
@@ -56,7 +56,7 @@ Each node was curated by reading its source in full. The collapsed worker node w
 | bug | `cors/` | A preflight uses the first rule whose origin matches even when its methods don't, so a later rule that allows PUT is never used. | probed |
 | bug | `s3bucket/` | `VerifyS3BucketName` accepts non-ASCII letters and digits ("bücket"), and CreateBucket relies on it alone. | probed |
 | bug | `s3api_put_handlers.go` | SSE-S3 multipart parts reuse the AES-CTR keystream (shared DEK and base IV, part offset 0). | probed |
-| bug | `iceberg/handlers_table.go` | DropTable ignores `purgeRequested` and always deletes the table's data; CreateTable answers 200 on an existing name and writes v1.metadata.json non-exclusively. | probed (drop) |
+| bug | `iceberg/handlers_table.go` | DropTable ignores `purgeRequested` and always deletes the table's data; S3 Tables `DeleteTable` deletes it as well. | probed |
 | bug | `iceberg/handlers_namespace.go` | UpdateNamespaceProperties is a read-modify-write without a version check, so concurrent property updates drop each other. | probed |
 | bug | `s3api_public_access_block.go` | `BlockPublicPolicy` and `RestrictPublicBuckets` are accepted and returned but never enforced, so a public bucket policy is still accepted on a bucket that claims to block it. | probed |
 | bug | `worker/tasks/iceberg/` | The maintenance worker writes records that a rename or delete has claimed, leaving a table stuck in `Deleting=rename` (409 on every later commit and delete). | probed |
@@ -66,7 +66,6 @@ Each node was curated by reading its source in full. The collapsed worker node w
 | bug | `s3api_bucket_policy_handlers.go` | Unconditional whole-entry bucket rewrite: a concurrent versioning or Object Lock config write can be reverted. | read |
 | bug | `s3api_server.go` | `ValidateS3Credential` compares secrets with `!=` (a timing side channel on the OAuth token endpoints); low severity. | read |
 | bug | `iceberg/handlers_commit.go` | A non-conflict UpdateTable failure deletes the staged metadata file although the record may point at it. | read |
-| bug | `iceberg/commit_helpers.go` | Create-on-commit writes v{N}.metadata.json non-exclusively and deletes it on any CreateTable error, so concurrent creators can delete the winner's file. | read |
 | bug | `iceberg/handlers_transaction.go` | The rollback of a failed multi-table commit carries no version token and reverts commits other writers landed meanwhile. | read |
 | bug | `iceberg/handlers_view.go` | The loser of a concurrent CreateView overwrites the winner's metadata file and, if that write fails, drops the winner's view. | read |
 | bug | `lance/handlers_table.go` | Deregister and re-register change what every caller sees but require only read permission. | read |
@@ -83,13 +82,15 @@ Use the **Defects** chips in the viewer to show only flagged nodes.
 ### Fixed since the first curation
 
 - `s3api_object_handlers_put.go`: an invalid `x-amz-storage-class` was rejected only after the upload and leaked the chunks. Fixed upstream in [seaweedfs/seaweedfs#12354](https://github.com/seaweedfs/seaweedfs/pull/12354) (`validatePutHeaders` now runs before the body is read); the flag was removed.
+- `iceberg/commit_helpers.go`: create-on-commit wrote v{N}.metadata.json non-exclusively and deleted it on any CreateTable error, so concurrent creators could delete the winner's file. Fixed upstream in [seaweedfs/seaweedfs#12474](https://github.com/seaweedfs/seaweedfs/pull/12474) (`195f815`): both create paths stage the file exclusively with a per-request token, discard it only when the catalog refused the registration, and answer 409 on an existing name. The flag was removed, and the CreateTable part of the `iceberg/handlers_table.go` flag with it. The fix's tests pass at `7506e5f`.
 
 ## Provenance
 
 - Source: branch `claude/brave-carson-13bjg1`, with `weed/` equal to master `995084f`. This folder is the only addition.
 - The 109 nodes of the first build were curated at `984eac6` and drift-checked to `199b2e2`. Seven files in that scope changed in between: `s3_metadata_util.go`, `s3api_object_handlers_multipart.go`, `s3api_object_handlers_put.go`, and four files of `s3tables/` (`handler_namespace.go`, `handler_policy.go`, `manager.go`, `permissions.go`). Each was re-read and its node updated (tag merging inside the compare, bucket binding for DeleteNamespace and tag operations, `s3vectors:VectorBucketTag/` condition keys, the storage-class fix).
 - Second sync, `199b2e2` → `995084f`: two commits touched the scope. `af45ab8` changed only test files. `b0c6297` (per-bucket Block Public Access) added `s3api_public_access_block.go`, curated as a new node in lane 2, and changed nine files whose nodes were re-read and updated: `s3api_bucket_config.go`, `s3api_bucket_handlers.go`, `s3api_bucket_policy_handlers.go`, `s3api_object_anonymous_read.go`, `s3api_object_handlers_acl.go`, `s3api_object_handlers_postpolicy.go`, `s3api_object_upload_acl.go`, `s3_constants/` and `s3err/` (the existing flags on `s3err/` and `s3api_bucket_policy_handlers.go` still hold).
-- The 36 nodes added for lanes 8–11 were curated at `199b2e2`; none of their files changed in the second sync. The Iceberg nodes describe master, not the unmerged `fix/iceberg-create-table-exclusive-409` branch, which changes `handlers_table.go`, `commit_helpers.go` and `server.go`.
+- The 36 nodes added for lanes 8–11 were curated at `199b2e2`; none of their files changed in the second sync.
+- `iceberg/commit_helpers.go`, `iceberg/handlers_table.go` and `iceberg/metadata_files.go` were re-read at master `7506e5f` for the #12474 fix (and #12475's per-table directories), so those three nodes describe `7506e5f`. Every other node still describes `995084f`, and the edges are still extracted from `995084f`.
 - Edges come from graphify's AST extraction; descriptions and defect flags were curated by hand.
 
 ## Regenerating
