@@ -9,7 +9,7 @@
   "excluded": "*_test.go, s3tables/s3tablestest, s3lifecycle/lifecycletest, iceberg/testdata, worker/tasks/iceberg/testdata, policy_engine/examples.go (go:build ignore), kms_azure.go (azurekms build tag)",
   "why_criterion": "consequence if it fails + design decision + AWS compatibility constraint",
   "dependency_rule": "none",
-  "baseline": "curated against master 995084f (core nodes first curated at 984eac6, drift-checked to 199b2e2 and then to 995084f); iceberg/commit_helpers.go, handlers_table.go and metadata_files.go re-read at 7506e5f for the #12474 fix"
+  "baseline": "curated against master 995084f (core nodes first curated at 984eac6, drift-checked to 199b2e2 and then to 995084f); iceberg/commit_helpers.go, handlers_table.go and metadata_files.go re-read at 7506e5f for the #12474 fix; every bug flag re-checked at b9866bae, where the notes of the flagged nodes were updated"
  },
  "layers": [
   {

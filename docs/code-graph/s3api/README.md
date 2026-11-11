@@ -44,7 +44,7 @@ Each node was curated by reading its source in full. The collapsed worker node w
 
 ## Flagged defects (28)
 
-"Probed" means the defect was reproduced with a throwaway test that was then deleted. "Read" means it was found by reading the code and is not reproduced.
+"Probed" means the defect was reproduced with a throwaway test that was then deleted. "Read" means it was found by reading the code and is not reproduced. Every bug row was checked again at master `b9866bae`: 20 were reproduced there, and the timing side channel in `s3api_server.go` was confirmed by reading.
 
 | Kind | Node | Summary | Check |
 | --- | --- | --- | --- |
@@ -52,7 +52,7 @@ Each node was curated by reading its source in full. The collapsed worker node w
 | bug | `chunked_reader_v4.go` | STREAMING-…-TRAILER uploads: chunk and trailer signatures are not enforced, so the body is unauthenticated. | probed |
 | bug | `policy_engine/` | `s3:authType` is not set for SigV4 presigned URLs, so "deny presigned" policies do not apply to them. | probed |
 | bug | `s3api_embedded_iam.go` | `CreatePolicyVersion` rejects Deny / non-s3 documents that `CreatePolicy` accepts, so such policies can never be updated (Terraform). | probed |
-| bug | `s3tables/` | After a cross-namespace `RenameTable`, every Iceberg commit fails; `RenameTable` copies metadata from a torn read, so a commit landing during the rename is lost while the rename answers 200; and policy `Condition` blocks are never validated, so a null or empty operator map applies a statement unconditionally, a misspelled operator silently disables a Deny, and a null condition value makes every request on the bucket panic, with no way to remove the policy through the API. | probed |
+| bug | `s3tables/` | CreateTable and CreateView make the record directory non-exclusively, so a create that lands after another creator has finished wipes that creator's record: both answer 200 and the first table is gone from the catalog. | probed |
 | bug | `cors/` | A preflight uses the first rule whose origin matches even when its methods don't, so a later rule that allows PUT is never used. | probed |
 | bug | `s3bucket/` | `VerifyS3BucketName` accepts non-ASCII letters and digits ("bücket"), and CreateBucket relies on it alone. | probed |
 | bug | `s3api_put_handlers.go` | SSE-S3 multipart parts reuse the AES-CTR keystream (shared DEK and base IV, part offset 0). | probed |
@@ -60,15 +60,15 @@ Each node was curated by reading its source in full. The collapsed worker node w
 | bug | `iceberg/handlers_namespace.go` | UpdateNamespaceProperties is a read-modify-write without a version check, so concurrent property updates drop each other. | probed |
 | bug | `s3api_public_access_block.go` | `BlockPublicPolicy` and `RestrictPublicBuckets` are accepted and returned but never enforced, so a public bucket policy is still accepted on a bucket that claims to block it. | probed |
 | bug | `worker/tasks/iceberg/` | The maintenance worker writes records that a rename or delete has claimed, leaving a table stuck in `Deleting=rename` (409 on every later commit and delete). | probed |
-| bug | `auth_signature_v2.go` | Header-signed SigV2 has no Date freshness check (replay), and several subresources are missing from the signed resource. | read |
-| bug | `s3api_object_handlers_multipart.go` | `isVersioningEnabled` is passed as `objectLockEnabled`: lock headers are accepted on non-lock buckets and are not enforced. | read |
-| bug | `s3api_object_handlers_copy.go` | Copied chunks leak when finalize fails (for example a 412); UploadPartCopy misses `prefixObjectSource`. | read |
-| bug | `s3api_bucket_policy_handlers.go` | Unconditional whole-entry bucket rewrite: a concurrent versioning or Object Lock config write can be reverted. | read |
+| bug | `auth_signature_v2.go` | Header-signed SigV2 has no Date freshness check (replay), and several subresources are missing from the signed resource. | probed |
+| bug | `s3api_object_handlers_multipart.go` | `isVersioningEnabled` is passed as `objectLockEnabled`: lock headers are accepted on non-lock buckets and are not enforced. | probed |
+| bug | `s3api_object_handlers_copy.go` | Copied chunks leak when finalize fails (for example a 412); UploadPartCopy misses `prefixObjectSource`. | probed |
+| bug | `s3api_bucket_policy_handlers.go` | Unconditional whole-entry bucket rewrite: a concurrent versioning or Object Lock config write can be reverted. | probed |
 | bug | `s3api_server.go` | `ValidateS3Credential` compares secrets with `!=` (a timing side channel on the OAuth token endpoints); low severity. | read |
-| bug | `iceberg/handlers_commit.go` | A non-conflict UpdateTable failure deletes the staged metadata file although the record may point at it. | read |
-| bug | `iceberg/handlers_transaction.go` | The rollback of a failed multi-table commit carries no version token and reverts commits other writers landed meanwhile. | read |
-| bug | `iceberg/handlers_view.go` | The loser of a concurrent CreateView overwrites the winner's metadata file and, if that write fails, drops the winner's view. | read |
-| bug | `lance/handlers_table.go` | Deregister and re-register change what every caller sees but require only read permission. | read |
+| bug | `iceberg/handlers_commit.go` | A non-conflict UpdateTable failure deletes the staged metadata file although the record may point at it. | probed |
+| bug | `iceberg/handlers_transaction.go` | The rollback of a failed multi-table commit carries no version token and reverts commits other writers landed meanwhile. | probed |
+| bug | `iceberg/handlers_view.go` | CreateView answers 200 with the stored definition for a view that already exists (the spec says 409), and with the same client-supplied location the loser of a concurrent create overwrites the winner's metadata file. | probed |
+| bug | `lance/handlers_table.go` | Deregister and re-register change what every caller sees but require only read permission. | probed |
 | dead | `s3_sse_kms.go` | The S3 Bucket Key data-key cache path is not wired in. | read |
 | dead | `s3api_copy_size_calculation.go` | Its only output is a V(2) log line. | read |
 | dead | `filer_util_tags.go` | `getTags` has no callers. | read |
@@ -83,6 +83,8 @@ Use the **Defects** chips in the viewer to show only flagged nodes.
 
 - `s3api_object_handlers_put.go`: an invalid `x-amz-storage-class` was rejected only after the upload and leaked the chunks. Fixed upstream in [seaweedfs/seaweedfs#12354](https://github.com/seaweedfs/seaweedfs/pull/12354) (`validatePutHeaders` now runs before the body is read); the flag was removed.
 - `iceberg/commit_helpers.go`: create-on-commit wrote v{N}.metadata.json non-exclusively and deleted it on any CreateTable error, so concurrent creators could delete the winner's file. Fixed upstream in [seaweedfs/seaweedfs#12474](https://github.com/seaweedfs/seaweedfs/pull/12474) (`195f815`): both create paths stage the file exclusively with a per-request token, discard it only when the catalog refused the registration, and answer 409 on an existing name. The flag was removed, and the CreateTable part of the `iceberg/handlers_table.go` flag with it. The fix's tests pass at `7506e5f`.
+- `s3tables/`: three defects of the first flag are fixed upstream, and each was re-checked at `b9866bae`. A table renamed across namespaces can commit again ([seaweedfs/seaweedfs#12515](https://github.com/seaweedfs/seaweedfs/pull/12515), `2143761`). `RenameTable` refuses a source that changed between its reads, and has a REST route ([seaweedfs/seaweedfs#12446](https://github.com/seaweedfs/seaweedfs/pull/12446), `f71c0fe`). Policy `Condition` blocks are validated when stored and an unusable stored one fails safe ([seaweedfs/seaweedfs#12389](https://github.com/seaweedfs/seaweedfs/pull/12389), `15ff5c1`). The node keeps a bug flag for a different defect, found while re-checking.
+- `iceberg/handlers_view.go`: since [seaweedfs/seaweedfs#12475](https://github.com/seaweedfs/seaweedfs/pull/12475) a view created without a location has its own directory, so the loser of a concurrent create no longer overwrites the winner's metadata file in that case. The flag stays for the same-location case and for the 200 answer on an existing view.
 
 ## Provenance
 
@@ -91,6 +93,7 @@ Use the **Defects** chips in the viewer to show only flagged nodes.
 - Second sync, `199b2e2` → `995084f`: two commits touched the scope. `af45ab8` changed only test files. `b0c6297` (per-bucket Block Public Access) added `s3api_public_access_block.go`, curated as a new node in lane 2, and changed nine files whose nodes were re-read and updated: `s3api_bucket_config.go`, `s3api_bucket_handlers.go`, `s3api_bucket_policy_handlers.go`, `s3api_object_anonymous_read.go`, `s3api_object_handlers_acl.go`, `s3api_object_handlers_postpolicy.go`, `s3api_object_upload_acl.go`, `s3_constants/` and `s3err/` (the existing flags on `s3err/` and `s3api_bucket_policy_handlers.go` still hold).
 - The 36 nodes added for lanes 8–11 were curated at `199b2e2`; none of their files changed in the second sync.
 - `iceberg/commit_helpers.go`, `iceberg/handlers_table.go` and `iceberg/metadata_files.go` were re-read at master `7506e5f` for the #12474 fix (and #12475's per-table directories), so those three nodes describe `7506e5f`. Every other node still describes `995084f`, and the edges are still extracted from `995084f`.
+- Flag check at master `b9866bae` (120 commits after `995084f`, 25 of them in this scope): every bug flag was re-read and probed there, and the flags and issue notes of `s3tables/`, `iceberg/handlers_view.go`, `iceberg/handlers_commit.go`, `iceberg/handlers_transaction.go`, `lance/handlers_table.go`, `auth_signature_v2.go`, `s3api_object_handlers_multipart.go`, `s3api_object_handlers_copy.go`, `s3api_bucket_policy_handlers.go` and `worker/tasks/iceberg/` were updated. This was not a full sync: the other fields of every node, the node list and the edges still describe the commits named above.
 - Edges come from graphify's AST extraction; descriptions and defect flags were curated by hand.
 
 ## Regenerating
