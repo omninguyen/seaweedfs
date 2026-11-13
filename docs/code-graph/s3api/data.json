@@ -1,13 +1,703 @@
 {
  "nodes": [
   {
+   "id": "weed/filer/abstract_sql/",
+   "label": "filer/abstract_sql/",
+   "file": "weed/filer/abstract_sql/",
+   "kind": "package",
+   "layer": 15,
+   "in": 0,
+   "out": 3,
+   "symbols": 60
+  },
+  {
+   "id": "weed/filer/configuration.go",
+   "label": "filer/configuration.go",
+   "file": "weed/filer/configuration.go",
+   "kind": "file",
+   "layer": 15,
+   "in": 0,
+   "out": 1,
+   "symbols": 3
+  },
+  {
+   "id": "weed/filer/copy_params.go",
+   "label": "filer/copy_params.go",
+   "file": "weed/filer/copy_params.go",
+   "kind": "file",
+   "layer": 14,
+   "in": 0,
+   "out": 0,
+   "symbols": 1
+  },
+  {
+   "id": "weed/filer/empty_folder_cleanup/cleanup_queue.go",
+   "label": "filer/empty_folder_cleanup/cleanup_queue.go",
+   "file": "weed/filer/empty_folder_cleanup/cleanup_queue.go",
+   "kind": "file",
+   "layer": 19,
+   "in": 1,
+   "out": 0,
+   "symbols": 16
+  },
+  {
+   "id": "weed/filer/empty_folder_cleanup/empty_folder_cleaner.go",
+   "label": "filer/empty_folder_cleanup/empty_folder_cleaner.go",
+   "file": "weed/filer/empty_folder_cleanup/empty_folder_cleaner.go",
+   "kind": "file",
+   "layer": 19,
+   "in": 1,
+   "out": 2,
+   "symbols": 40
+  },
+  {
+   "id": "weed/filer/entry.go",
+   "label": "filer/entry.go",
+   "file": "weed/filer/entry.go",
+   "kind": "file",
+   "layer": 15,
+   "in": 12,
+   "out": 5,
+   "symbols": 20
+  },
+  {
+   "id": "weed/filer/entry_codec.go",
+   "label": "filer/entry_codec.go",
+   "file": "weed/filer/entry_codec.go",
+   "kind": "file",
+   "layer": 15,
+   "in": 4,
+   "out": 2,
+   "symbols": 12
+  },
+  {
+   "id": "weed/filer/entry_codec_attributes.go",
+   "label": "filer/entry_codec_attributes.go",
+   "file": "weed/filer/entry_codec_attributes.go",
+   "kind": "file",
+   "layer": 15,
+   "in": 0,
+   "out": 3,
+   "symbols": 5
+  },
+  {
+   "id": "weed/filer/filechunk_group.go",
+   "label": "filer/filechunk_group.go",
+   "file": "weed/filer/filechunk_group.go",
+   "kind": "file",
+   "layer": 16,
+   "in": 1,
+   "out": 5,
+   "symbols": 13
+  },
+  {
+   "id": "weed/filer/filechunk_manifest.go",
+   "label": "filer/filechunk_manifest.go",
+   "file": "weed/filer/filechunk_manifest.go",
+   "kind": "file",
+   "layer": 16,
+   "in": 12,
+   "out": 5,
+   "symbols": 25
+  },
+  {
+   "id": "weed/filer/filechunk_manifest_cache.go",
+   "label": "filer/filechunk_manifest_cache.go",
+   "file": "weed/filer/filechunk_manifest_cache.go",
+   "kind": "file",
+   "layer": 16,
+   "in": 2,
+   "out": 0,
+   "symbols": 11
+  },
+  {
+   "id": "weed/filer/filechunk_section.go",
+   "label": "filer/filechunk_section.go",
+   "file": "weed/filer/filechunk_section.go",
+   "kind": "file",
+   "layer": 16,
+   "in": 1,
+   "out": 6,
+   "symbols": 11
+  },
+  {
+   "id": "weed/filer/filechunks.go",
+   "label": "filer/filechunks.go",
+   "file": "weed/filer/filechunks.go",
+   "kind": "file",
+   "layer": 16,
+   "in": 22,
+   "out": 6,
+   "symbols": 28
+  },
+  {
+   "id": "weed/filer/filechunks_read.go",
+   "label": "filer/filechunks_read.go",
+   "file": "weed/filer/filechunks_read.go",
+   "kind": "file",
+   "layer": 16,
+   "in": 2,
+   "out": 3,
+   "symbols": 5
+  },
+  {
+   "id": "weed/filer/filer.go",
+   "label": "filer/filer.go",
+   "file": "weed/filer/filer.go",
+   "kind": "file",
+   "layer": 14,
+   "in": 13,
+   "out": 16,
+   "symbols": 38
+  },
+  {
+   "id": "weed/filer/filer_buckets.go",
+   "label": "filer/filer_buckets.go",
+   "file": "weed/filer/filer_buckets.go",
+   "kind": "file",
+   "layer": 14,
+   "in": 0,
+   "out": 0,
+   "symbols": 2
+  },
+  {
+   "id": "weed/filer/filer_conf.go",
+   "label": "filer/filer_conf.go",
+   "file": "weed/filer/filer_conf.go",
+   "kind": "file",
+   "layer": 15,
+   "in": 5,
+   "out": 5,
+   "symbols": 27
+  },
+  {
+   "id": "weed/filer/filer_delete_entry.go",
+   "label": "filer/filer_delete_entry.go",
+   "file": "weed/filer/filer_delete_entry.go",
+   "kind": "file",
+   "layer": 14,
+   "in": 6,
+   "out": 4,
+   "symbols": 23
+  },
+  {
+   "id": "weed/filer/filer_deletion.go",
+   "label": "filer/filer_deletion.go",
+   "file": "weed/filer/filer_deletion.go",
+   "kind": "file",
+   "layer": 19,
+   "in": 1,
+   "out": 5,
+   "symbols": 31
+  },
+  {
+   "id": "weed/filer/filer_deletion_persist.go",
+   "label": "filer/filer_deletion_persist.go",
+   "file": "weed/filer/filer_deletion_persist.go",
+   "kind": "file",
+   "layer": 19,
+   "in": 0,
+   "out": 1,
+   "symbols": 31
+  },
+  {
+   "id": "weed/filer/filer_hardlink.go",
+   "label": "filer/filer_hardlink.go",
+   "file": "weed/filer/filer_hardlink.go",
+   "kind": "file",
+   "layer": 14,
+   "in": 4,
+   "out": 0,
+   "symbols": 3
+  },
+  {
+   "id": "weed/filer/filer_inode.go",
+   "label": "filer/filer_inode.go",
+   "file": "weed/filer/filer_inode.go",
+   "kind": "file",
+   "layer": 14,
+   "in": 0,
+   "out": 0,
+   "symbols": 2
+  },
+  {
+   "id": "weed/filer/filer_lazy_remote.go",
+   "label": "filer/filer_lazy_remote.go",
+   "file": "weed/filer/filer_lazy_remote.go",
+   "kind": "file",
+   "layer": 18,
+   "in": 0,
+   "out": 3,
+   "symbols": 16
+  },
+  {
+   "id": "weed/filer/filer_lazy_remote_listing.go",
+   "label": "filer/filer_lazy_remote_listing.go",
+   "file": "weed/filer/filer_lazy_remote_listing.go",
+   "kind": "file",
+   "layer": 18,
+   "in": 0,
+   "out": 2,
+   "symbols": 4
+  },
+  {
+   "id": "weed/filer/filer_notify.go",
+   "label": "filer/filer_notify.go",
+   "file": "weed/filer/filer_notify.go",
+   "kind": "file",
+   "layer": 17,
+   "in": 2,
+   "out": 5,
+   "symbols": 26
+  },
+  {
+   "id": "weed/filer/filer_notify_append.go",
+   "label": "filer/filer_notify_append.go",
+   "file": "weed/filer/filer_notify_append.go",
+   "kind": "file",
+   "layer": 17,
+   "in": 0,
+   "out": 3,
+   "symbols": 7
+  },
+  {
+   "id": "weed/filer/filer_notify_read.go",
+   "label": "filer/filer_notify_read.go",
+   "file": "weed/filer/filer_notify_read.go",
+   "kind": "file",
+   "layer": 17,
+   "in": 1,
+   "out": 4,
+   "symbols": 37
+  },
+  {
+   "id": "weed/filer/filer_on_meta_event.go",
+   "label": "filer/filer_on_meta_event.go",
+   "file": "weed/filer/filer_on_meta_event.go",
+   "kind": "file",
+   "layer": 17,
+   "in": 0,
+   "out": 5,
+   "symbols": 10
+  },
+  {
+   "id": "weed/filer/filer_remote_evict.go",
+   "label": "filer/filer_remote_evict.go",
+   "file": "weed/filer/filer_remote_evict.go",
+   "kind": "file",
+   "layer": 18,
+   "in": 1,
+   "out": 1,
+   "symbols": 5
+  },
+  {
+   "id": "weed/filer/filer_remote_tombstone.go",
+   "label": "filer/filer_remote_tombstone.go",
+   "file": "weed/filer/filer_remote_tombstone.go",
+   "kind": "file",
+   "layer": 18,
+   "in": 1,
+   "out": 4,
+   "symbols": 28
+  },
+  {
+   "id": "weed/filer/filer_rename.go",
+   "label": "filer/filer_rename.go",
+   "file": "weed/filer/filer_rename.go",
+   "kind": "file",
+   "layer": 14,
+   "in": 0,
+   "out": 1,
+   "symbols": 3
+  },
+  {
+   "id": "weed/filer/filer_search.go",
+   "label": "filer/filer_search.go",
+   "file": "weed/filer/filer_search.go",
+   "kind": "file",
+   "layer": 14,
+   "in": 0,
+   "out": 2,
+   "symbols": 7
+  },
+  {
+   "id": "weed/filer/filerstore.go",
+   "label": "filer/filerstore.go",
+   "file": "weed/filer/filerstore.go",
+   "kind": "file",
+   "layer": 15,
+   "in": 6,
+   "out": 0,
+   "symbols": 27
+  },
+  {
+   "id": "weed/filer/filerstore_hardlink.go",
+   "label": "filer/filerstore_hardlink.go",
+   "file": "weed/filer/filerstore_hardlink.go",
+   "kind": "file",
+   "layer": 15,
+   "in": 1,
+   "out": 2,
+   "symbols": 5
+  },
+  {
+   "id": "weed/filer/filerstore_translate_path.go",
+   "label": "filer/filerstore_translate_path.go",
+   "file": "weed/filer/filerstore_translate_path.go",
+   "kind": "file",
+   "layer": 15,
+   "in": 1,
+   "out": 1,
+   "symbols": 23
+  },
+  {
+   "id": "weed/filer/filerstore_wrapper.go",
+   "label": "filer/filerstore_wrapper.go",
+   "file": "weed/filer/filerstore_wrapper.go",
+   "kind": "file",
+   "layer": 15,
+   "in": 2,
+   "out": 5,
+   "symbols": 41
+  },
+  {
+   "id": "weed/filer/gateway_upload.go",
+   "label": "filer/gateway_upload.go",
+   "file": "weed/filer/gateway_upload.go",
+   "kind": "file",
+   "layer": 16,
+   "in": 1,
+   "out": 2,
+   "symbols": 6
+  },
+  {
+   "id": "weed/filer/interval_list.go",
+   "label": "filer/interval_list.go",
+   "file": "weed/filer/interval_list.go",
+   "kind": "file",
+   "layer": 16,
+   "in": 7,
+   "out": 0,
+   "symbols": 16
+  },
+  {
+   "id": "weed/filer/manifest_batch.go",
+   "label": "filer/manifest_batch.go",
+   "file": "weed/filer/manifest_batch.go",
+   "kind": "file",
+   "layer": 16,
+   "in": 0,
+   "out": 0,
+   "symbols": 1
+  },
+  {
+   "id": "weed/filer/manifest_batch_foundationdb.go",
+   "label": "filer/manifest_batch_foundationdb.go",
+   "file": "weed/filer/manifest_batch_foundationdb.go",
+   "kind": "file",
+   "layer": 16,
+   "in": 0,
+   "out": 0,
+   "symbols": 1
+  },
+  {
+   "id": "weed/filer/meta_aggregator.go",
+   "label": "filer/meta_aggregator.go",
+   "file": "weed/filer/meta_aggregator.go",
+   "kind": "file",
+   "layer": 17,
+   "in": 1,
+   "out": 6,
+   "symbols": 38
+  },
+  {
+   "id": "weed/filer/meta_path_ts.go",
+   "label": "filer/meta_path_ts.go",
+   "file": "weed/filer/meta_path_ts.go",
+   "kind": "file",
+   "layer": 17,
+   "in": 0,
+   "out": 0,
+   "symbols": 4
+  },
+  {
+   "id": "weed/filer/meta_replay.go",
+   "label": "filer/meta_replay.go",
+   "file": "weed/filer/meta_replay.go",
+   "kind": "file",
+   "layer": 17,
+   "in": 3,
+   "out": 3,
+   "symbols": 12
+  },
+  {
+   "id": "weed/filer/metadata_event_context.go",
+   "label": "filer/metadata_event_context.go",
+   "file": "weed/filer/metadata_event_context.go",
+   "kind": "file",
+   "layer": 17,
+   "in": 2,
+   "out": 0,
+   "symbols": 4
+  },
+  {
+   "id": "weed/filer/metadata_event_sink.go",
+   "label": "filer/metadata_event_sink.go",
+   "file": "weed/filer/metadata_event_sink.go",
+   "kind": "file",
+   "layer": 17,
+   "in": 3,
+   "out": 1,
+   "symbols": 7
+  },
+  {
+   "id": "weed/filer/mount_peer_registry.go",
+   "label": "filer/mount_peer_registry.go",
+   "file": "weed/filer/mount_peer_registry.go",
+   "kind": "file",
+   "layer": 17,
+   "in": 0,
+   "out": 0,
+   "symbols": 10
+  },
+  {
+   "id": "weed/filer/persisted_log_cache.go",
+   "label": "filer/persisted_log_cache.go",
+   "file": "weed/filer/persisted_log_cache.go",
+   "kind": "file",
+   "layer": 17,
+   "in": 3,
+   "out": 3,
+   "symbols": 15
+  },
+  {
+   "id": "weed/filer/placement_overlay.go",
+   "label": "filer/placement_overlay.go",
+   "file": "weed/filer/placement_overlay.go",
+   "kind": "file",
+   "layer": 15,
+   "in": 1,
+   "out": 1,
+   "symbols": 4
+  },
+  {
+   "id": "weed/filer/read_remote.go",
+   "label": "filer/read_remote.go",
+   "file": "weed/filer/read_remote.go",
+   "kind": "file",
+   "layer": 18,
+   "in": 4,
+   "out": 2,
+   "symbols": 6
+  },
+  {
+   "id": "weed/filer/read_write.go",
+   "label": "filer/read_write.go",
+   "file": "weed/filer/read_write.go",
+   "kind": "file",
+   "layer": 14,
+   "in": 6,
+   "out": 4,
+   "symbols": 4
+  },
+  {
+   "id": "weed/filer/reader_at.go",
+   "label": "filer/reader_at.go",
+   "file": "weed/filer/reader_at.go",
+   "kind": "file",
+   "layer": 16,
+   "in": 5,
+   "out": 6,
+   "symbols": 14
+  },
+  {
+   "id": "weed/filer/reader_cache.go",
+   "label": "filer/reader_cache.go",
+   "file": "weed/filer/reader_cache.go",
+   "kind": "file",
+   "layer": 16,
+   "in": 7,
+   "out": 4,
+   "symbols": 33
+  },
+  {
+   "id": "weed/filer/reader_cache_budget.go",
+   "label": "filer/reader_cache_budget.go",
+   "file": "weed/filer/reader_cache_budget.go",
+   "kind": "file",
+   "layer": 16,
+   "in": 2,
+   "out": 1,
+   "symbols": 7
+  },
+  {
+   "id": "weed/filer/reader_pattern.go",
+   "label": "filer/reader_pattern.go",
+   "file": "weed/filer/reader_pattern.go",
+   "kind": "file",
+   "layer": 16,
+   "in": 1,
+   "out": 0,
+   "symbols": 5
+  },
+  {
+   "id": "weed/filer/remote_mapping.go",
+   "label": "filer/remote_mapping.go",
+   "file": "weed/filer/remote_mapping.go",
+   "kind": "file",
+   "layer": 18,
+   "in": 3,
+   "out": 3,
+   "symbols": 7
+  },
+  {
+   "id": "weed/filer/remote_storage.go",
+   "label": "filer/remote_storage.go",
+   "file": "weed/filer/remote_storage.go",
+   "kind": "file",
+   "layer": 18,
+   "in": 4,
+   "out": 3,
+   "symbols": 19
+  },
+  {
+   "id": "weed/filer/s3iam_conf.go",
+   "label": "filer/s3iam_conf.go",
+   "file": "weed/filer/s3iam_conf.go",
+   "kind": "file",
+   "layer": 15,
+   "in": 3,
+   "out": 0,
+   "symbols": 4
+  },
+  {
+   "id": "weed/filer/stream.go",
+   "label": "filer/stream.go",
+   "file": "weed/filer/stream.go",
+   "kind": "file",
+   "layer": 16,
+   "in": 14,
+   "out": 8,
+   "symbols": 37
+  },
+  {
+   "id": "weed/filer/stream_prefetch.go",
+   "label": "filer/stream_prefetch.go",
+   "file": "weed/filer/stream_prefetch.go",
+   "kind": "file",
+   "layer": 16,
+   "in": 1,
+   "out": 4,
+   "symbols": 4
+  },
+  {
+   "id": "weed/filer/topics.go",
+   "label": "filer/topics.go",
+   "file": "weed/filer/topics.go",
+   "kind": "file",
+   "layer": 17,
+   "in": 0,
+   "out": 0,
+   "symbols": 1
+  },
+  {
+   "id": "weed/filer/zip_extract.go",
+   "label": "filer/zip_extract.go",
+   "file": "weed/filer/zip_extract.go",
+   "kind": "file",
+   "layer": 14,
+   "in": 1,
+   "out": 0,
+   "symbols": 4
+  },
+  {
+   "id": "weed/pb/filer.proto",
+   "label": "pb/filer.proto (generated Go)",
+   "file": "weed/pb/filer.proto",
+   "kind": "package",
+   "layer": 12,
+   "in": 93,
+   "out": 0,
+   "symbols": 1768
+  },
+  {
+   "id": "weed/pb/filer_pb/entry_scrub.go",
+   "label": "pb/filer_pb/entry_scrub.go",
+   "file": "weed/pb/filer_pb/entry_scrub.go",
+   "kind": "file",
+   "layer": 12,
+   "in": 1,
+   "out": 0,
+   "symbols": 2
+  },
+  {
+   "id": "weed/pb/filer_pb/filer_client.go",
+   "label": "pb/filer_pb/filer_client.go",
+   "file": "weed/pb/filer_pb/filer_client.go",
+   "kind": "file",
+   "layer": 12,
+   "in": 21,
+   "out": 3,
+   "symbols": 25
+  },
+  {
+   "id": "weed/pb/filer_pb/filer_client_bfs.go",
+   "label": "pb/filer_pb/filer_client_bfs.go",
+   "file": "weed/pb/filer_pb/filer_client_bfs.go",
+   "kind": "file",
+   "layer": 12,
+   "in": 1,
+   "out": 2,
+   "symbols": 4
+  },
+  {
+   "id": "weed/pb/filer_pb/filer_client_dfs.go",
+   "label": "pb/filer_pb/filer_client_dfs.go",
+   "file": "weed/pb/filer_pb/filer_client_dfs.go",
+   "kind": "file",
+   "layer": 12,
+   "in": 0,
+   "out": 1,
+   "symbols": 4
+  },
+  {
+   "id": "weed/pb/filer_pb/filer_pb_event_scan.go",
+   "label": "pb/filer_pb/filer_pb_event_scan.go",
+   "file": "weed/pb/filer_pb/filer_pb_event_scan.go",
+   "kind": "file",
+   "layer": 12,
+   "in": 1,
+   "out": 1,
+   "symbols": 4
+  },
+  {
+   "id": "weed/pb/filer_pb/filer_pb_helper.go",
+   "label": "pb/filer_pb/filer_pb_helper.go",
+   "file": "weed/pb/filer_pb/filer_pb_helper.go",
+   "kind": "file",
+   "layer": 12,
+   "in": 27,
+   "out": 2,
+   "symbols": 43
+  },
+  {
+   "id": "weed/pb/filer_pb/listing_options.go",
+   "label": "pb/filer_pb/listing_options.go",
+   "file": "weed/pb/filer_pb/listing_options.go",
+   "kind": "file",
+   "layer": 12,
+   "in": 2,
+   "out": 0,
+   "symbols": 4
+  },
+  {
    "id": "weed/s3api/auth_credentials.go",
    "label": "auth_credentials.go",
    "file": "weed/s3api/auth_credentials.go",
    "kind": "file",
    "layer": 2,
-   "in": 24,
-   "out": 14,
+   "in": 25,
+   "out": 15,
    "symbols": 128
   },
   {
@@ -27,7 +717,7 @@
    "kind": "file",
    "layer": 2,
    "in": 3,
-   "out": 7,
+   "out": 8,
    "symbols": 10
   },
   {
@@ -47,7 +737,7 @@
    "kind": "file",
    "layer": 2,
    "in": 2,
-   "out": 4,
+   "out": 5,
    "symbols": 13
   },
   {
@@ -67,7 +757,7 @@
    "kind": "file",
    "layer": 3,
    "in": 6,
-   "out": 7,
+   "out": 9,
    "symbols": 13
   },
   {
@@ -77,8 +767,8 @@
    "kind": "file",
    "layer": 6,
    "in": 29,
-   "out": 6,
-   "symbols": 13
+   "out": 7,
+   "symbols": 14
   },
   {
    "id": "weed/s3api/bucket_size_metrics.go",
@@ -87,7 +777,7 @@
    "kind": "file",
    "layer": 3,
    "in": 1,
-   "out": 2,
+   "out": 5,
    "symbols": 8
   },
   {
@@ -137,7 +827,7 @@
    "kind": "file",
    "layer": 0,
    "in": 2,
-   "out": 1,
+   "out": 2,
    "symbols": 2
   },
   {
@@ -146,9 +836,9 @@
    "file": "weed/s3api/filer_multipart.go",
    "kind": "file",
    "layer": 5,
-   "in": 6,
-   "out": 24,
-   "symbols": 60
+   "in": 5,
+   "out": 28,
+   "symbols": 62
   },
   {
    "id": "weed/s3api/filer_util.go",
@@ -157,7 +847,7 @@
    "kind": "file",
    "layer": 6,
    "in": 23,
-   "out": 6,
+   "out": 10,
    "symbols": 20
   },
   {
@@ -167,7 +857,7 @@
    "kind": "file",
    "layer": 6,
    "in": 1,
-   "out": 3,
+   "out": 4,
    "symbols": 4
   },
   {
@@ -176,9 +866,9 @@
    "file": "weed/s3api/iceberg/commit_helpers.go",
    "kind": "file",
    "layer": 8,
-   "in": 3,
+   "in": 4,
    "out": 7,
-   "symbols": 13
+   "symbols": 16
   },
   {
    "id": "weed/s3api/iceberg/commit_updates.go",
@@ -237,7 +927,7 @@
    "kind": "file",
    "layer": 8,
    "in": 2,
-   "out": 8,
+   "out": 10,
    "symbols": 22
   },
   {
@@ -287,7 +977,7 @@
    "kind": "file",
    "layer": 8,
    "in": 0,
-   "out": 2,
+   "out": 6,
    "symbols": 28
   },
   {
@@ -307,8 +997,8 @@
    "kind": "file",
    "layer": 8,
    "in": 1,
-   "out": 3,
-   "symbols": 7
+   "out": 6,
+   "symbols": 8
   },
   {
    "id": "weed/s3api/iceberg/name_mapping.go",
@@ -347,7 +1037,7 @@
    "kind": "file",
    "layer": 8,
    "in": 0,
-   "out": 4,
+   "out": 5,
    "symbols": 23
   },
   {
@@ -357,8 +1047,8 @@
    "kind": "file",
    "layer": 8,
    "in": 2,
-   "out": 2,
-   "symbols": 10
+   "out": 4,
+   "symbols": 11
   },
   {
    "id": "weed/s3api/iceberg/types.go",
@@ -378,7 +1068,7 @@
    "layer": 8,
    "in": 14,
    "out": 2,
-   "symbols": 22
+   "symbols": 23
   },
   {
    "id": "weed/s3api/lance/errors.go",
@@ -418,7 +1108,7 @@
    "layer": 9,
    "in": 0,
    "out": 5,
-   "symbols": 16
+   "symbols": 21
   },
   {
    "id": "weed/s3api/lance/identifier.go",
@@ -437,7 +1127,7 @@
    "kind": "file",
    "layer": 9,
    "in": 0,
-   "out": 1,
+   "out": 3,
    "symbols": 6
   },
   {
@@ -447,7 +1137,7 @@
    "kind": "file",
    "layer": 9,
    "in": 1,
-   "out": 4,
+   "out": 5,
    "symbols": 30
   },
   {
@@ -458,7 +1148,7 @@
    "layer": 9,
    "in": 2,
    "out": 5,
-   "symbols": 15
+   "symbols": 18
   },
   {
    "id": "weed/s3api/lance/types.go",
@@ -487,7 +1177,7 @@
    "kind": "file",
    "layer": 5,
    "in": 5,
-   "out": 3,
+   "out": 4,
    "symbols": 15
   },
   {
@@ -516,9 +1206,9 @@
    "file": "weed/s3api/request_body.go",
    "kind": "file",
    "layer": 0,
-   "in": 6,
-   "out": 0,
-   "symbols": 2
+   "in": 11,
+   "out": 4,
+   "symbols": 10
   },
   {
    "id": "weed/s3api/s3_action_resolver.go",
@@ -526,7 +1216,7 @@
    "file": "weed/s3api/s3_action_resolver.go",
    "kind": "file",
    "layer": 2,
-   "in": 5,
+   "in": 4,
    "out": 1,
    "symbols": 6
   },
@@ -546,7 +1236,7 @@
    "file": "weed/s3api/s3_constants/",
    "kind": "package",
    "layer": 0,
-   "in": 86,
+   "in": 99,
    "out": 0,
    "symbols": 54
   },
@@ -586,8 +1276,8 @@
    "file": "weed/s3api/s3_objectlock/",
    "kind": "package",
    "layer": 5,
-   "in": 1,
-   "out": 1,
+   "in": 2,
+   "out": 2,
    "symbols": 8
   },
   {
@@ -607,7 +1297,7 @@
    "kind": "file",
    "layer": 5,
    "in": 12,
-   "out": 8,
+   "out": 9,
    "symbols": 38
   },
   {
@@ -636,8 +1326,8 @@
    "file": "weed/s3api/s3_sse_s3.go",
    "kind": "file",
    "layer": 5,
-   "in": 11,
-   "out": 3,
+   "in": 12,
+   "out": 5,
    "symbols": 34
   },
   {
@@ -666,8 +1356,8 @@
    "file": "weed/s3api/s3api_acl_helper.go",
    "kind": "file",
    "layer": 2,
-   "in": 5,
-   "out": 3,
+   "in": 4,
+   "out": 4,
    "symbols": 20
   },
   {
@@ -697,7 +1387,7 @@
    "kind": "file",
    "layer": 3,
    "in": 34,
-   "out": 17,
+   "out": 18,
    "symbols": 62
   },
   {
@@ -726,8 +1416,8 @@
    "file": "weed/s3api/s3api_bucket_handlers.go",
    "kind": "file",
    "layer": 3,
-   "in": 16,
-   "out": 26,
+   "in": 15,
+   "out": 28,
    "symbols": 41
   },
   {
@@ -777,7 +1467,7 @@
    "kind": "file",
    "layer": 3,
    "in": 3,
-   "out": 7,
+   "out": 8,
    "symbols": 16
   },
   {
@@ -787,8 +1477,8 @@
    "kind": "file",
    "layer": 2,
    "in": 4,
-   "out": 3,
-   "symbols": 10
+   "out": 4,
+   "symbols": 11
   },
   {
    "id": "weed/s3api/s3api_bucket_policy_handlers.go",
@@ -797,7 +1487,7 @@
    "kind": "file",
    "layer": 3,
    "in": 4,
-   "out": 11,
+   "out": 13,
    "symbols": 16
   },
   {
@@ -807,7 +1497,7 @@
    "kind": "file",
    "layer": 3,
    "in": 1,
-   "out": 5,
+   "out": 6,
    "symbols": 8
   },
   {
@@ -827,7 +1517,7 @@
    "kind": "file",
    "layer": 6,
    "in": 5,
-   "out": 3,
+   "out": 6,
    "symbols": 4
   },
   {
@@ -837,8 +1527,8 @@
    "kind": "file",
    "layer": 1,
    "in": 2,
-   "out": 3,
-   "symbols": 8
+   "out": 5,
+   "symbols": 10
   },
   {
    "id": "weed/s3api/s3api_copy_size_calculation.go",
@@ -847,7 +1537,7 @@
    "kind": "file",
    "layer": 4,
    "in": 1,
-   "out": 3,
+   "out": 4,
    "symbols": 13
   },
   {
@@ -867,7 +1557,7 @@
    "kind": "file",
    "layer": 5,
    "in": 1,
-   "out": 8,
+   "out": 9,
    "symbols": 2
   },
   {
@@ -906,8 +1596,8 @@
    "file": "weed/s3api/s3api_handlers.go",
    "kind": "file",
    "layer": 6,
-   "in": 28,
-   "out": 3,
+   "in": 29,
+   "out": 5,
    "symbols": 17
   },
   {
@@ -927,8 +1617,8 @@
    "kind": "file",
    "layer": 7,
    "in": 0,
-   "out": 17,
-   "symbols": 14
+   "out": 19,
+   "symbols": 15
   },
   {
    "id": "weed/s3api/s3api_object_anonymous_read.go",
@@ -936,9 +1626,9 @@
    "file": "weed/s3api/s3api_object_anonymous_read.go",
    "kind": "file",
    "layer": 2,
-   "in": 3,
+   "in": 4,
    "out": 9,
-   "symbols": 7
+   "symbols": 9
   },
   {
    "id": "weed/s3api/s3api_object_handlers.go",
@@ -947,8 +1637,8 @@
    "kind": "file",
    "layer": 4,
    "in": 17,
-   "out": 24,
-   "symbols": 95
+   "out": 34,
+   "symbols": 96
   },
   {
    "id": "weed/s3api/s3api_object_handlers_acl.go",
@@ -957,7 +1647,7 @@
    "kind": "file",
    "layer": 4,
    "in": 2,
-   "out": 13,
+   "out": 14,
    "symbols": 4
   },
   {
@@ -967,7 +1657,7 @@
    "kind": "file",
    "layer": 4,
    "in": 1,
-   "out": 10,
+   "out": 11,
    "symbols": 10
   },
   {
@@ -977,7 +1667,7 @@
    "kind": "file",
    "layer": 4,
    "in": 4,
-   "out": 32,
+   "out": 36,
    "symbols": 85
   },
   {
@@ -987,7 +1677,7 @@
    "kind": "file",
    "layer": 4,
    "in": 2,
-   "out": 10,
+   "out": 12,
    "symbols": 17
   },
   {
@@ -997,7 +1687,7 @@
    "kind": "file",
    "layer": 4,
    "in": 1,
-   "out": 0,
+   "out": 2,
    "symbols": 4
   },
   {
@@ -1007,7 +1697,7 @@
    "kind": "file",
    "layer": 4,
    "in": 1,
-   "out": 9,
+   "out": 10,
    "symbols": 9
   },
   {
@@ -1017,7 +1707,7 @@
    "kind": "file",
    "layer": 4,
    "in": 3,
-   "out": 17,
+   "out": 19,
    "symbols": 16
   },
   {
@@ -1027,7 +1717,7 @@
    "kind": "file",
    "layer": 4,
    "in": 2,
-   "out": 14,
+   "out": 15,
    "symbols": 8
   },
   {
@@ -1046,9 +1736,19 @@
    "file": "weed/s3api/s3api_object_handlers_list.go",
    "kind": "file",
    "layer": 4,
-   "in": 4,
-   "out": 9,
-   "symbols": 34
+   "in": 5,
+   "out": 12,
+   "symbols": 38
+  },
+  {
+   "id": "weed/s3api/s3api_object_handlers_list_prefetch.go",
+   "label": "s3api_object_handlers_list_prefetch.go",
+   "file": "weed/s3api/s3api_object_handlers_list_prefetch.go",
+   "kind": "file",
+   "layer": 4,
+   "in": 1,
+   "out": 3,
+   "symbols": 14
   },
   {
    "id": "weed/s3api/s3api_object_handlers_multipart.go",
@@ -1057,7 +1757,7 @@
    "kind": "file",
    "layer": 4,
    "in": 8,
-   "out": 16,
+   "out": 18,
    "symbols": 21
   },
   {
@@ -1067,8 +1767,8 @@
    "kind": "file",
    "layer": 4,
    "in": 1,
-   "out": 13,
-   "symbols": 8
+   "out": 12,
+   "symbols": 9
   },
   {
    "id": "weed/s3api/s3api_object_handlers_put.go",
@@ -1077,7 +1777,7 @@
    "kind": "file",
    "layer": 4,
    "in": 22,
-   "out": 36,
+   "out": 41,
    "symbols": 66
   },
   {
@@ -1087,7 +1787,7 @@
    "kind": "file",
    "layer": 4,
    "in": 1,
-   "out": 12,
+   "out": 13,
    "symbols": 16
   },
   {
@@ -1127,8 +1827,8 @@
    "kind": "file",
    "layer": 5,
    "in": 11,
-   "out": 10,
-   "symbols": 26
+   "out": 11,
+   "symbols": 27
   },
   {
    "id": "weed/s3api/s3api_object_routed_read.go",
@@ -1137,7 +1837,7 @@
    "kind": "file",
    "layer": 6,
    "in": 13,
-   "out": 4,
+   "out": 7,
    "symbols": 9
   },
   {
@@ -1147,7 +1847,7 @@
    "kind": "file",
    "layer": 6,
    "in": 13,
-   "out": 12,
+   "out": 13,
    "symbols": 20
   },
   {
@@ -1156,9 +1856,9 @@
    "file": "weed/s3api/s3api_object_upload_acl.go",
    "kind": "file",
    "layer": 4,
-   "in": 7,
-   "out": 12,
-   "symbols": 7
+   "in": 8,
+   "out": 13,
+   "symbols": 10
   },
   {
    "id": "weed/s3api/s3api_object_versioned_finalize.go",
@@ -1167,7 +1867,7 @@
    "kind": "file",
    "layer": 5,
    "in": 7,
-   "out": 10,
+   "out": 11,
    "symbols": 12
   },
   {
@@ -1177,8 +1877,8 @@
    "kind": "file",
    "layer": 5,
    "in": 15,
-   "out": 18,
-   "symbols": 73
+   "out": 21,
+   "symbols": 74
   },
   {
    "id": "weed/s3api/s3api_path_validation.go",
@@ -1196,7 +1896,7 @@
    "file": "weed/s3api/s3api_public_access_block.go",
    "kind": "file",
    "layer": 2,
-   "in": 6,
+   "in": 5,
    "out": 3,
    "symbols": 7
   },
@@ -1207,7 +1907,7 @@
    "kind": "file",
    "layer": 4,
    "in": 1,
-   "out": 5,
+   "out": 6,
    "symbols": 9
   },
   {
@@ -1216,9 +1916,9 @@
    "file": "weed/s3api/s3api_put_object_helper.go",
    "kind": "file",
    "layer": 4,
-   "in": 2,
-   "out": 3,
-   "symbols": 6
+   "in": 3,
+   "out": 4,
+   "symbols": 7
   },
   {
    "id": "weed/s3api/s3api_server.go",
@@ -1227,7 +1927,7 @@
    "kind": "file",
    "layer": 1,
    "in": 23,
-   "out": 49,
+   "out": 51,
    "symbols": 30
   },
   {
@@ -1257,7 +1957,7 @@
    "kind": "file",
    "layer": 1,
    "in": 1,
-   "out": 1,
+   "out": 2,
    "symbols": 2
   },
   {
@@ -1287,8 +1987,18 @@
    "kind": "file",
    "layer": 7,
    "in": 1,
-   "out": 7,
-   "symbols": 53
+   "out": 8,
+   "symbols": 56
+  },
+  {
+   "id": "weed/s3api/s3api_vector_iam.go",
+   "label": "s3api_vector_iam.go",
+   "file": "weed/s3api/s3api_vector_iam.go",
+   "kind": "file",
+   "layer": 2,
+   "in": 2,
+   "out": 4,
+   "symbols": 4
   },
   {
    "id": "weed/s3api/s3api_version_id.go",
@@ -1336,7 +2046,7 @@
    "file": "weed/s3api/s3bucket/",
    "kind": "package",
    "layer": 3,
-   "in": 2,
+   "in": 4,
    "out": 0,
    "symbols": 2
   },
@@ -1346,9 +2056,9 @@
    "file": "weed/s3api/s3err/",
    "kind": "package",
    "layer": 0,
-   "in": 70,
+   "in": 72,
    "out": 1,
-   "symbols": 38
+   "symbols": 40
   },
   {
    "id": "weed/s3api/s3lifecycle/",
@@ -1357,7 +2067,7 @@
    "kind": "package",
    "layer": 7,
    "in": 5,
-   "out": 1,
+   "out": 2,
    "symbols": 40
   },
   {
@@ -1367,7 +2077,7 @@
    "kind": "package",
    "layer": 7,
    "in": 1,
-   "out": 3,
+   "out": 5,
    "symbols": 5
   },
   {
@@ -1376,9 +2086,29 @@
    "file": "weed/s3api/s3tables/",
    "kind": "package",
    "layer": 7,
-   "in": 27,
-   "out": 2,
-   "symbols": 427
+   "in": 30,
+   "out": 6,
+   "symbols": 453
+  },
+  {
+   "id": "weed/s3api/s3vectors/describe.go",
+   "label": "s3vectors/describe.go",
+   "file": "weed/s3api/s3vectors/describe.go",
+   "kind": "file",
+   "layer": 10,
+   "in": 0,
+   "out": 1,
+   "symbols": 14
+  },
+  {
+   "id": "weed/s3api/s3vectors/discovery.go",
+   "label": "s3vectors/discovery.go",
+   "file": "weed/s3api/s3vectors/discovery.go",
+   "kind": "file",
+   "layer": 10,
+   "in": 0,
+   "out": 0,
+   "symbols": 18
   },
   {
    "id": "weed/s3api/s3vectors/execute.go",
@@ -1397,8 +2127,38 @@
    "kind": "file",
    "layer": 10,
    "in": 1,
-   "out": 4,
-   "symbols": 79
+   "out": 5,
+   "symbols": 78
+  },
+  {
+   "id": "weed/s3api/s3vectors/iam.go",
+   "label": "s3vectors/iam.go",
+   "file": "weed/s3api/s3vectors/iam.go",
+   "kind": "file",
+   "layer": 10,
+   "in": 0,
+   "out": 1,
+   "symbols": 4
+  },
+  {
+   "id": "weed/s3api/s3vectors/limits.go",
+   "label": "s3vectors/limits.go",
+   "file": "weed/s3api/s3vectors/limits.go",
+   "kind": "file",
+   "layer": 10,
+   "in": 0,
+   "out": 3,
+   "symbols": 8
+  },
+  {
+   "id": "weed/s3api/s3vectors/operations.go",
+   "label": "s3vectors/operations.go",
+   "file": "weed/s3api/s3vectors/operations.go",
+   "kind": "file",
+   "layer": 10,
+   "in": 0,
+   "out": 0,
+   "symbols": 2
   },
   {
    "id": "weed/s3api/s3vectors/server.go",
@@ -1406,9 +2166,9 @@
    "file": "weed/s3api/s3vectors/server.go",
    "kind": "file",
    "layer": 10,
-   "in": 1,
-   "out": 5,
-   "symbols": 16
+   "in": 2,
+   "out": 6,
+   "symbols": 23
   },
   {
    "id": "weed/s3api/s3vectors/tagging.go",
@@ -1426,7 +2186,7 @@
    "file": "weed/s3api/s3vectors/types.go",
    "kind": "file",
    "layer": 10,
-   "in": 3,
+   "in": 4,
    "out": 1,
    "symbols": 54
   },
@@ -1451,17 +2211,2269 @@
    "symbols": 9
   },
   {
+   "id": "weed/server/filer_grpc_server.go",
+   "label": "server/filer_grpc_server.go",
+   "file": "weed/server/filer_grpc_server.go",
+   "kind": "file",
+   "layer": 13,
+   "in": 5,
+   "out": 10,
+   "symbols": 31
+  },
+  {
+   "id": "weed/server/filer_grpc_server_admin.go",
+   "label": "server/filer_grpc_server_admin.go",
+   "file": "weed/server/filer_grpc_server_admin.go",
+   "kind": "file",
+   "layer": 13,
+   "in": 0,
+   "out": 1,
+   "symbols": 6
+  },
+  {
+   "id": "weed/server/filer_grpc_server_batch_lookup.go",
+   "label": "server/filer_grpc_server_batch_lookup.go",
+   "file": "weed/server/filer_grpc_server_batch_lookup.go",
+   "kind": "file",
+   "layer": 13,
+   "in": 0,
+   "out": 2,
+   "symbols": 10
+  },
+  {
+   "id": "weed/server/filer_grpc_server_condition.go",
+   "label": "server/filer_grpc_server_condition.go",
+   "file": "weed/server/filer_grpc_server_condition.go",
+   "kind": "file",
+   "layer": 13,
+   "in": 1,
+   "out": 5,
+   "symbols": 10
+  },
+  {
+   "id": "weed/server/filer_grpc_server_dlm.go",
+   "label": "server/filer_grpc_server_dlm.go",
+   "file": "weed/server/filer_grpc_server_dlm.go",
+   "kind": "file",
+   "layer": 13,
+   "in": 0,
+   "out": 2,
+   "symbols": 9
+  },
+  {
+   "id": "weed/server/filer_grpc_server_kv.go",
+   "label": "server/filer_grpc_server_kv.go",
+   "file": "weed/server/filer_grpc_server_kv.go",
+   "kind": "file",
+   "layer": 13,
+   "in": 0,
+   "out": 1,
+   "symbols": 3
+  },
+  {
+   "id": "weed/server/filer_grpc_server_mount_peer.go",
+   "label": "server/filer_grpc_server_mount_peer.go",
+   "file": "weed/server/filer_grpc_server_mount_peer.go",
+   "kind": "file",
+   "layer": 13,
+   "in": 0,
+   "out": 1,
+   "symbols": 4
+  },
+  {
+   "id": "weed/server/filer_grpc_server_posix_lock.go",
+   "label": "server/filer_grpc_server_posix_lock.go",
+   "file": "weed/server/filer_grpc_server_posix_lock.go",
+   "kind": "file",
+   "layer": 13,
+   "in": 0,
+   "out": 2,
+   "symbols": 7
+  },
+  {
+   "id": "weed/server/filer_grpc_server_remote.go",
+   "label": "server/filer_grpc_server_remote.go",
+   "file": "weed/server/filer_grpc_server_remote.go",
+   "kind": "file",
+   "layer": 13,
+   "in": 0,
+   "out": 11,
+   "symbols": 10
+  },
+  {
+   "id": "weed/server/filer_grpc_server_rename.go",
+   "label": "server/filer_grpc_server_rename.go",
+   "file": "weed/server/filer_grpc_server_rename.go",
+   "kind": "file",
+   "layer": 13,
+   "in": 1,
+   "out": 7,
+   "symbols": 14
+  },
+  {
+   "id": "weed/server/filer_grpc_server_route.go",
+   "label": "server/filer_grpc_server_route.go",
+   "file": "weed/server/filer_grpc_server_route.go",
+   "kind": "file",
+   "layer": 13,
+   "in": 4,
+   "out": 1,
+   "symbols": 8
+  },
+  {
+   "id": "weed/server/filer_grpc_server_stream_mutate.go",
+   "label": "server/filer_grpc_server_stream_mutate.go",
+   "file": "weed/server/filer_grpc_server_stream_mutate.go",
+   "kind": "file",
+   "layer": 13,
+   "in": 0,
+   "out": 4,
+   "symbols": 15
+  },
+  {
+   "id": "weed/server/filer_grpc_server_stream_mutate_scheduler.go",
+   "label": "server/filer_grpc_server_stream_mutate_scheduler.go",
+   "file": "weed/server/filer_grpc_server_stream_mutate_scheduler.go",
+   "kind": "file",
+   "layer": 13,
+   "in": 1,
+   "out": 1,
+   "symbols": 16
+  },
+  {
+   "id": "weed/server/filer_grpc_server_sub_meta.go",
+   "label": "server/filer_grpc_server_sub_meta.go",
+   "file": "weed/server/filer_grpc_server_sub_meta.go",
+   "kind": "file",
+   "layer": 13,
+   "in": 1,
+   "out": 5,
+   "symbols": 51
+  },
+  {
+   "id": "weed/server/filer_grpc_server_subscribers.go",
+   "label": "server/filer_grpc_server_subscribers.go",
+   "file": "weed/server/filer_grpc_server_subscribers.go",
+   "kind": "file",
+   "layer": 13,
+   "in": 0,
+   "out": 1,
+   "symbols": 3
+  },
+  {
+   "id": "weed/server/filer_grpc_server_traverse_meta.go",
+   "label": "server/filer_grpc_server_traverse_meta.go",
+   "file": "weed/server/filer_grpc_server_traverse_meta.go",
+   "kind": "file",
+   "layer": 13,
+   "in": 0,
+   "out": 3,
+   "symbols": 5
+  },
+  {
    "id": "weed/worker/tasks/iceberg/",
    "label": "worker/tasks/iceberg/",
    "file": "weed/worker/tasks/iceberg/",
    "kind": "package",
    "layer": 11,
    "in": 0,
-   "out": 1,
-   "symbols": 289
+   "out": 7,
+   "symbols": 290
   }
  ],
  "edges": [
+  {
+   "s": "weed/filer/abstract_sql/",
+   "t": "weed/filer/entry.go",
+   "r": "references",
+   "w": 6,
+   "via": [
+    ".InsertEntry() \u2192 Entry",
+    ".UpdateEntry() \u2192 Entry",
+    ".FindEntry() \u2192 Entry",
+    ".ScanEntries() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/filer/abstract_sql/",
+   "t": "weed/filer/filerstore.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".ListDirectoryPrefixedEntries() \u2192 ListEachEntryFunc",
+    ".ListDirectoryEntries() \u2192 ListEachEntryFunc"
+   ]
+  },
+  {
+   "s": "weed/filer/abstract_sql/",
+   "t": "weed/s3api/s3bucket/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "isValidBucket() \u2192 VerifyS3BucketName()"
+   ]
+  },
+  {
+   "s": "weed/filer/abstract_sql/",
+   "t": "weed/s3api/s3bucket/",
+   "r": "imports_from",
+   "w": 1,
+   "via": []
+  },
+  {
+   "s": "weed/filer/configuration.go",
+   "t": "weed/filer/filer.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".LoadConfiguration() \u2192 .SetStore()"
+   ]
+  },
+  {
+   "s": "weed/filer/empty_folder_cleanup/empty_folder_cleaner.go",
+   "t": "weed/filer/empty_folder_cleanup/cleanup_queue.go",
+   "r": "calls",
+   "w": 11,
+   "via": [
+    "NewEmptyFolderCleaner() \u2192 NewCleanupQueue()",
+    ".OnDeleteEvent() \u2192 .Add()",
+    ".OnCreateEvent() \u2192 .Remove()",
+    ".processCleanupQueue() \u2192 .Len()"
+   ]
+  },
+  {
+   "s": "weed/filer/empty_folder_cleanup/empty_folder_cleaner.go",
+   "t": "weed/filer/empty_folder_cleanup/cleanup_queue.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "EmptyFolderCleaner \u2192 CleanupQueue"
+   ]
+  },
+  {
+   "s": "weed/filer/empty_folder_cleanup/empty_folder_cleaner.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/filer/entry.go",
+   "t": "weed/filer/entry_codec.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".ToExistingProtoEntry() \u2192 EntryAttributeToExistingPb()",
+    ".ToExistingProtoEntry() \u2192 EntryAttributeToPb()",
+    "FromPbEntryToExistingEntry() \u2192 PbToEntryAttribute()"
+   ]
+  },
+  {
+   "s": "weed/filer/entry.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".Size() \u2192 TotalSize()",
+    "FromPbEntryToExistingEntry() \u2192 FileSize()"
+   ]
+  },
+  {
+   "s": "weed/filer/entry.go",
+   "t": "weed/filer/filer_hardlink.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "FromPbEntryToExistingEntry() \u2192 HardLinkId"
+   ]
+  },
+  {
+   "s": "weed/filer/entry.go",
+   "t": "weed/filer/filer_hardlink.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "Entry \u2192 HardLinkId"
+   ]
+  },
+  {
+   "s": "weed/filer/entry.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 8,
+   "via": [
+    "Entry \u2192 FileChunk",
+    "Entry \u2192 RemoteEntry",
+    ".ToProtoEntry() \u2192 Entry",
+    ".ToExistingProtoEntry() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/filer/entry.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/filer/entry_codec.go",
+   "t": "weed/filer/entry.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".DecodeAttributesAndChunks() \u2192 FromPbEntryToExistingEntry()"
+   ]
+  },
+  {
+   "s": "weed/filer/entry_codec.go",
+   "t": "weed/filer/entry.go",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "atimeSecondsForPb() \u2192 Attr",
+    "atimeNanosForPb() \u2192 Attr",
+    "PbToEntryAttribute() \u2192 Attr"
+   ]
+  },
+  {
+   "s": "weed/filer/entry_codec.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 5,
+   "via": [
+    "resetPbEntry() \u2192 Entry",
+    "resetFuseAttributes() \u2192 FuseAttributes",
+    "EntryAttributeToPb() \u2192 FuseAttributes",
+    "EntryAttributeToExistingPb() \u2192 FuseAttributes"
+   ]
+  },
+  {
+   "s": "weed/filer/entry_codec_attributes.go",
+   "t": "weed/filer/entry.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".DecodeAttributesOnly() \u2192 FromPbEntryToExistingEntry()"
+   ]
+  },
+  {
+   "s": "weed/filer/entry_codec_attributes.go",
+   "t": "weed/filer/entry_codec.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".DecodeAttributesOnly() \u2192 resetPbEntry()"
+   ]
+  },
+  {
+   "s": "weed/filer/entry_codec_attributes.go",
+   "t": "weed/pb/filer_pb/listing_options.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "DecodeListedEntry() \u2192 ChunksOmitted()"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_group.go",
+   "t": "weed/filer/filechunk_manifest.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".SetChunks() \u2192 resolveOneChunkManifest()"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_group.go",
+   "t": "weed/filer/filechunk_manifest_cache.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "ChunkGroup \u2192 ChunkManifestCache",
+    "NewChunkGroup() \u2192 ChunkManifestCache"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_group.go",
+   "t": "weed/filer/filechunk_section.go",
+   "r": "calls",
+   "w": 8,
+   "via": [
+    ".AddChunk() \u2192 SectionIndex",
+    ".ReadDataAt() \u2192 SectionIndex",
+    ".readDataAtParallel() \u2192 SectionIndex",
+    ".SetChunks() \u2192 SectionIndex"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_group.go",
+   "t": "weed/filer/filechunk_section.go",
+   "r": "references",
+   "w": 5,
+   "via": [
+    "ChunkGroup \u2192 SectionIndex",
+    "ChunkGroup \u2192 FileChunkSection",
+    ".readDataAtSequential() \u2192 SectionIndex",
+    "sectionReadResult \u2192 SectionIndex"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_group.go",
+   "t": "weed/filer/reader_cache.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    "NewChunkGroup() \u2192 NewReaderCache()",
+    ".Close() \u2192 .destroy()"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_group.go",
+   "t": "weed/filer/reader_cache.go",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "ChunkGroup \u2192 ReaderCache",
+    "ChunkGroup \u2192 CacheInvalidator",
+    "NewChunkGroup() \u2192 CacheInvalidator"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_group.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "NewChunkGroup() \u2192 FileChunk",
+    ".AddChunk() \u2192 FileChunk",
+    ".SetChunks() \u2192 FileChunk"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_manifest.go",
+   "t": "weed/filer/filechunk_manifest_cache.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "resolveOneChunkManifest() \u2192 .fetchOrLoad()"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_manifest.go",
+   "t": "weed/filer/filechunk_manifest_cache.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "resolveOneChunkManifest() \u2192 ChunkManifestCache"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_manifest.go",
+   "t": "weed/filer/reader_cache.go",
+   "r": "references",
+   "w": 8,
+   "via": [
+    "ResolveChunkManifest() \u2192 CacheInvalidator",
+    "ResolveChunkManifestWithFilerJwt() \u2192 CacheInvalidator",
+    "chunkManifestResolver \u2192 CacheInvalidator",
+    "newChunkManifestResolver() \u2192 CacheInvalidator"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_manifest.go",
+   "t": "weed/filer/stream.go",
+   "r": "calls",
+   "w": 4,
+   "via": [
+    "fetchWholeChunk() \u2192 ChunkReadJwt()",
+    "fetchWholeChunk() \u2192 refreshUrls()",
+    "fetchWholeChunk() \u2192 retryFetchWithFreshLocations()",
+    "retriedStreamFetchChunkData() \u2192 refreshUrls()"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_manifest.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 28,
+   "via": [
+    "HasChunkManifest() \u2192 FileChunk",
+    "SeparateManifestChunks() \u2192 FileChunk",
+    "SeparateManifestChunks() \u2192 FileChunk",
+    "ResolveChunkManifest() \u2192 FileChunk"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_manifest.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    "resolveOneChunkManifest() \u2192 AfterEntryDeserialization()",
+    "mergeIntoManifest() \u2192 BeforeEntrySerialization()"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_section.go",
+   "t": "weed/filer/filechunk_group.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".setupForRead() \u2192 .GetPrefetchCount()"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_section.go",
+   "t": "weed/filer/filechunk_group.go",
+   "r": "references",
+   "w": 4,
+   "via": [
+    ".setupForRead() \u2192 ChunkGroup",
+    ".readDataAt() \u2192 ChunkGroup",
+    ".DataStartOffset() \u2192 ChunkGroup",
+    ".NextStopOffset() \u2192 ChunkGroup"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_section.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 5,
+   "via": [
+    ".addChunk() \u2192 MergeIntoVisibles()",
+    ".addChunk() \u2192 FindGarbageChunks()",
+    ".addChunk() \u2192 MergeIntoChunkViews()",
+    ".setupForRead() \u2192 SeparateGarbageChunks()"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_section.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "FileChunkSection \u2192 VisibleInterval",
+    "FileChunkSection \u2192 ChunkView"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_section.go",
+   "t": "weed/filer/filechunks_read.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".addChunk() \u2192 readResolvedChunks()",
+    ".setupForRead() \u2192 readResolvedChunks()"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_section.go",
+   "t": "weed/filer/interval_list.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "FileChunkSection \u2192 IntervalList",
+    "FileChunkSection \u2192 IntervalList"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_section.go",
+   "t": "weed/filer/reader_at.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".setupForRead() \u2192 NewChunkReaderAtFromClient()",
+    ".setupForRead() \u2192 .Close()",
+    ".readDataAt() \u2192 .ReadAtWithTime()"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_section.go",
+   "t": "weed/filer/reader_at.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "FileChunkSection \u2192 ChunkReadAt"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunk_section.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "FileChunkSection \u2192 FileChunk",
+    ".addChunk() \u2192 FileChunk"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunks.go",
+   "t": "weed/filer/entry.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "FileSize() \u2192 maxUint64()"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunks.go",
+   "t": "weed/filer/filechunk_manifest.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    "MinusChunks() \u2192 ResolveChunkManifest()",
+    "NonOverlappingVisibleIntervals() \u2192 ResolveChunkManifest()"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunks.go",
+   "t": "weed/filer/filechunks_read.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "NonOverlappingVisibleIntervals() \u2192 readResolvedChunks()"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunks.go",
+   "t": "weed/filer/interval_list.go",
+   "r": "references",
+   "w": 10,
+   "via": [
+    "SeparateGarbageChunks() \u2192 IntervalList",
+    "FindGarbageChunks() \u2192 IntervalList",
+    ".Clone() \u2192 IntervalValue",
+    "ViewFromChunks() \u2192 IntervalList"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunks.go",
+   "t": "weed/filer/reader_cache.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "MinusChunks() \u2192 CacheInvalidator"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunks.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 19,
+   "via": [
+    "TotalSize() \u2192 FileChunk",
+    "FileSize() \u2192 Entry",
+    "ETag() \u2192 Entry",
+    "ETagChunks() \u2192 FileChunk"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunks_read.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "references",
+   "w": 4,
+   "via": [
+    "readResolvedChunks() \u2192 VisibleInterval",
+    "addToVisibles() \u2192 VisibleInterval",
+    "appendVisibleInterfal() \u2192 VisibleInterval",
+    "appendVisibleInterfal() \u2192 VisibleInterval"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunks_read.go",
+   "t": "weed/filer/interval_list.go",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "readResolvedChunks() \u2192 IntervalList",
+    "addToVisibles() \u2192 IntervalList",
+    "appendVisibleInterfal() \u2192 IntervalList"
+   ]
+  },
+  {
+   "s": "weed/filer/filechunks_read.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "readResolvedChunks() \u2192 FileChunk",
+    "Point \u2192 FileChunk"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/empty_folder_cleanup/empty_folder_cleaner.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".AggregateFromPeers() \u2192 NewEmptyFolderCleaner()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/empty_folder_cleanup/empty_folder_cleaner.go",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "Filer \u2192 EmptyFolderCleaner",
+    ".DirectoryAttributes() \u2192 DirectoryAttributes",
+    ".EnsureDirectoryEntry() \u2192 DirectoryAttributes"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/entry.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".MaybeBootstrapFromOnePeer() \u2192 FromPbEntry()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/entry.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "entryInitialAtime() \u2192 Attr"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/filer_conf.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "NewFiler() \u2192 NewFilerConf()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/filer_deletion.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "NewFiler() \u2192 NewDeletionRetryQueue()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/filer_deletion.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "Filer \u2192 DeletionRetryQueue"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/filer_notify.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "Filer \u2192 metaLogInflight"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/filer_remote_evict.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".UpdateEntry() \u2192 chunksEqual()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/filer_remote_tombstone.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "NewFiler() \u2192 newRemoteDeletionTombstones()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/filer_remote_tombstone.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "Filer \u2192 remoteDeletionTombstones"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/filerstore.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".setOrLoadFilerStoreSignature() \u2192 .KvGet()",
+    ".setOrLoadFilerStoreSignature() \u2192 .KvPut()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/filerstore.go",
+   "r": "references",
+   "w": 4,
+   "via": [
+    ".SetStore() \u2192 FilerStore",
+    ".setOrLoadFilerStoreSignature() \u2192 FilerStore",
+    ".GetStore() \u2192 FilerStore",
+    ".doListDirectoryEntries() \u2192 ListEachEntryFunc"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/filerstore_wrapper.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".SetStore() \u2192 NewFilerStoreWrapper()",
+    ".FindEntry() \u2192 .DeleteOneEntry()",
+    ".doListDirectoryEntries() \u2192 .DeleteOneEntry()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/filerstore_wrapper.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "Filer \u2192 VirtualFilerStore"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/meta_aggregator.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".AggregateFromPeers() \u2192 NewMetaAggregator()",
+    ".AggregateFromPeers() \u2192 .OnPeerUpdate()",
+    ".Shutdown() \u2192 .Shutdown()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/meta_aggregator.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "Filer \u2192 MetaAggregator"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/persisted_log_cache.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "NewFiler() \u2192 newPersistedLogCache()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/persisted_log_cache.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "Filer \u2192 persistedLogCache"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/placement_overlay.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "Filer \u2192 PlacementOverlay"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/remote_storage.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "NewFiler() \u2192 NewFilerRemoteStorage()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/filer/remote_storage.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "Filer \u2192 FilerRemoteStorage",
+    "Filer \u2192 RemoteStorageClientBuilder"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/pb/filer_pb/filer_client_bfs.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".MaybeBootstrapFromOnePeer() \u2192 StreamBfs()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/s3api/s3bucket/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".ensureParentDirectoryEntry() \u2192 VerifyS3BucketName()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer.go",
+   "t": "weed/s3api/s3bucket/",
+   "r": "imports_from",
+   "w": 1,
+   "via": []
+  },
+  {
+   "s": "weed/filer/filer_conf.go",
+   "t": "weed/filer/filer.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".loadFromFiler() \u2192 .FindEntry()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_conf.go",
+   "t": "weed/filer/filer.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".loadFromFiler() \u2192 Filer",
+    ".loadFromChunks() \u2192 Filer"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_conf.go",
+   "t": "weed/filer/read_write.go",
+   "r": "calls",
+   "w": 4,
+   "via": [
+    "ReadFilerConfFromFilers() \u2192 ReadEntry()",
+    "ReadFilerConfFromFilers() \u2192 ReadInsideFiler()",
+    "ClearBucketReadOnly() \u2192 ReadInsideFiler()",
+    "ClearBucketReadOnly() \u2192 SaveInsideFiler()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_conf.go",
+   "t": "weed/filer/s3iam_conf.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".ToText() \u2192 ProtoToText()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_conf.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 17,
+   "via": [
+    "FilerConf \u2192 FilerConf_PathConf",
+    ".loadFromChunks() \u2192 FileChunk",
+    ".doLoadConf() \u2192 FilerConf",
+    ".GetLocationConf() \u2192 FilerConf_PathConf"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_conf.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "readFilerConfSnapshot() \u2192 LookupEntry()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_delete_entry.go",
+   "t": "weed/filer/filechunk_manifest.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".bucketCollection() \u2192 .resolve()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_delete_entry.go",
+   "t": "weed/filer/filer.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".DeleteEntryMetaAndData() \u2192 .syncWriteContext()",
+    ".DeleteEntryMetaAndData() \u2192 .FindEntry()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_delete_entry.go",
+   "t": "weed/filer/filer_hardlink.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".maybeDeleteHardLinks() \u2192 HardLinkId",
+    ".hardLinkIsOrphaned() \u2192 HardLinkId"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_delete_entry.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "IsMetadataOnlyDelete() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_deletion.go",
+   "t": "weed/filer/filechunk_manifest.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".doDeleteChunks() \u2192 ResolveOneChunkManifest()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_deletion.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".deleteChunksIfNotNew() \u2192 MinusChunks()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_deletion.go",
+   "t": "weed/filer/filer.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".processDeletionBatch() \u2192 .volumeGrpcDialOption()",
+    ".processRetryBatch() \u2192 .volumeGrpcDialOption()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_deletion.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 4,
+   "via": [
+    ".DeleteUncommittedChunks() \u2192 FileChunk",
+    ".DeleteChunks() \u2192 FileChunk",
+    ".doDeleteChunks() \u2192 FileChunk",
+    ".DeleteChunksNotRecursive() \u2192 FileChunk"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_deletion.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".deleteChunksIfNotNew() \u2192 FileIdsString()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_deletion_persist.go",
+   "t": "weed/filer/meta_replay.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".writeDeletionLedger() \u2192 .flush()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_lazy_remote.go",
+   "t": "weed/filer/filer.go",
+   "r": "calls",
+   "w": 6,
+   "via": [
+    ".maybeLazyFetchFromRemote() \u2192 .buildRemoteStorageClient()",
+    ".maybeLazyFetchFromRemote() \u2192 .CreateEntry()",
+    ".fetchMissingRemoteParents() \u2192 .FindEntry()",
+    ".retractLazyRemoteEntry() \u2192 .FindEntry()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_lazy_remote.go",
+   "t": "weed/filer/read_remote.go",
+   "r": "calls",
+   "w": 4,
+   "via": [
+    ".maybeLazyFetchFromRemote() \u2192 MergeRemoteContentEncoding()",
+    ".remoteStorageObject() \u2192 MapFullPathToRemoteStorageLocation()",
+    ".releasePendingRenameSource() \u2192 MapFullPathToRemoteStorageLocation()",
+    ".RemoteCopyLocations() \u2192 MapFullPathToRemoteStorageLocation()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_lazy_remote.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "deleteRemoteFileIfUnchanged() \u2192 RemoteEntry",
+    ".CopyRemoteOnlyEntry() \u2192 RemoteEntry"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_lazy_remote_listing.go",
+   "t": "weed/filer/filer.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".maybeLazyListFromRemote() \u2192 .buildRemoteStorageClient()",
+    ".maybeLazyListFromRemote() \u2192 .CreateEntry()",
+    ".updateDirectoryListingSyncedAt() \u2192 .CreateEntry()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_lazy_remote_listing.go",
+   "t": "weed/filer/read_remote.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".maybeLazyListFromRemote() \u2192 MapFullPathToRemoteStorageLocation()",
+    ".maybeLazyListFromRemote() \u2192 MergeRemoteContentEncoding()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_notify.go",
+   "t": "weed/filer/metadata_event_context.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".notifyUpdateEvent() \u2192 metadataEventsSuppressed()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_notify.go",
+   "t": "weed/filer/metadata_event_sink.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".notifyUpdateEvent() \u2192 metadataEventSinkFromContext()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_notify.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 3,
+   "via": [
+    ".notifyUpdateEvent() \u2192 SubscribeMetadataResponse",
+    ".newMetadataEvent() \u2192 SubscribeMetadataResponse",
+    ".logMetaEvent() \u2192 SubscribeMetadataResponse"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_notify.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".logMetaEvent() \u2192 MetadataEventSourceFullPath()",
+    ".logMetaEvent() \u2192 MetadataEventTargetFullPath()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_notify.go",
+   "t": "weed/server/filer_grpc_server_sub_meta.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".ReadPersistedLogBuffer() \u2192 eachLogEntryFn()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_notify_append.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".commitAppendedChunk() \u2192 TotalSize()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_notify_append.go",
+   "t": "weed/filer/filer.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".commitAppendedChunk() \u2192 .FindEntry()",
+    ".commitAppendedChunk() \u2192 .CreateEntry()",
+    ".assignAndUpload() \u2192 .masterGrpcDialOption()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_notify_append.go",
+   "t": "weed/filer/filer.go",
+   "r": "indirect_call",
+   "w": 1,
+   "via": [
+    ".assignAndUpload() \u2192 .GetMaster()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_notify_append.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".commitAppendedChunk() \u2192 FileChunk",
+    ".resolveMetadataLogAssignDiskType() \u2192 FilerConf_PathConf"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_notify_read.go",
+   "t": "weed/filer/filer_notify.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".getNext() \u2192 isChunkNotFoundError()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_notify_read.go",
+   "t": "weed/filer/persisted_log_cache.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".getNextCached() \u2192 .getOrLoad()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_notify_read.go",
+   "t": "weed/filer/persisted_log_cache.go",
+   "r": "references",
+   "w": 4,
+   "via": [
+    "LogFileQueueIterator \u2192 persistedLogCache",
+    "newLogFileQueueIterator() \u2192 persistedLogCache",
+    "LogFileIterator \u2192 persistedLogCache",
+    "newLogFileIterator() \u2192 persistedLogCache"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_notify_read.go",
+   "t": "weed/filer/stream.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "filer_notify_read.go \u2192 NewChunkStreamReaderFromFiler()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_notify_read.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 11,
+   "via": [
+    ".LastShippedLogEntryTsNsForFiler() \u2192 LogFileChunkRef",
+    ".lastShippedLogEntryTsNs() \u2192 FileChunk",
+    ".lastStreamedLogEntryTsNs() \u2192 FileChunk",
+    ".CollectLogFileRefs() \u2192 LogFileChunkRef"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_on_meta_event.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".reloadFilerConfiguration() \u2192 FileSize()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_on_meta_event.go",
+   "t": "weed/filer/filer_conf.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".reloadFilerConfiguration() \u2192 NewFilerConf()",
+    ".LoadFilerConf() \u2192 NewFilerConf()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_on_meta_event.go",
+   "t": "weed/filer/stream.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".readEntry() \u2192 StreamContent()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_on_meta_event.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 7,
+   "via": [
+    ".onMetadataChangeEvent() \u2192 SubscribeMetadataResponse",
+    ".onBucketEvents() \u2192 SubscribeMetadataResponse",
+    ".onEmptyFolderCleanupEvents() \u2192 SubscribeMetadataResponse",
+    ".maybeReloadFilerConfiguration() \u2192 SubscribeMetadataResponse"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_on_meta_event.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 10,
+   "via": [
+    ".onBucketEvents() \u2192 MetadataEventTargetDirectory()",
+    ".onBucketEvents() \u2192 IsCreate()",
+    ".onBucketEvents() \u2192 IsDelete()",
+    ".onBucketEvents() \u2192 IsRename()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_remote_evict.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "chunksEqual() \u2192 FileChunk"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_remote_tombstone.go",
+   "t": "weed/filer/filer_delete_entry.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".onRemoteDeletionEvents() \u2192 IsMetadataOnlyDelete()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_remote_tombstone.go",
+   "t": "weed/filer/meta_replay.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".onRemoteDeletionEvents() \u2192 eventMutationTsNs()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_remote_tombstone.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".onRemoteDeletionEvents() \u2192 SubscribeMetadataResponse"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_remote_tombstone.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".onRemoteDeletionEvents() \u2192 MetadataEventSourceFullPath()",
+    ".onRemoteDeletionEvents() \u2192 MetadataEventTargetFullPath()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_rename.go",
+   "t": "weed/filer/filer.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".CanRename() \u2192 .FindEntry()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_search.go",
+   "t": "weed/filer/filer.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".doListValidEntries() \u2192 .doListDirectoryEntries()"
+   ]
+  },
+  {
+   "s": "weed/filer/filer_search.go",
+   "t": "weed/filer/filerstore.go",
+   "r": "references",
+   "w": 3,
+   "via": [
+    ".StreamListDirectoryEntries() \u2192 ListEachEntryFunc",
+    ".doListPatternMatchedEntries() \u2192 ListEachEntryFunc",
+    ".doListValidEntries() \u2192 ListEachEntryFunc"
+   ]
+  },
+  {
+   "s": "weed/filer/filerstore_hardlink.go",
+   "t": "weed/filer/filer_hardlink.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".DeleteHardLink() \u2192 HardLinkId"
+   ]
+  },
+  {
+   "s": "weed/filer/filerstore_hardlink.go",
+   "t": "weed/filer/filerstore_wrapper.go",
+   "r": "calls",
+   "w": 6,
+   "via": [
+    ".handleUpdateToHardLinks() \u2192 .getActualStore()",
+    ".setHardLink() \u2192 .KvPut()",
+    ".maybeReadHardLink() \u2192 .KvGet()",
+    ".DeleteHardLink() \u2192 .KvGet()"
+   ]
+  },
+  {
+   "s": "weed/filer/filerstore_translate_path.go",
+   "t": "weed/filer/filerstore.go",
+   "r": "calls",
+   "w": 17,
+   "via": [
+    "filerstore_translate_path.go \u2192 FilerStore",
+    ".GetName() \u2192 .GetName()",
+    ".Initialize() \u2192 .Initialize()",
+    ".InsertEntry() \u2192 .InsertEntry()"
+   ]
+  },
+  {
+   "s": "weed/filer/filerstore_translate_path.go",
+   "t": "weed/filer/filerstore.go",
+   "r": "references",
+   "w": 4,
+   "via": [
+    "FilerStorePathTranslator \u2192 FilerStore",
+    "NewFilerStorePathTranslator() \u2192 FilerStore",
+    ".ListDirectoryEntries() \u2192 ListEachEntryFunc",
+    ".ListDirectoryPrefixedEntries() \u2192 ListEachEntryFunc"
+   ]
+  },
+  {
+   "s": "weed/filer/filerstore_wrapper.go",
+   "t": "weed/filer/filer_hardlink.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".DeleteHardLink() \u2192 HardLinkId"
+   ]
+  },
+  {
+   "s": "weed/filer/filerstore_wrapper.go",
+   "t": "weed/filer/filerstore.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    "filerstore_wrapper.go \u2192 Debuggable",
+    "filerstore_wrapper.go \u2192 EntryScanner"
+   ]
+  },
+  {
+   "s": "weed/filer/filerstore_wrapper.go",
+   "t": "weed/filer/filerstore.go",
+   "r": "embeds",
+   "w": 1,
+   "via": [
+    "VirtualFilerStore \u2192 FilerStore"
+   ]
+  },
+  {
+   "s": "weed/filer/filerstore_wrapper.go",
+   "t": "weed/filer/filerstore.go",
+   "r": "references",
+   "w": 10,
+   "via": [
+    ".AddPathSpecificStore() \u2192 FilerStore",
+    "FilerStoreWrapper \u2192 FilerStore",
+    "FilerStoreWrapper \u2192 FilerStore",
+    "NewFilerStoreWrapper() \u2192 FilerStore"
+   ]
+  },
+  {
+   "s": "weed/filer/filerstore_wrapper.go",
+   "t": "weed/filer/filerstore_hardlink.go",
+   "r": "calls",
+   "w": 7,
+   "via": [
+    ".InsertEntry() \u2192 .handleUpdateToHardLinks()",
+    ".InsertEntryKnownAbsent() \u2192 .setHardLink()",
+    ".UpdateEntry() \u2192 .handleUpdateToHardLinks()",
+    ".FindEntry() \u2192 .maybeReadHardLink()"
+   ]
+  },
+  {
+   "s": "weed/filer/filerstore_wrapper.go",
+   "t": "weed/filer/filerstore_translate_path.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".AddPathSpecificStore() \u2192 NewFilerStorePathTranslator()"
+   ]
+  },
+  {
+   "s": "weed/filer/filerstore_wrapper.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 7,
+   "via": [
+    ".InsertEntry() \u2192 BeforeEntrySerialization()",
+    ".InsertEntryKnownAbsent() \u2192 BeforeEntrySerialization()",
+    ".UpdateEntry() \u2192 BeforeEntrySerialization()",
+    ".FindEntry() \u2192 AfterEntryDeserialization()"
+   ]
+  },
+  {
+   "s": "weed/filer/gateway_upload.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".UploadWithRetry() \u2192 AssignVolumeRequest",
+    "SaveGatewayDataAsChunk() \u2192 FileChunk"
+   ]
+  },
+  {
+   "s": "weed/filer/gateway_upload.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".UploadWithRetry() \u2192 FilerClient",
+    "GatewayChunkUploadRequest \u2192 FilerClient"
+   ]
+  },
+  {
+   "s": "weed/filer/meta_aggregator.go",
+   "t": "weed/filer/entry.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".traversePeerMetadata() \u2192 FromPbEntry()"
+   ]
+  },
+  {
+   "s": "weed/filer/meta_aggregator.go",
+   "t": "weed/filer/filer.go",
+   "r": "references",
+   "w": 7,
+   "via": [
+    "MetaAggregator \u2192 Filer",
+    "MetaAggregator \u2192 Filer",
+    "NewMetaAggregator() \u2192 Filer",
+    ".loopSubscribeToOneFiler() \u2192 Filer"
+   ]
+  },
+  {
+   "s": "weed/filer/meta_aggregator.go",
+   "t": "weed/filer/reader_at.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".doSubscribeToOneFiler() \u2192 LookupFn()"
+   ]
+  },
+  {
+   "s": "weed/filer/meta_aggregator.go",
+   "t": "weed/filer/stream.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".doSubscribeToOneFiler() \u2192 NewChunkStreamReaderFromLookup()"
+   ]
+  },
+  {
+   "s": "weed/filer/meta_aggregator.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 4,
+   "via": [
+    "replicateMetadataChange() \u2192 SubscribeMetadataResponse",
+    "filerClient \u2192 SeaweedFilerClient",
+    ".WithFilerClient() \u2192 SeaweedFilerClient",
+    ".AdjustedUrl() \u2192 Location"
+   ]
+  },
+  {
+   "s": "weed/filer/meta_aggregator.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".doSubscribeToOneFiler() \u2192 MetadataEventSourceFullPath()",
+    ".doSubscribeToOneFiler() \u2192 MetadataEventTargetFullPath()"
+   ]
+  },
+  {
+   "s": "weed/filer/meta_replay.go",
+   "t": "weed/filer/entry.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".Replay() \u2192 FromPbEntry()"
+   ]
+  },
+  {
+   "s": "weed/filer/meta_replay.go",
+   "t": "weed/filer/filer_delete_entry.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".sweepReplayedFolder() \u2192 IsMetadataOnlyDelete()"
+   ]
+  },
+  {
+   "s": "weed/filer/meta_replay.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 7,
+   "via": [
+    ".Replay() \u2192 SubscribeMetadataResponse",
+    "eventMutationTsNs() \u2192 SubscribeMetadataResponse",
+    ".deleteReplayedFolderChildren() \u2192 EventNotification",
+    "folderSweep \u2192 FileChunk"
+   ]
+  },
+  {
+   "s": "weed/filer/metadata_event_sink.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "MetadataEventSink \u2192 SubscribeMetadataResponse",
+    ".Record() \u2192 SubscribeMetadataResponse",
+    ".Last() \u2192 SubscribeMetadataResponse"
+   ]
+  },
+  {
+   "s": "weed/filer/persisted_log_cache.go",
+   "t": "weed/filer/filechunk_manifest.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "loadLogFileEntries() \u2192 fetchWholeChunk()"
+   ]
+  },
+  {
+   "s": "weed/filer/persisted_log_cache.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 12,
+   "via": [
+    "logCacheItem \u2192 LogEntry",
+    "logLoadResult \u2192 LogEntry",
+    ".getOrLoad() \u2192 LogEntry",
+    ".getOrLoad() \u2192 LogEntry"
+   ]
+  },
+  {
+   "s": "weed/filer/persisted_log_cache.go",
+   "t": "weed/s3api/request_body.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".loadGuarded() \u2192 .load()"
+   ]
+  },
+  {
+   "s": "weed/filer/placement_overlay.go",
+   "t": "weed/filer/filer.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "RegisterPlacementOverlay() \u2192 Filer"
+   ]
+  },
+  {
+   "s": "weed/filer/read_remote.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "MergeRemoteContentEncoding() \u2192 RemoteEntry",
+    "CacheRemoteObjectToLocalCluster() \u2192 Entry",
+    "CacheRemoteObjectToLocalCluster() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/filer/read_remote.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "CacheRemoteObjectToLocalCluster() \u2192 FilerClient"
+   ]
+  },
+  {
+   "s": "weed/filer/read_write.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "ReadEntry() \u2192 FileSize()"
+   ]
+  },
+  {
+   "s": "weed/filer/read_write.go",
+   "t": "weed/filer/stream.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "ReadEntry() \u2192 StreamContent()"
+   ]
+  },
+  {
+   "s": "weed/filer/read_write.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "ReadEntry() \u2192 SeaweedFilerClient",
+    "ReadInsideFiler() \u2192 SeaweedFilerClient",
+    "SaveInsideFiler() \u2192 SeaweedFilerClient"
+   ]
+  },
+  {
+   "s": "weed/filer/read_write.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    "ReadEntry() \u2192 LookupEntry()",
+    "ReadInsideFiler() \u2192 LookupEntry()",
+    "SaveInsideFiler() \u2192 LookupEntry()"
+   ]
+  },
+  {
+   "s": "weed/filer/reader_at.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 4,
+   "via": [
+    ".readChunkSliceAt() \u2192 .CanRangeFetch()",
+    ".readChunkSliceAt() \u2192 .IsFullChunk()",
+    ".readChunkSliceAtForParallel() \u2192 .CanRangeFetch()",
+    ".readChunkSliceAtForParallel() \u2192 .IsFullChunk()"
+   ]
+  },
+  {
+   "s": "weed/filer/reader_at.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "references",
+   "w": 6,
+   "via": [
+    "ChunkReadAt \u2192 ChunkView",
+    "NewChunkReaderAtFromClient() \u2192 ChunkView",
+    "chunkReadTask \u2192 ChunkView",
+    ".readChunkSliceAt() \u2192 ChunkView"
+   ]
+  },
+  {
+   "s": "weed/filer/reader_at.go",
+   "t": "weed/filer/interval_list.go",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "ChunkReadAt \u2192 IntervalList",
+    "NewChunkReaderAtFromClient() \u2192 IntervalList",
+    ".readChunkSliceAt() \u2192 Interval"
+   ]
+  },
+  {
+   "s": "weed/filer/reader_at.go",
+   "t": "weed/filer/reader_cache.go",
+   "r": "calls",
+   "w": 9,
+   "via": [
+    ".Close() \u2192 .destroy()",
+    ".ReleaseStream() \u2192 .releaseStream()",
+    ".doReadAt() \u2192 .MaybeCache()",
+    ".readChunkSliceAt() \u2192 .releaseStream()"
+   ]
+  },
+  {
+   "s": "weed/filer/reader_at.go",
+   "t": "weed/filer/reader_cache.go",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "ChunkReadAt \u2192 ReaderCache",
+    "ChunkReadAt \u2192 chunkStream",
+    "NewChunkReaderAtFromClient() \u2192 ReaderCache"
+   ]
+  },
+  {
+   "s": "weed/filer/reader_at.go",
+   "t": "weed/filer/reader_pattern.go",
+   "r": "calls",
+   "w": 5,
+   "via": [
+    "NewChunkReaderAtFromClient() \u2192 NewReaderPattern()",
+    ".ReadAt() \u2192 .MonitorReadAt()",
+    ".ReadAtWithTime() \u2192 .MonitorReadAt()",
+    ".doReadAt() \u2192 .IsRandomMode()"
+   ]
+  },
+  {
+   "s": "weed/filer/reader_at.go",
+   "t": "weed/filer/reader_pattern.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "ChunkReadAt \u2192 ReaderPattern"
+   ]
+  },
+  {
+   "s": "weed/filer/reader_at.go",
+   "t": "weed/filer/stream.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "LookupFn() \u2192 VolumeId()"
+   ]
+  },
+  {
+   "s": "weed/filer/reader_at.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "LookupFn() \u2192 FilerClient"
+   ]
+  },
+  {
+   "s": "weed/filer/reader_cache.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".MaybeCache() \u2192 .CanRangeFetch()",
+    ".MaybeCache() \u2192 .IsFullChunk()"
+   ]
+  },
+  {
+   "s": "weed/filer/reader_cache.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".MaybeCache() \u2192 ChunkView",
+    ".fetchChunkRange() \u2192 ChunkView"
+   ]
+  },
+  {
+   "s": "weed/filer/reader_cache.go",
+   "t": "weed/filer/interval_list.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".MaybeCache() \u2192 Interval"
+   ]
+  },
+  {
+   "s": "weed/filer/reader_cache.go",
+   "t": "weed/filer/reader_cache_budget.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".MaybeCache() \u2192 .canFit()"
+   ]
+  },
+  {
+   "s": "weed/filer/reader_cache.go",
+   "t": "weed/filer/reader_cache_budget.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "ReaderCache \u2192 ReaderCacheBudget"
+   ]
+  },
+  {
+   "s": "weed/filer/reader_cache.go",
+   "t": "weed/filer/stream.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".fetchChunkRange() \u2192 refreshUrls()",
+    ".fetchChunkData() \u2192 refreshUrls()",
+    ".retryFetchAfterCacheInvalidation() \u2192 retryFetchWithFreshLocations()"
+   ]
+  },
+  {
+   "s": "weed/filer/reader_cache_budget.go",
+   "t": "weed/filer/reader_cache.go",
+   "r": "references",
+   "w": 5,
+   "via": [
+    "ReaderCacheBudget \u2192 SingleChunkCacher",
+    "ReaderCacheBudget \u2192 SingleChunkCacher",
+    ".reserve() \u2192 SingleChunkCacher",
+    ".complete() \u2192 SingleChunkCacher"
+   ]
+  },
+  {
+   "s": "weed/filer/remote_mapping.go",
+   "t": "weed/filer/read_write.go",
+   "r": "calls",
+   "w": 5,
+   "via": [
+    "ReadMountMappings() \u2192 ReadInsideFiler()",
+    "InsertMountMapping() \u2192 ReadInsideFiler()",
+    "InsertMountMapping() \u2192 SaveInsideFiler()",
+    "DeleteMountMapping() \u2192 ReadInsideFiler()"
+   ]
+  },
+  {
+   "s": "weed/filer/remote_mapping.go",
+   "t": "weed/filer/remote_storage.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    "ReadMountMappings() \u2192 UnmarshalRemoteStorageMappings()",
+    "addRemoteStorageMapping() \u2192 UnmarshalRemoteStorageMappings()",
+    "removeRemoteStorageMapping() \u2192 UnmarshalRemoteStorageMappings()"
+   ]
+  },
+  {
+   "s": "weed/filer/remote_mapping.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "InsertMountMapping() \u2192 FilerClient",
+    "DeleteMountMapping() \u2192 FilerClient"
+   ]
+  },
+  {
+   "s": "weed/filer/remote_storage.go",
+   "t": "weed/filer/filer.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".LoadRemoteStorageConfigurationsAndMapping() \u2192 Filer"
+   ]
+  },
+  {
+   "s": "weed/filer/remote_storage.go",
+   "t": "weed/filer/read_write.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "ReadRemoteStorageConf() \u2192 ReadInsideFiler()"
+   ]
+  },
+  {
+   "s": "weed/filer/remote_storage.go",
+   "t": "weed/filer/remote_mapping.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    "DetectMountInfo() \u2192 ReadMountMappings()",
+    "DetectMountInfo() \u2192 FindMountedRemoteMapping()"
+   ]
+  },
+  {
+   "s": "weed/filer/stream.go",
+   "t": "weed/filer/filechunk_manifest.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "PrepareStreamContentWithThrottler() \u2192 retriedStreamFetchChunkData()"
+   ]
+  },
+  {
+   "s": "weed/filer/stream.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 7,
+   "via": [
+    "PrepareStreamContentWithThrottler() \u2192 NonOverlappingVisibleIntervals()",
+    "PrepareStreamContentWithThrottler() \u2192 ViewFromVisibleIntervals()",
+    "PrepareStreamContentWithPrefetch() \u2192 NonOverlappingVisibleIntervals()",
+    "PrepareStreamContentWithPrefetch() \u2192 ViewFromVisibleIntervals()"
+   ]
+  },
+  {
+   "s": "weed/filer/stream.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "references",
+   "w": 4,
+   "via": [
+    "ChunkStreamReader \u2192 ChunkView",
+    "ChunkStreamReader \u2192 ChunkView",
+    "insideChunk() \u2192 ChunkView",
+    ".fetchChunkToBuffer() \u2192 ChunkView"
+   ]
+  },
+  {
+   "s": "weed/filer/stream.go",
+   "t": "weed/filer/interval_list.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "ChunkStreamReader \u2192 Interval",
+    "ChunkStreamReader \u2192 Interval"
+   ]
+  },
+  {
+   "s": "weed/filer/stream.go",
+   "t": "weed/filer/reader_at.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "NewChunkStreamReader() \u2192 LookupFn()"
+   ]
+  },
+  {
+   "s": "weed/filer/stream.go",
+   "t": "weed/filer/reader_cache.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    "refreshUrls() \u2192 .InvalidateCache()",
+    "retryFetchWithFreshLocations() \u2192 .InvalidateCache()"
+   ]
+  },
+  {
+   "s": "weed/filer/stream.go",
+   "t": "weed/filer/reader_cache.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "refreshUrls() \u2192 CacheInvalidator",
+    "retryFetchWithFreshLocations() \u2192 CacheInvalidator"
+   ]
+  },
+  {
+   "s": "weed/filer/stream.go",
+   "t": "weed/filer/stream_prefetch.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "PrepareStreamContentWithPrefetch() \u2192 streamChunksPrefetched()"
+   ]
+  },
+  {
+   "s": "weed/filer/stream.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 12,
+   "via": [
+    "HasData() \u2192 Entry",
+    "IsSameData() \u2192 Entry",
+    "isSameChunks() \u2192 FileChunk",
+    "NewFileReader() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/filer/stream.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "NewFileReader() \u2192 FilerClient",
+    "NewChunkStreamReader() \u2192 FilerClient"
+   ]
+  },
+  {
+   "s": "weed/filer/stream_prefetch.go",
+   "t": "weed/filer/filechunk_manifest.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    "streamChunksPrefetched() \u2192 retriedStreamFetchChunkData()",
+    "retryWithCacheInvalidation() \u2192 retriedStreamFetchChunkData()"
+   ]
+  },
+  {
+   "s": "weed/filer/stream_prefetch.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    "streamChunksPrefetched() \u2192 .IsFullChunk()",
+    "retryWithCacheInvalidation() \u2192 .IsFullChunk()"
+   ]
+  },
+  {
+   "s": "weed/filer/stream_prefetch.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "chunkPipeResult \u2192 ChunkView",
+    "streamChunksPrefetched() \u2192 ChunkView",
+    "retryWithCacheInvalidation() \u2192 ChunkView"
+   ]
+  },
+  {
+   "s": "weed/filer/stream_prefetch.go",
+   "t": "weed/filer/interval_list.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "streamChunksPrefetched() \u2192 IntervalList"
+   ]
+  },
+  {
+   "s": "weed/filer/stream_prefetch.go",
+   "t": "weed/filer/stream.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    "streamChunksPrefetched() \u2192 refreshUrls()",
+    "streamChunksPrefetched() \u2192 writeZero()",
+    "retryWithCacheInvalidation() \u2192 retryFetchWithFreshLocations()"
+   ]
+  },
+  {
+   "s": "weed/filer/stream_prefetch.go",
+   "t": "weed/filer/stream.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "streamChunksPrefetched() \u2192 VolumeServerJwtFunction",
+    "retryWithCacheInvalidation() \u2192 VolumeServerJwtFunction"
+   ]
+  },
+  {
+   "s": "weed/pb/filer_pb/filer_client.go",
+   "t": "weed/pb/filer.proto",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    "DoSeaweedListWithSnapshot() \u2192 .ListEntries()",
+    "DoRemoveRequest() \u2192 .DeleteEntry()"
+   ]
+  },
+  {
+   "s": "weed/pb/filer_pb/filer_client.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 15,
+   "via": [
+    ".WithFilerClient() \u2192 SeaweedFilerClient",
+    ".AdjustedUrl() \u2192 Location",
+    "SeaweedList() \u2192 SeaweedFilerClient",
+    "doSeaweedList() \u2192 SeaweedFilerClient"
+   ]
+  },
+  {
+   "s": "weed/pb/filer_pb/filer_client.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    "GetEntry() \u2192 LookupEntry()",
+    "Exists() \u2192 LookupEntry()"
+   ]
+  },
+  {
+   "s": "weed/pb/filer_pb/filer_client.go",
+   "t": "weed/pb/filer_pb/listing_options.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "DoSeaweedListWithSnapshot() \u2192 ChunksOmitted()"
+   ]
+  },
+  {
+   "s": "weed/pb/filer_pb/filer_client_bfs.go",
+   "t": "weed/pb/filer.proto",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "StreamBfs() \u2192 .TraverseBfsMetadata()"
+   ]
+  },
+  {
+   "s": "weed/pb/filer_pb/filer_client_bfs.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "StreamBfs() \u2192 SeaweedFilerClient"
+   ]
+  },
+  {
+   "s": "weed/pb/filer_pb/filer_client_bfs.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "processOneDirectory() \u2192 ReadDirAllEntries()"
+   ]
+  },
+  {
+   "s": "weed/pb/filer_pb/filer_client_dfs.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "traverseDfsDirectory() \u2192 List()"
+   ]
+  },
+  {
+   "s": "weed/pb/filer_pb/filer_pb_event_scan.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "ScanMetadataEventSkeleton() \u2192 SubscribeMetadataResponse",
+    "scanEventNotificationSkeleton() \u2192 EventNotification"
+   ]
+  },
+  {
+   "s": "weed/pb/filer_pb/filer_pb_helper.go",
+   "t": "weed/pb/filer.proto",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "LookupEntry() \u2192 .LookupDirectoryEntry()"
+   ]
+  },
+  {
+   "s": "weed/pb/filer_pb/filer_pb_helper.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 29,
+   "via": [
+    "ToFileIdObject() \u2192 FileId",
+    "CreateEntry() \u2192 SeaweedFilerClient",
+    "CreateEntry() \u2192 CreateEntryRequest",
+    "CreateEntryWithResponse() \u2192 SeaweedFilerClient"
+   ]
+  },
+  {
+   "s": "weed/pb/filer_pb/filer_pb_helper.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/auth_credentials.go",
+   "t": "weed/filer/s3iam_conf.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".loadS3ApiConfigurationFromBytes() \u2192 ParseS3ConfigurationFromBytes()",
+    ".loadS3ApiConfigurationFromBytes() \u2192 CheckDuplicateAccessKey()"
+   ]
+  },
   {
    "s": "weed/s3api/auth_credentials.go",
    "t": "weed/s3api/auth_credentials_policy_document.go",
@@ -1493,9 +4505,8 @@
    "s": "weed/s3api/auth_credentials.go",
    "t": "weed/s3api/policy_engine/",
    "r": "calls",
-   "w": 4,
+   "w": 3,
    "via": [
-    ".evaluateAttachedIAMPolicies() \u2192 ExtractPrincipalVariables()",
     ".evaluateAttachedIAMPolicies() \u2192 OriginalGrantConditionsFromRequest()",
     ".ensureIAMPolicyEngine() \u2192 NewPolicyEngine()",
     ".rebuildIAMPolicyEngineLocked() \u2192 NewPolicyEngine()"
@@ -1524,9 +4535,8 @@
    "s": "weed/s3api/auth_credentials.go",
    "t": "weed/s3api/s3_action_resolver.go",
    "r": "calls",
-   "w": 2,
+   "w": 1,
    "via": [
-    ".evaluateAttachedIAMPolicies() \u2192 ResolveS3Action()",
     "resolveS3AuthTarget() \u2192 ResolveS3Action()"
    ]
   },
@@ -1594,19 +4604,11 @@
   },
   {
    "s": "weed/s3api/auth_credentials.go",
-   "t": "weed/s3api/s3api_bucket_handlers.go",
-   "r": "calls",
-   "w": 1,
-   "via": [
-    ".evaluateAttachedIAMPolicies() \u2192 buildResourceARN()"
-   ]
-  },
-  {
-   "s": "weed/s3api/auth_credentials.go",
    "t": "weed/s3api/s3api_bucket_policy_engine.go",
    "r": "calls",
-   "w": 2,
+   "w": 3,
    "via": [
+    ".evaluateAttachedIAMPolicies() \u2192 principalVariables()",
     ".authRequestWithAuthType() \u2192 .EvaluatePolicy()",
     ".authorizeObjectKeyAction() \u2192 .EvaluatePolicy()"
    ]
@@ -1639,6 +4641,15 @@
     "NewIdentityAccessManagementWithStore() \u2192 S3ApiServerOption",
     ".loadS3ApiConfigurationFromFiler() \u2192 S3ApiServerOption",
     ".doLoadS3ApiConfigurationFromFiler() \u2192 S3ApiServerOption"
+   ]
+  },
+  {
+   "s": "weed/s3api/auth_credentials.go",
+   "t": "weed/s3api/s3api_vector_iam.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".evaluateAttachedIAMPolicies() \u2192 vectorIAMConditions()"
    ]
   },
   {
@@ -1677,12 +4688,24 @@
    "s": "weed/s3api/auth_credentials.go",
    "t": "weed/s3api/s3err/",
    "r": "references",
-   "w": 16,
+   "w": 17,
    "via": [
+    "IdentityAccessManagement \u2192 ErrorCode",
     "refineDenialForBucketName() \u2192 ErrorCode",
     "refineDenialForBucketName() \u2192 ErrorCode",
-    ".handleAuthResult() \u2192 ErrorCode",
-    ".authRequest() \u2192 ErrorCode"
+    ".handleAuthResult() \u2192 ErrorCode"
+   ]
+  },
+  {
+   "s": "weed/s3api/auth_credentials_subscribe.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 9,
+   "via": [
+    ".onIamConfigChange() \u2192 Entry",
+    ".onIamConfigChange() \u2192 Entry",
+    ".onOIDCProviderChange() \u2192 Entry",
+    ".onOIDCProviderChange() \u2192 Entry"
    ]
   },
   {
@@ -1785,6 +4808,15 @@
   },
   {
    "s": "weed/s3api/auth_signature_v2.go",
+   "t": "weed/s3api/request_body.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".isReqAuthenticatedV2() \u2192 bindSignedPayload()"
+   ]
+  },
+  {
+   "s": "weed/s3api/auth_signature_v2.go",
    "t": "weed/s3api/s3_constants/",
    "r": "calls",
    "w": 6,
@@ -1858,8 +4890,9 @@
    "s": "weed/s3api/auth_signature_v4.go",
    "t": "weed/s3api/request_body.go",
    "r": "calls",
-   "w": 1,
+   "w": 2,
    "via": [
+    ".reqSignatureV4Verify() \u2192 bindSignedPayload()",
     "streamHashRequestBody() \u2192 readRequestBody()"
    ]
   },
@@ -1938,6 +4971,27 @@
     "parseSignV4() \u2192 ErrorCode",
     ".verifyV4Signature() \u2192 ErrorCode",
     ".validateSTSSessionToken() \u2192 ErrorCode"
+   ]
+  },
+  {
+   "s": "weed/s3api/bucket_metadata.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 4,
+   "via": [
+    ".LoadBucketMetadata() \u2192 Entry",
+    "bucketOwnerAccountId() \u2192 Entry",
+    "buildBucketMetadata() \u2192 Entry",
+    ".RemoveBucketMetadata() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/bucket_metadata.go",
+   "t": "weed/pb/filer_pb/entry_scrub.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "buildBucketMetadata() \u2192 ScrubCipherKeys()"
    ]
   },
   {
@@ -2040,6 +5094,15 @@
   },
   {
    "s": "weed/s3api/bucket_paths.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".getBucketEntry() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/bucket_paths.go",
    "t": "weed/s3api/bucket_metadata.go",
    "r": "calls",
    "w": 1,
@@ -2051,9 +5114,10 @@
    "s": "weed/s3api/bucket_paths.go",
    "t": "weed/s3api/filer_util.go",
    "r": "calls",
-   "w": 3,
+   "w": 4,
    "via": [
     ".isTableBucket() \u2192 .getEntry()",
+    ".collectionForCopyPath() \u2192 .getCollectionName()",
     "bucket_paths.go \u2192 .getEntry()",
     ".getBucketEntry() \u2192 .getEntry()"
    ]
@@ -2100,6 +5164,34 @@
    "r": "imports_from",
    "w": 18,
    "via": []
+  },
+  {
+   "s": "weed/s3api/bucket_size_metrics.go",
+   "t": "weed/filer/filer_conf.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".enforceBucketQuotas() \u2192 ReadFilerConfFromFilers()"
+   ]
+  },
+  {
+   "s": "weed/s3api/bucket_size_metrics.go",
+   "t": "weed/filer/read_write.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".enforceBucketQuotas() \u2192 SaveInsideFiler()"
+   ]
+  },
+  {
+   "s": "weed/s3api/bucket_size_metrics.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".enforceBucketQuotas() \u2192 Entry",
+    ".listBuckets() \u2192 Entry"
+   ]
   },
   {
    "s": "weed/s3api/bucket_size_metrics.go",
@@ -2223,6 +5315,16 @@
   },
   {
    "s": "weed/s3api/custom_types.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "ConditionalHeaderResult \u2192 Entry",
+    "ConditionalHeaderResult \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/custom_types.go",
    "t": "weed/s3api/s3err/",
    "r": "imports_from",
    "w": 4,
@@ -2235,6 +5337,47 @@
    "w": 1,
    "via": [
     "ConditionalHeaderResult \u2192 ErrorCode"
+   ]
+  },
+  {
+   "s": "weed/s3api/filer_multipart.go",
+   "t": "weed/filer/filechunk_manifest.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".prepareMultipartCompletionState() \u2192 SeparateManifestChunks()"
+   ]
+  },
+  {
+   "s": "weed/s3api/filer_multipart.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".listObjectParts() \u2192 FileSize()",
+    "computeFullObjectChecksum() \u2192 FileSize()",
+    "getEtagFromEntry() \u2192 ETag()"
+   ]
+  },
+  {
+   "s": "weed/s3api/filer_multipart.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 26,
+   "via": [
+    "copySSEHeadersFromFirstPart() \u2192 Entry",
+    "copySSEHeadersFromFirstPart() \u2192 Entry",
+    "multipartCompletionState \u2192 Entry",
+    "multipartCompletionState \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/filer_multipart.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".listMultipartUploads() \u2192 List()"
    ]
   },
   {
@@ -2368,10 +5511,11 @@
    "s": "weed/s3api/filer_multipart.go",
    "t": "weed/s3api/s3api_bucket_config.go",
    "r": "calls",
-   "w": 2,
+   "w": 3,
    "via": [
     ".completeMultipartUpload() \u2192 .getVersioningState()",
-    ".resumeCommittedObject() \u2192 .getVersioningState()"
+    ".resumeCommittedObject() \u2192 .getVersioningState()",
+    ".uploadCommitPath() \u2192 .getVersioningState()"
    ]
   },
   {
@@ -2392,8 +5536,8 @@
    "via": [
     "completeMultipartResult() \u2192 urlPathEscape()",
     ".completeMultipartUpload() \u2192 urlPathEscape()",
-    ".prepareMultipartCompletionState() \u2192 .resolveObjectEntry()",
-    ".routedUploadDirDelete() \u2192 .toFilerPath()"
+    ".committedCompletion() \u2192 .resolveObjectEntry()",
+    ".uploadCommitPath() \u2192 .toFilerPath()"
    ]
   },
   {
@@ -2431,12 +5575,12 @@
    "s": "weed/s3api/filer_multipart.go",
    "t": "weed/s3api/s3api_object_handlers_put.go",
    "r": "calls",
-   "w": 9,
+   "w": 10,
    "via": [
     ".createMultipartUpload() \u2192 detectRequestedChecksumAlgorithm()",
     ".prepareMultipartCompletionState() \u2192 parseRequestQuery()",
     ".prepareMultipartCompletionState() \u2192 lookupHeaderOrQuery()",
-    ".createMultipartUpload() \u2192 .extractObjectLockMetadataFromRequest()"
+    ".completeMultipartUpload() \u2192 sameFileChunks()"
    ]
   },
   {
@@ -2523,6 +5667,15 @@
   {
    "s": "weed/s3api/filer_multipart.go",
    "t": "weed/s3api/s3err/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".completeMultipartUpload() \u2192 GetAPIError()"
+   ]
+  },
+  {
+   "s": "weed/s3api/filer_multipart.go",
+   "t": "weed/s3api/s3err/",
    "r": "imports_from",
    "w": 4,
    "via": []
@@ -2537,6 +5690,48 @@
     ".prepareMultipartCompletionState() \u2192 ErrorCode",
     ".completeMultipartUpload() \u2192 ErrorCode",
     ".resumeCommittedObject() \u2192 ErrorCode"
+   ]
+  },
+  {
+   "s": "weed/s3api/filer_util.go",
+   "t": "weed/filer/filer_delete_entry.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "doDeleteEntry() \u2192 DeleteEntryError()"
+   ]
+  },
+  {
+   "s": "weed/s3api/filer_util.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 14,
+   "via": [
+    ".mkdir() \u2192 Entry",
+    ".mkdirExclusive() \u2192 Entry",
+    "concurrentEntryIsForeign() \u2192 Entry",
+    ".mkFile() \u2192 FileChunk"
+   ]
+  },
+  {
+   "s": "weed/s3api/filer_util.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "calls",
+   "w": 5,
+   "via": [
+    ".mkdir() \u2192 Mkdir()",
+    ".mkdirExclusive() \u2192 MkdirExclusive()",
+    ".mkFile() \u2192 MkFile()",
+    ".list() \u2192 List()"
+   ]
+  },
+  {
+   "s": "weed/s3api/filer_util.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "demoteDirectoryMarkerToImplicitDirectory() \u2192 LookupEntry()"
    ]
   },
   {
@@ -2600,6 +5795,17 @@
    "r": "imports_from",
    "w": 18,
    "via": []
+  },
+  {
+   "s": "weed/s3api/filer_util_tags.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".getTags() \u2192 LookupEntry()",
+    ".setTags() \u2192 LookupEntry()",
+    ".rmTags() \u2192 LookupEntry()"
+   ]
   },
   {
    "s": "weed/s3api/filer_util_tags.go",
@@ -2685,8 +5891,9 @@
    "s": "weed/s3api/iceberg/commit_helpers.go",
    "t": "weed/s3api/iceberg/utils.go",
    "r": "calls",
-   "w": 2,
+   "w": 3,
    "via": [
+    "registrationRefused() \u2192 classifyManagerError()",
     ".finalizeCreateOnCommit() \u2192 parseS3Location()",
     ".finalizeCreateOnCommit() \u2192 flattenNamespacePath()"
    ]
@@ -2695,12 +5902,12 @@
    "s": "weed/s3api/iceberg/commit_helpers.go",
    "t": "weed/s3api/s3tables/",
    "r": "calls",
-   "w": 4,
+   "w": 5,
    "via": [
+    "registrationRefused() \u2192 IsPublishedTableChanged()",
     ".finalizeCreateOnCommit() \u2192 NewManagerClient()",
     ".authorizeCommit() \u2192 NewManagerClient()",
-    ".authorizeCommit() \u2192 ParseBucketNameFromARN()",
-    ".authorizeViewCommit() \u2192 NewManagerClient()"
+    ".authorizeCommit() \u2192 ParseBucketNameFromARN()"
    ]
   },
   {
@@ -2790,16 +5997,17 @@
    "s": "weed/s3api/iceberg/handlers_commit.go",
    "t": "weed/s3api/iceberg/stage_create.go",
    "r": "calls",
-   "w": 1,
+   "w": 2,
    "via": [
-    ".handleUpdateTable() \u2192 isStageCreateEnabled()"
+    ".handleUpdateTable() \u2192 isStageCreateEnabled()",
+    ".handleUpdateTable() \u2192 assignedTableUUID()"
    ]
   },
   {
    "s": "weed/s3api/iceberg/handlers_commit.go",
    "t": "weed/s3api/iceberg/utils.go",
    "r": "calls",
-   "w": 10,
+   "w": 11,
    "via": [
     ".handleUpdateTable() \u2192 parseNamespace()",
     ".handleUpdateTable() \u2192 writeError()",
@@ -2922,6 +6130,25 @@
   },
   {
    "s": "weed/s3api/iceberg/handlers_table.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".cleanupStaleTableLocation() \u2192 DoRemove()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_table.go",
+   "t": "weed/s3api/iceberg/commit_helpers.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".handleCreateTable() \u2192 registrationRefused()",
+    ".handleCreateTable() \u2192 isS3TablesAlreadyExists()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/handlers_table.go",
    "t": "weed/s3api/iceberg/metadata_compliance.go",
    "r": "calls",
    "w": 1,
@@ -3003,7 +6230,7 @@
    "s": "weed/s3api/iceberg/handlers_table.go",
    "t": "weed/s3api/s3tables/",
    "r": "calls",
-   "w": 11,
+   "w": 13,
    "via": [
     ".handleListTables() \u2192 NewManagerClient()",
     ".authorizeCreateTable() \u2192 NewManagerClient()",
@@ -3126,7 +6353,7 @@
    "s": "weed/s3api/iceberg/handlers_transaction.go",
    "t": "weed/s3api/iceberg/utils.go",
    "r": "calls",
-   "w": 8,
+   "w": 7,
    "via": [
     ".handleCommitTransaction() \u2192 getBucketFromPrefix()",
     ".handleCommitTransaction() \u2192 buildTableBucketARN()",
@@ -3332,6 +6559,42 @@
   },
   {
    "s": "weed/s3api/iceberg/manifest_repair.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".loadTableMetadataBlob() \u2192 FileSize()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/manifest_repair.go",
+   "t": "weed/filer/reader_at.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".loadTableMetadataBlob() \u2192 LookupFn()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/manifest_repair.go",
+   "t": "weed/filer/stream.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".loadTableMetadataBlob() \u2192 StreamContent()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/manifest_repair.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".loadTableMetadataBlob() \u2192 LookupEntry()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/manifest_repair.go",
    "t": "weed/s3api/iceberg/metadata_files.go",
    "r": "calls",
    "w": 1,
@@ -3347,6 +6610,27 @@
    "via": [
     "absolutizeLocation() \u2192 parseS3Location()",
     ".split() \u2192 parseS3Location()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/metadata_files.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".deleteMetadataFile() \u2192 DoRemove()",
+    ".deleteStagedMetadataFile() \u2192 DoRemoveRequest()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/metadata_files.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".saveMetadataBlob() \u2192 LookupEntry()",
+    ".saveMetadataBlob() \u2192 FilerErrorToSentinel()",
+    ".loadMetadataFile() \u2192 LookupEntry()"
    ]
   },
   {
@@ -3367,6 +6651,13 @@
     ".currentMetadataBytes() \u2192 parseS3Location()",
     ".currentMetadataBytes() \u2192 tableLocationFromMetadataLocation()"
    ]
+  },
+  {
+   "s": "weed/s3api/iceberg/metadata_files.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
   },
   {
    "s": "weed/s3api/iceberg/metadata_files.go",
@@ -3408,6 +6699,15 @@
    "r": "imports_from",
    "w": 13,
    "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/server.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".WithFilerClient() \u2192 SeaweedFilerClient"
+   ]
   },
   {
    "s": "weed/s3api/iceberg/server.go",
@@ -3490,6 +6790,26 @@
   },
   {
    "s": "weed/s3api/iceberg/stage_create.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".pruneExpiredStageCreateMarkers() \u2192 DoRemove()",
+    ".deleteStageCreateMarkers() \u2192 DoRemove()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/stage_create.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".writeStageCreateMarker() \u2192 LookupEntry()",
+    ".writeStageCreateMarker() \u2192 FilerErrorToSentinel()"
+   ]
+  },
+  {
+   "s": "weed/s3api/iceberg/stage_create.go",
    "t": "weed/s3api/iceberg/utils.go",
    "r": "calls",
    "w": 1,
@@ -3538,6 +6858,15 @@
    "r": "imports_from",
    "w": 18,
    "via": []
+  },
+  {
+   "s": "weed/s3api/iceberg/utils.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "tableLocation() \u2192 GetTableResponse"
+   ]
   },
   {
    "s": "weed/s3api/lance/errors.go",
@@ -3613,10 +6942,11 @@
    "s": "weed/s3api/lance/handlers_table.go",
    "t": "weed/s3api/lance/identifier.go",
    "r": "calls",
-   "w": 3,
+   "w": 4,
    "via": [
     ".handleListAllTables() \u2192 requestDelimiter()",
     ".lanceTableIDs() \u2192 identifier",
+    ".describeTable() \u2192 identifier",
     ".handleRenameTable() \u2192 identifier"
    ]
   },
@@ -3650,6 +6980,24 @@
   },
   {
    "s": "weed/s3api/lance/markers.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".removeMarker() \u2192 DoRemove()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/markers.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".entryExists() \u2192 LookupEntry()"
+   ]
+  },
+  {
+   "s": "weed/s3api/lance/markers.go",
    "t": "weed/s3api/s3tables/",
    "r": "calls",
    "w": 1,
@@ -3663,6 +7011,15 @@
    "r": "imports_from",
    "w": 18,
    "via": []
+  },
+  {
+   "s": "weed/s3api/lance/server.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".WithFilerClient() \u2192 SeaweedFilerClient"
+   ]
   },
   {
    "s": "weed/s3api/lance/server.go",
@@ -3739,8 +7096,9 @@
    "s": "weed/s3api/lance/server.go",
    "t": "weed/s3api/s3tables/",
    "r": "references",
-   "w": 1,
+   "w": 2,
    "via": [
+    "Server \u2192 Manager",
     "Server \u2192 Manager"
    ]
   },
@@ -3779,8 +7137,10 @@
    "s": "weed/s3api/lance/storage.go",
    "t": "weed/s3api/lance/server.go",
    "r": "calls",
-   "w": 1,
+   "w": 3,
    "via": [
+    ".manager() \u2192 isTrustedCaller()",
+    ".storageOptions() \u2192 isTrustedCaller()",
     ".mayWriteNamespace() \u2192 isTrustedCaller()"
    ]
   },
@@ -3788,8 +7148,9 @@
    "s": "weed/s3api/lance/storage.go",
    "t": "weed/s3api/s3_constants/",
    "r": "calls",
-   "w": 3,
+   "w": 5,
    "via": [
+    ".manager() \u2192 GetIdentityNameFromContext()",
     ".execute() \u2192 GetIdentityNameFromContext()",
     ".storageOptions() \u2192 GetIdentityNameFromContext()",
     ".mayUpdateTable() \u2192 GetIdentityNameFromContext()"
@@ -3806,9 +7167,10 @@
    "s": "weed/s3api/lance/storage.go",
    "t": "weed/s3api/s3tables/",
    "r": "calls",
-   "w": 3,
+   "w": 5,
    "via": [
     ".execute() \u2192 NewManagerClient()",
+    ".executeInternal() \u2192 NewManagerClient()",
     "bucketARN() \u2192 BuildBucketARN()",
     ".mayUpdateTable() \u2192 NewManagerClient()"
    ]
@@ -3819,6 +7181,15 @@
    "r": "imports_from",
    "w": 18,
    "via": []
+  },
+  {
+   "s": "weed/s3api/lance/storage.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".manager() \u2192 Manager"
+   ]
   },
   {
    "s": "weed/s3api/lifecycle_xml/",
@@ -3837,6 +7208,18 @@
     "LifecycleToCanonical() \u2192 Rule",
     "ruleToCanonical() \u2192 Rule",
     "CanonicalToLifecycle() \u2192 Rule"
+   ]
+  },
+  {
+   "s": "weed/s3api/object_lock_utils.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 6,
+   "via": [
+    "StoreVersioningInExtended() \u2192 Entry",
+    "GetVersioningStatus() \u2192 Entry",
+    "StoreObjectLockConfigurationInExtended() \u2192 Entry",
+    "LoadObjectLockConfigurationFromExtended() \u2192 Entry"
    ]
   },
   {
@@ -3881,6 +7264,58 @@
    "r": "imports_from",
    "w": 39,
    "via": []
+  },
+  {
+   "s": "weed/s3api/request_body.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "bindSignedPayload() \u2192 GetRequestBodyLimitFromContext()"
+   ]
+  },
+  {
+   "s": "weed/s3api/request_body.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/request_body.go",
+   "t": "weed/s3api/s3api_handlers.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "bindSignedPayload() \u2192 validateContentMd5()"
+   ]
+  },
+  {
+   "s": "weed/s3api/request_body.go",
+   "t": "weed/s3api/s3api_put_object_helper.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "bindSignedPayload() \u2192 decodeContentSha256()"
+   ]
+  },
+  {
+   "s": "weed/s3api/request_body.go",
+   "t": "weed/s3api/s3err/",
+   "r": "imports_from",
+   "w": 4,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/request_body.go",
+   "t": "weed/s3api/s3err/",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "bindSignedPayload() \u2192 ErrorCode",
+    "requestBodyErrorCode() \u2192 ErrorCode",
+    "requestBodyErrorCode() \u2192 ErrorCode"
+   ]
   },
   {
    "s": "weed/s3api/s3_action_resolver.go",
@@ -3980,9 +7415,10 @@
    "s": "weed/s3api/s3_iam_middleware.go",
    "t": "weed/s3api/auth_credentials.go",
    "r": "calls",
-   "w": 1,
+   "w": 2,
    "via": [
-    ".AuthorizeAction() \u2192 isBucketListingRequest()"
+    ".AuthorizeAction() \u2192 isBucketListingRequest()",
+    ".AuthorizeAction() \u2192 resolveS3AuthTarget()"
    ]
   },
   {
@@ -4013,11 +7449,11 @@
   },
   {
    "s": "weed/s3api/s3_iam_middleware.go",
-   "t": "weed/s3api/s3_action_resolver.go",
+   "t": "weed/s3api/s3api_vector_iam.go",
    "r": "calls",
    "w": 1,
    "via": [
-    ".AuthorizeAction() \u2192 ResolveS3Action()"
+    ".extractRequestContext() \u2192 vectorIAMConditions()"
    ]
   },
   {
@@ -4083,6 +7519,18 @@
   },
   {
    "s": "weed/s3api/s3_objectlock/",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 8,
+   "via": [
+    "EntryHasActiveLock() \u2192 Entry",
+    "HasObjectsWithActiveLocks() \u2192 SeaweedFilerClient",
+    "paginateEntries() \u2192 SeaweedFilerClient",
+    "paginateEntries() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3_objectlock/",
    "t": "weed/s3api/s3_constants/",
    "r": "imports_from",
    "w": 13,
@@ -4127,6 +7575,17 @@
    "w": 1,
    "via": [
     "MapSSECErrorToS3Error() \u2192 ErrorCode"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3_sse_kms.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "DetectEncryptionStateWithEntry() \u2192 Entry",
+    "IsSSEKMSEncryptedWithEntry() \u2192 Entry",
+    "IsSSECEncryptedWithEntry() \u2192 Entry"
    ]
   },
   {
@@ -4263,6 +7722,27 @@
   },
   {
    "s": "weed/s3api/s3_sse_s3.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 3,
+   "via": [
+    ".AdjustedUrl() \u2192 Location",
+    ".WithFilerClient() \u2192 SeaweedFilerClient",
+    "GetSSES3IV() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3_sse_s3.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "SSES3KeyManager \u2192 FilerClient",
+    ".InitializeWithFiler() \u2192 FilerClient"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3_sse_s3.go",
    "t": "weed/s3api/s3_constants/",
    "r": "imports_from",
    "w": 13,
@@ -4312,6 +7792,15 @@
    "w": 1,
    "via": [
     "ValidateSSES3Key() \u2192 SSES3Key"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_acl_helper.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "AssembleEntryWithAcp() \u2192 Entry"
    ]
   },
   {
@@ -4417,6 +7906,17 @@
    "w": 1,
    "via": [
     ".checkAccessByOwnership() \u2192 ErrorCode"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_bucket_config.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "loadBucketPolicyFromExtended() \u2192 Entry",
+    ".newBucketConfigFromEntry() \u2192 Entry",
+    ".patchBucketEntry() \u2192 ObjectMutation"
    ]
   },
   {
@@ -4830,6 +8330,26 @@
    "via": [
     ".CheckBucket() \u2192 ErrorCode",
     ".GetCORSConfiguration() \u2192 ErrorCode"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_bucket_handlers.go",
+   "t": "weed/filer/filer_conf.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".GetBucketLifecycleConfigurationHandler() \u2192 ReadFilerConfFromFilers()",
+    ".PutBucketLifecycleConfigurationHandler() \u2192 ClearBucketLifecycleDayTTLs()",
+    ".DeleteBucketLifecycleHandler() \u2192 ClearBucketLifecycleDayTTLs()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_bucket_handlers.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".setBucketOwner() \u2192 Entry"
    ]
   },
   {
@@ -5412,6 +8932,17 @@
   },
   {
    "s": "weed/s3api/s3api_bucket_owner_index.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "bucketEntryOwner() \u2192 Entry",
+    ".maintainBucketOwnerIndex() \u2192 Entry",
+    ".dropVanishedFromOwnerIndex() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_bucket_owner_index.go",
    "t": "weed/s3api/auth_credentials.go",
    "r": "references",
    "w": 2,
@@ -5479,14 +9010,23 @@
   },
   {
    "s": "weed/s3api/s3api_bucket_policy_engine.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".LoadBucketPolicy() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_bucket_policy_engine.go",
    "t": "weed/s3api/policy_engine/",
    "r": "calls",
    "w": 4,
    "via": [
     "NewBucketPolicyEngine() \u2192 NewPolicyEngine()",
     ".EvaluatePolicy() \u2192 OriginalGrantConditionsFromRequest()",
-    ".EvaluatePolicy() \u2192 ExtractPrincipalVariables()",
-    ".EvaluatePolicy() \u2192 IsMultipartContinuationAction()"
+    ".EvaluatePolicy() \u2192 IsMultipartContinuationAction()",
+    "principalVariables() \u2192 ExtractPrincipalVariables()"
    ]
   },
   {
@@ -5523,6 +9063,27 @@
    "w": 1,
    "via": [
     ".EvaluatePolicy() \u2192 buildResourceARN()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_bucket_policy_handlers.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".mirrorBucketPolicyToIAM() \u2192 Entry",
+    "bucketPolicyMirrorOps() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_bucket_policy_handlers.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".getBucketPolicy() \u2192 LookupEntry()",
+    ".setBucketPolicy() \u2192 LookupEntry()",
+    ".deleteBucketPolicy() \u2192 LookupEntry()"
    ]
   },
   {
@@ -5672,6 +9233,15 @@
    "r": "imports_from",
    "w": 4,
    "via": []
+  },
+  {
+   "s": "weed/s3api/s3api_bucket_quota_handlers.go",
+   "t": "weed/filer/filer_conf.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".PutBucketQuotaHandler() \u2192 ClearBucketReadOnly()"
+   ]
   },
   {
    "s": "weed/s3api/s3api_bucket_quota_handlers.go",
@@ -5826,6 +9396,47 @@
   },
   {
    "s": "weed/s3api/s3api_chunk_manifest.go",
+   "t": "weed/filer/filechunk_manifest.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".manifestizeChunks() \u2192 MaybeManifestize()",
+    ".flattenManifestChunks() \u2192 HasChunkManifest()",
+    ".flattenManifestChunks() \u2192 ResolveChunkManifest()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_chunk_manifest.go",
+   "t": "weed/filer/filechunk_manifest.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".saveManifestChunk() \u2192 SaveDataAsChunkFunctionType"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_chunk_manifest.go",
+   "t": "weed/filer/gateway_upload.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".saveManifestChunk() \u2192 SaveGatewayDataAsChunk()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_chunk_manifest.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 4,
+   "via": [
+    ".manifestizeChunks() \u2192 FileChunk",
+    ".manifestizeChunks() \u2192 FileChunk",
+    ".flattenManifestChunks() \u2192 Entry",
+    ".flattenManifestChunks() \u2192 FileChunk"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_chunk_manifest.go",
    "t": "weed/s3api/filer_util.go",
    "r": "calls",
    "w": 1,
@@ -5849,6 +9460,24 @@
    "w": 1,
    "via": [
     ".manifestizeChunks() \u2192 .deleteOrphanedChunks()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_circuit_breaker.go",
+   "t": "weed/filer/read_write.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "NewCircuitBreaker() \u2192 ReadInsideFiler()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_circuit_breaker.go",
+   "t": "weed/filer/s3iam_conf.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".LoadS3ApiConfigurationFromBytes() \u2192 ParseS3ConfigurationFromBytes()"
    ]
   },
   {
@@ -5882,9 +9511,10 @@
    "s": "weed/s3api/s3api_circuit_breaker.go",
    "t": "weed/s3api/s3err/",
    "r": "calls",
-   "w": 1,
+   "w": 2,
    "via": [
-    ".Limit() \u2192 WriteErrorResponse()"
+    ".Limit() \u2192 WriteErrorResponse()",
+    ".waitForUploadSlot() \u2192 WriteErrorResponse()"
    ]
   },
   {
@@ -5903,6 +9533,17 @@
     ".limit() \u2192 ErrorCode",
     ".loadCounterAndCompare() \u2192 ErrorCode",
     ".loadCounterAndCompare() \u2192 ErrorCode"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_copy_size_calculation.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "NewCopySizeCalculator() \u2192 Entry",
+    "isCompressedEntry() \u2192 Entry",
+    "CalculateOptimizedSizes() \u2192 Entry"
    ]
   },
   {
@@ -6048,6 +9689,15 @@
    "w": 1,
    "via": [
     ".deleteDirectoryMarker() \u2192 .WithFilerClient()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_directory_marker.go",
+   "t": "weed/s3api/s3api_object_anonymous_read.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".deleteDirectoryMarker() \u2192 .isVersionFileKey()"
    ]
   },
   {
@@ -6267,6 +9917,37 @@
   },
   {
    "s": "weed/s3api/s3api_handlers.go",
+   "t": "weed/pb/filer.proto",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".withFilerClient() \u2192 NewSeaweedFilerClient()",
+    ".withFilerClientFailover() \u2192 NewSeaweedFilerClient()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_handlers.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 4,
+   "via": [
+    ".WithFilerClient() \u2192 SeaweedFilerClient",
+    ".withFilerClient() \u2192 SeaweedFilerClient",
+    ".withFilerClientFailover() \u2192 SeaweedFilerClient",
+    ".AdjustedUrl() \u2192 Location"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_handlers.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "s3api_handlers.go \u2192 FilerClient"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_handlers.go",
    "t": "weed/s3api/s3api_object_routed_read.go",
    "r": "calls",
    "w": 2,
@@ -6329,6 +10010,27 @@
    "r": "imports_from",
    "w": 13,
    "via": []
+  },
+  {
+   "s": "weed/s3api/s3api_internal_lifecycle.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 4,
+   "via": [
+    ".lifecycleDispatch() \u2192 Entry",
+    ".lifecycleRequireLatest() \u2192 Entry",
+    "computeEntryIdentity() \u2192 Entry",
+    "entryUsesMetadataOnlyDelete() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_internal_lifecycle.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".checkSoleSurvivorMarker() \u2192 SeaweedList()"
+   ]
   },
   {
    "s": "weed/s3api/s3api_internal_lifecycle.go",
@@ -6418,8 +10120,9 @@
    "s": "weed/s3api/s3api_internal_lifecycle.go",
    "t": "weed/s3api/s3api_object_retention.go",
    "r": "calls",
-   "w": 2,
+   "w": 3,
    "via": [
+    ".lifecycleRequireLatest() \u2192 isObjectEntryMiss()",
     ".LifecycleDelete() \u2192 .getObjectEntry()",
     ".LifecycleDelete() \u2192 .enforceObjectLockProtections()"
    ]
@@ -6447,10 +10150,12 @@
    "s": "weed/s3api/s3api_internal_lifecycle.go",
    "t": "weed/s3api/s3api_object_versioning.go",
    "r": "calls",
-   "w": 2,
+   "w": 4,
    "via": [
+    ".lifecycleDispatch() \u2192 isDeleteMarkerEntry()",
     ".lifecycleDispatch() \u2192 .createDeleteMarker()",
-    ".lifecycleDispatch() \u2192 .deleteSpecificObjectVersion()"
+    ".lifecycleDispatch() \u2192 .deleteSpecificObjectVersion()",
+    ".lifecycleRequireLatest() \u2192 .getLatestObjectVersion()"
    ]
   },
   {
@@ -6529,12 +10234,12 @@
    "s": "weed/s3api/s3api_object_anonymous_read.go",
    "t": "weed/s3api/s3_constants/",
    "r": "calls",
-   "w": 6,
+   "w": 7,
    "via": [
-    ".authorizeAnonymousObjectRead() \u2192 NormalizeObjectKey()",
+    ".isVersionFileKey() \u2192 NormalizeObjectKey()",
+    ".hasVersionFileShape() \u2192 NormalizeObjectKey()",
     ".authorizeAnonymousObjectRead() \u2192 GetIdentityFromContext()",
-    ".authorizeAnonymousObjectRead() \u2192 EffectiveOwnership()",
-    ".authorizeAnonymousBucketList() \u2192 GetIdentityFromContext()"
+    ".authorizeAnonymousObjectRead() \u2192 EffectiveOwnership()"
    ]
   },
   {
@@ -6586,9 +10291,10 @@
    "s": "weed/s3api/s3api_object_anonymous_read.go",
    "t": "weed/s3api/s3api_version_id.go",
    "r": "calls",
-   "w": 1,
+   "w": 2,
    "via": [
-    ".authorizeAnonymousObjectRead() \u2192 .getVersionFileName()"
+    ".isVersionFileKey() \u2192 .getVersionFileName()",
+    ".hasVersionFileShape() \u2192 .getVersionFileName()"
    ]
   },
   {
@@ -6616,6 +10322,117 @@
     ".authorizeAnonymousObjectRead() \u2192 ErrorCode",
     ".authorizeAnonymousBucketList() \u2192 ErrorCode",
     ".writeAnonymousAwareNotFound() \u2192 ErrorCode"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers.go",
+   "t": "weed/filer/filechunk_manifest.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".streamDecryptedRangeFromChunks() \u2192 ResolveChunkManifest()",
+    ".getEncryptedStreamFromVolumes() \u2192 ResolveChunkManifest()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 10,
+   "via": [
+    "isBareDirectory() \u2192 FileSize()",
+    ".serveDirectoryContent() \u2192 ETag()",
+    "newListEntry() \u2192 FileSize()",
+    ".streamFromVolumeServers() \u2192 FileSize()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "references",
+   "w": 5,
+   "via": [
+    ".decryptSSECChunkView() \u2192 ChunkView",
+    ".decryptSSEKMSChunkView() \u2192 ChunkView",
+    ".decryptSSES3ChunkView() \u2192 ChunkView",
+    ".fetchFullChunk() \u2192 ChunkView"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers.go",
+   "t": "weed/filer/read_remote.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".openRemoteStream() \u2192 MapFullPathToRemoteStorageLocation()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers.go",
+   "t": "weed/filer/read_write.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".findMountedRemoteMapping() \u2192 ReadInsideFiler()",
+    ".openRemoteStream() \u2192 ReadInsideFiler()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers.go",
+   "t": "weed/filer/reader_at.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".streamFromVolumeServers() \u2192 NewChunkReaderAtFromClient()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers.go",
+   "t": "weed/filer/remote_mapping.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".findMountedRemoteMapping() \u2192 FindMountedRemoteMapping()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers.go",
+   "t": "weed/filer/remote_storage.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".findMountedRemoteMapping() \u2192 UnmarshalRemoteStorageMappings()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers.go",
+   "t": "weed/filer/stream.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".readChunkRange() \u2192 JwtForVolumeServer()",
+    ".getEncryptedStreamFromVolumes() \u2192 PrepareStreamContentWithPrefetch()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 53,
+   "via": [
+    ".parseAndValidateRange() \u2192 Entry",
+    "isBareDirectory() \u2192 Entry",
+    "isNullVersionObject() \u2192 Entry",
+    ".checkDirectoryObject() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".hasChildren() \u2192 List()"
    ]
   },
   {
@@ -6788,7 +10605,7 @@
    "s": "weed/s3api/s3api_object_handlers.go",
    "t": "weed/s3api/s3api_object_anonymous_read.go",
    "r": "calls",
-   "w": 9,
+   "w": 10,
    "via": [
     ".handleDirectoryObjectRequest() \u2192 isAnonymousObjectRead()",
     ".processConditionalHeaders() \u2192 isAnonymousObjectRead()",
@@ -6907,12 +10724,12 @@
    "s": "weed/s3api/s3api_object_handlers.go",
    "t": "weed/s3api/s3err/",
    "r": "calls",
-   "w": 11,
+   "w": 12,
    "via": [
     ".parseAndValidateRange() \u2192 WriteErrorResponse()",
+    "writeStreamErrorResponse() \u2192 WriteErrorResponse()",
     ".serveDirectoryContent() \u2192 WriteErrorResponse()",
-    ".handleDirectoryObjectRequest() \u2192 WriteErrorResponse()",
-    ".processConditionalHeaders() \u2192 WriteErrorResponse()"
+    ".handleDirectoryObjectRequest() \u2192 WriteErrorResponse()"
    ]
   },
   {
@@ -6943,6 +10760,15 @@
     ".streamFromVolumeServers() \u2192 TimeToFirstByte()",
     ".serveObjectFromRemoteMount() \u2192 TimeToFirstByte()",
     ".serveObjectFromRemoteMount() \u2192 BucketTrafficSent()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_acl.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".objectMetadataUpdateDirectory() \u2192 Entry"
    ]
   },
   {
@@ -7101,6 +10927,16 @@
   },
   {
    "s": "weed/s3api/s3api_object_handlers_attributes.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "objectAttributesChecksum() \u2192 Entry",
+    ".buildObjectAttributesParts() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_attributes.go",
    "t": "weed/s3api/bucket_paths.go",
    "r": "calls",
    "w": 1,
@@ -7222,6 +11058,46 @@
   },
   {
    "s": "weed/s3api/s3api_object_handlers_copy.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".CopyObjectPartHandler() \u2192 FileSize()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_copy.go",
+   "t": "weed/filer/stream.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".downloadChunkData() \u2192 JwtForVolumeServer()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_copy.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 64,
+   "via": [
+    ".copyChangesStorageClass() \u2192 Entry",
+    "prefixObjectSource() \u2192 Entry",
+    "prefixObjectSource() \u2192 Entry",
+    "classifyCopySourceError() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_copy.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".assignNewVolume() \u2192 AssignVolumeResponseError()",
+    ".setChunkFileId() \u2192 ToFileIdObject()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_copy.go",
    "t": "weed/s3api/auth_credentials.go",
    "r": "calls",
    "w": 2,
@@ -7234,7 +11110,7 @@
    "s": "weed/s3api/s3api_object_handlers_copy.go",
    "t": "weed/s3api/bucket_paths.go",
    "r": "calls",
-   "w": 6,
+   "w": 7,
    "via": [
     ".CopyObjectHandler() \u2192 .validateTableBucketObjectPath()",
     ".CopyObjectHandler() \u2192 .bucketDir()",
@@ -7656,6 +11532,27 @@
   },
   {
    "s": "weed/s3api/s3api_object_handlers_copy_part_sse.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".openSSES3SourcePlaintextReader() \u2192 FileSize()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_copy_part_sse.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 9,
+   "via": [
+    "uploadEntryHasSSE() \u2192 Entry",
+    "uploadEntryHasChecksum() \u2192 Entry",
+    "sourceEntryIsEncrypted() \u2192 Entry",
+    ".openSourcePlaintextReader() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_copy_part_sse.go",
    "t": "weed/s3api/filer_multipart.go",
    "r": "calls",
    "w": 2,
@@ -7780,6 +11677,37 @@
    ]
   },
   {
+   "s": "weed/s3api/s3api_object_handlers_copy_stream.go",
+   "t": "weed/filer/stream.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".streamCopyChunkRange() \u2192 JwtForVolumeServer()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_copy_stream.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "canStreamCopyChunk() \u2192 FileChunk",
+    ".streamCopyChunkRange() \u2192 AssignVolumeResponse"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_copy_unified.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 10,
+   "via": [
+    ".executeUnifiedCopyStrategy() \u2192 Entry",
+    ".executeUnifiedCopyStrategy() \u2192 FileChunk",
+    ".executeKeyRotation() \u2192 Entry",
+    ".executeKeyRotation() \u2192 FileChunk"
+   ]
+  },
+  {
    "s": "weed/s3api/s3api_object_handlers_copy_unified.go",
    "t": "weed/s3api/bucket_paths.go",
    "r": "calls",
@@ -7885,6 +11813,17 @@
   },
   {
    "s": "weed/s3api/s3api_object_handlers_delete.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 3,
+   "via": [
+    ".resolveDeleteConditionalEntry() \u2192 Entry",
+    ".validateDeleteIfMatch() \u2192 Entry",
+    ".deleteUnversionedObjectWithClient() \u2192 SeaweedFilerClient"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_delete.go",
    "t": "weed/s3api/auth_credentials.go",
    "r": "calls",
    "w": 2,
@@ -7911,6 +11850,15 @@
    "w": 1,
    "via": [
     ".deleteUnversionedObjectWithClient() \u2192 deleteObjectEntry()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_delete.go",
+   "t": "weed/s3api/request_body.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".DeleteMultipleObjectsHandler() \u2192 requestBodyErrorCode()"
    ]
   },
   {
@@ -8097,6 +12045,17 @@
     "validateDeleteObjectIdentifier() \u2192 ErrorCode",
     ".validateDeleteIfMatch() \u2192 ErrorCode",
     ".validateDeleteIfMatch() \u2192 ErrorCode"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_extract.go",
+   "t": "weed/filer/zip_extract.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".extractZipObject() \u2192 SpoolZipReader()",
+    ".extractZipObject() \u2192 CheckZipLimits()",
+    ".extractZipObject() \u2192 SanitizeZipMemberName()"
    ]
   },
   {
@@ -8333,6 +12292,27 @@
   },
   {
    "s": "weed/s3api/s3api_object_handlers_list.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 7,
+   "via": [
+    ".doListFilerEntries() \u2192 SeaweedFilerClient",
+    ".doListFilerEntries() \u2192 Entry",
+    ".Recv() \u2192 ListEntriesResponse",
+    "listWindow \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_list.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".doListFilerEntries() \u2192 LookupEntry()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_list.go",
    "t": "weed/s3api/bucket_paths.go",
    "r": "calls",
    "w": 4,
@@ -8404,6 +12384,25 @@
   },
   {
    "s": "weed/s3api/s3api_object_handlers_list.go",
+   "t": "weed/s3api/s3api_object_handlers_list_prefetch.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".listFilerEntries() \u2192 newListPrefetcher()",
+    ".doListFilerEntries() \u2192 listWalkDescends()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_list.go",
+   "t": "weed/s3api/s3api_object_handlers_list_prefetch.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "ListingCursor \u2192 listPrefetcher"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_list.go",
    "t": "weed/s3api/s3api_object_versioning.go",
    "r": "calls",
    "w": 2,
@@ -8453,6 +12452,45 @@
    ]
   },
   {
+   "s": "weed/s3api/s3api_object_handlers_list_prefetch.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 12,
+   "via": [
+    "listPrefetcher \u2192 SeaweedFilerClient",
+    "prefetchedWindow \u2192 Entry",
+    "newListPrefetcher() \u2192 SeaweedFilerClient",
+    "listWalkDescends() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_list_prefetch.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_list_prefetch.go",
+   "t": "weed/s3api/s3api_object_handlers_list.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".list() \u2192 listEntriesStream",
+    ".read() \u2192 listEntriesStream"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_multipart.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "isMultipartUploadEntry() \u2192 Entry",
+    ".handleSSES3MultipartHeaders() \u2192 Entry"
+   ]
+  },
+  {
    "s": "weed/s3api/s3api_object_handlers_multipart.go",
    "t": "weed/s3api/bucket_paths.go",
    "r": "calls",
@@ -8486,6 +12524,15 @@
     ".CompleteMultipartUploadHandler() \u2192 objectKey()",
     ".AbortMultipartUploadHandler() \u2192 objectKey()",
     ".ListObjectPartsHandler() \u2192 objectKey()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_multipart.go",
+   "t": "weed/s3api/request_body.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".CompleteMultipartUploadHandler() \u2192 requestBodyErrorCode()"
    ]
   },
   {
@@ -8658,12 +12705,12 @@
    "s": "weed/s3api/s3api_object_handlers_postpolicy.go",
    "t": "weed/s3api/auth_credentials.go",
    "r": "calls",
-   "w": 5,
+   "w": 6,
    "via": [
     ".PostPolicyBucketHandler() \u2192 refineDenialForBucketName()",
     ".PostPolicyBucketHandler() \u2192 recordIdentityInContext()",
-    ".PostPolicyBucketHandler() \u2192 .isEnabled()",
-    ".PostPolicyBucketHandler() \u2192 .AuthorizeObjectWrite()"
+    ".PostPolicyBucketHandler() \u2192 objectKeyPolicyRequest()",
+    ".PostPolicyBucketHandler() \u2192 .isEnabled()"
    ]
   },
   {
@@ -8739,20 +12786,10 @@
   },
   {
    "s": "weed/s3api/s3api_object_handlers_postpolicy.go",
-   "t": "weed/s3api/s3api_acl_helper.go",
-   "r": "calls",
-   "w": 1,
-   "via": [
-    ".PostPolicyBucketHandler() \u2192 ParseAclHeaders()"
-   ]
-  },
-  {
-   "s": "weed/s3api/s3api_object_handlers_postpolicy.go",
    "t": "weed/s3api/s3api_bucket_config.go",
    "r": "calls",
-   "w": 3,
+   "w": 2,
    "via": [
-    ".PostPolicyBucketHandler() \u2192 .getBucketConfig()",
     ".PostPolicyBucketHandler() \u2192 .getVersioningState()",
     ".PostPolicyBucketHandler() \u2192 .isObjectLockEnabled()"
    ]
@@ -8789,11 +12826,13 @@
   },
   {
    "s": "weed/s3api/s3api_object_handlers_postpolicy.go",
-   "t": "weed/s3api/s3api_public_access_block.go",
+   "t": "weed/s3api/s3api_object_upload_acl.go",
    "r": "calls",
-   "w": 1,
+   "w": 3,
    "via": [
-    ".PostPolicyBucketHandler() \u2192 rejectPublicGrants()"
+    ".PostPolicyBucketHandler() \u2192 putObjectACLPolicyRequest()",
+    ".PostPolicyBucketHandler() \u2192 .checkPutObjectACLPolicy()",
+    ".PostPolicyBucketHandler() \u2192 .preparePostObjectACL()"
    ]
   },
   {
@@ -8822,6 +12861,58 @@
    "w": 1,
    "via": [
     ".doesPolicySignatureMatch() \u2192 ErrorCode"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_put.go",
+   "t": "weed/filer/filechunk_manifest.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".putToFiler() \u2192 SeparateManifestChunks()",
+    ".createAfterAmbiguousRoute() \u2192 ResolveChunkManifest()",
+    ".confirmCreateLanded() \u2192 ResolveChunkManifest()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_put.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".putToFiler() \u2192 ETag()",
+    "objectETag() \u2192 ETagChunks()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_put.go",
+   "t": "weed/filer/stream.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".uploadedChunksExist() \u2192 ChunkReadJwt()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_put.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 25,
+   "via": [
+    "putFinalize \u2192 ObjectMutation",
+    "putFinalize \u2192 Entry",
+    "putFinalize \u2192 Entry",
+    ".createAfterAmbiguousRoute() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_put.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".putToFiler() \u2192 AssignVolumeResponseError()",
+    "sameFileChunks() \u2192 ToFileIdObject()"
    ]
   },
   {
@@ -8883,15 +12974,6 @@
    "via": [
     ".validateConditionalHeadersForReads() \u2192 ConditionalHeaderResult",
     ".checkConditionalHeadersForReads() \u2192 ConditionalHeaderResult"
-   ]
-  },
-  {
-   "s": "weed/s3api/s3api_object_handlers_put.go",
-   "t": "weed/s3api/filer_multipart.go",
-   "r": "calls",
-   "w": 1,
-   "via": [
-    ".createTargetFilers() \u2192 .add()"
    ]
   },
   {
@@ -9248,6 +13330,27 @@
    "via": [
     "validatePutHeaders() \u2192 parseTagsHeader()",
     "validatePutHeaders() \u2192 ValidateTags()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_put.go",
+   "t": "weed/server/filer_grpc_server.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".uploadedChunksExist() \u2192 .lookupFileId()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_rename.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 8,
+   "via": [
+    "renameSourceAbsent() \u2192 Entry",
+    "classifyRenameToken() \u2192 Entry",
+    "retryRenameDecision() \u2192 Entry",
+    "markRenameToken() \u2192 Entry"
    ]
   },
   {
@@ -9653,6 +13756,18 @@
   },
   {
    "s": "weed/s3api/s3api_object_retention.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 5,
+   "via": [
+    ".getObjectEntry() \u2192 Entry",
+    ".getObjectEntryForUpdate() \u2192 Entry",
+    ".getRetentionFromEntry() \u2192 Entry",
+    ".getLegalHoldFromEntry() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_retention.go",
    "t": "weed/s3api/auth_credentials.go",
    "r": "calls",
    "w": 2,
@@ -9733,12 +13848,12 @@
    "s": "weed/s3api/s3api_object_retention.go",
    "t": "weed/s3api/s3api_object_versioning.go",
    "r": "calls",
-   "w": 4,
+   "w": 8,
    "via": [
-    ".getObjectEntry() \u2192 .getSpecificObjectVersion()",
-    ".getObjectEntry() \u2192 .getLatestObjectVersion()",
-    ".getObjectEntryForUpdate() \u2192 .getSpecificObjectVersion()",
-    ".getObjectEntryForUpdate() \u2192 .getLatestObjectVersion()"
+    ".getObjectEntryForUpdate() \u2192 isDeleteMarkerEntry()",
+    ".getObjectRetention() \u2192 isDeleteMarkerEntry()",
+    ".getObjectLegalHold() \u2192 isDeleteMarkerEntry()",
+    ".enforceObjectLockOnEntry() \u2192 isDeleteMarkerEntry()"
    ]
   },
   {
@@ -9766,6 +13881,37 @@
    "r": "imports_from",
    "w": 4,
    "via": []
+  },
+  {
+   "s": "weed/s3api/s3api_object_routed_read.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 5,
+   "via": [
+    ".getObjectEntryRoutedByKey() \u2192 Entry",
+    ".getObjectScopedEntryRoutedByKey() \u2192 Entry",
+    ".listObjectScopedEntriesRoutedByKey() \u2192 Entry",
+    ".lookupEntryPreferringOwner() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_routed_read.go",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".listObjectScopedEntriesRoutedByKey() \u2192 SeaweedList()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_routed_read.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".getObjectScopedEntryRoutedByKey() \u2192 LookupEntry()",
+    ".lookupEntryOnFiler() \u2192 LookupEntry()"
+   ]
   },
   {
    "s": "weed/s3api/s3api_object_routed_read.go",
@@ -9806,6 +13952,18 @@
     ".getObjectScopedEntryRoutedByKey() \u2192 .routableWriteOwner()",
     ".listObjectScopedEntriesRoutedByKey() \u2192 .routableWriteOwner()",
     ".priorWriteOwner() \u2192 .objectRouteKey()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_routed_write.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 26,
+   "via": [
+    "routeWriteCondition() \u2192 WriteCondition",
+    "buildWriteCondition() \u2192 WriteCondition",
+    "buildDeleteCondition() \u2192 WriteCondition",
+    "clause() \u2192 WriteCondition_Kind"
    ]
   },
   {
@@ -9932,12 +14090,21 @@
   },
   {
    "s": "weed/s3api/s3api_object_upload_acl.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "applyPutObjectACL() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_upload_acl.go",
    "t": "weed/s3api/auth_credentials.go",
    "r": "calls",
    "w": 2,
    "via": [
     ".preparePutObjectACL() \u2192 .isEnabled()",
-    ".preparePutObjectACL() \u2192 .authRequest()"
+    ".preparePutObjectACL() \u2192 .authRequestWithAuthType()"
    ]
   },
   {
@@ -9973,7 +14140,7 @@
    "w": 2,
    "via": [
     ".preparePutObjectACL() \u2192 GetBucketAndObject()",
-    ".preparePutObjectACL() \u2192 EffectiveOwnership()"
+    ".attachPutObjectACL() \u2192 EffectiveOwnership()"
    ]
   },
   {
@@ -9990,18 +14157,19 @@
    "w": 4,
    "via": [
     "putObjectACLPolicyRequest() \u2192 parseAclGranteePairs()",
-    ".preparePutObjectACL() \u2192 ParseAclHeaders()",
-    ".preparePutObjectACL() \u2192 ValidateAndTransferGrants()",
-    ".preparePutObjectACL() \u2192 AssembleEntryWithAcp()"
+    ".attachPutObjectACL() \u2192 ParseAclHeaders()",
+    ".attachPutObjectACL() \u2192 ValidateAndTransferGrants()",
+    ".attachPutObjectACL() \u2192 AssembleEntryWithAcp()"
    ]
   },
   {
    "s": "weed/s3api/s3api_object_upload_acl.go",
    "t": "weed/s3api/s3api_acp.go",
    "r": "calls",
-   "w": 1,
+   "w": 2,
    "via": [
-    ".preparePutObjectACL() \u2192 .requestAccountId()"
+    ".preparePutObjectACL() \u2192 .requestAccountId()",
+    ".preparePostObjectACL() \u2192 .requestAccountId()"
    ]
   },
   {
@@ -10017,9 +14185,19 @@
    "s": "weed/s3api/s3api_object_upload_acl.go",
    "t": "weed/s3api/s3api_bucket_config.go",
    "r": "calls",
+   "w": 2,
+   "via": [
+    ".preparePutObjectACL() \u2192 .getBucketConfig()",
+    ".preparePostObjectACL() \u2192 .getBucketConfig()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_upload_acl.go",
+   "t": "weed/s3api/s3api_bucket_config.go",
+   "r": "references",
    "w": 1,
    "via": [
-    ".preparePutObjectACL() \u2192 .getBucketConfig()"
+    ".attachPutObjectACL() \u2192 BucketConfig"
    ]
   },
   {
@@ -10038,7 +14216,7 @@
    "r": "calls",
    "w": 1,
    "via": [
-    ".preparePutObjectACL() \u2192 rejectPublicGrants()"
+    ".attachPutObjectACL() \u2192 rejectPublicGrants()"
    ]
   },
   {
@@ -10047,7 +14225,7 @@
    "r": "calls",
    "w": 1,
    "via": [
-    ".preparePutObjectACL() \u2192 .checkPolicyWithEntry()"
+    ".checkPutObjectACLPolicy() \u2192 .checkPolicyWithEntry()"
    ]
   },
   {
@@ -10061,11 +14239,24 @@
    "s": "weed/s3api/s3api_object_upload_acl.go",
    "t": "weed/s3api/s3err/",
    "r": "references",
-   "w": 3,
+   "w": 6,
    "via": [
     "putObjectACLValue() \u2192 ErrorCode",
     "putObjectACLPolicyRequest() \u2192 ErrorCode",
-    ".preparePutObjectACL() \u2192 ErrorCode"
+    ".preparePutObjectACL() \u2192 ErrorCode",
+    ".checkPutObjectACLPolicy() \u2192 ErrorCode"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_versioned_finalize.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 8,
+   "via": [
+    ".latestPointerRecompute() \u2192 ObjectMutation",
+    ".routedVersionedFinalize() \u2192 Entry",
+    ".removeUploadDirMutation() \u2192 ObjectMutation",
+    "uploadExistsCondition() \u2192 WriteCondition"
    ]
   },
   {
@@ -10160,10 +14351,11 @@
    "s": "weed/s3api/s3api_object_versioned_finalize.go",
    "t": "weed/s3api/s3api_version_id.go",
    "r": "calls",
-   "w": 3,
+   "w": 5,
    "via": [
     ".routedDeleteSpecificVersion() \u2192 isValidVersionID()",
     ".routedDeleteSpecificVersion() \u2192 isNewFormatVersionId()",
+    ".versionedFinalize() \u2192 generateVersionId()",
     ".routedDeleteSpecificVersion() \u2192 .getVersionFileName()"
    ]
   },
@@ -10184,6 +14376,37 @@
     ".routedMultipartFinalize() \u2192 ErrorCode",
     ".routedDeleteSpecificVersion() \u2192 ErrorCode",
     ".routedDeleteNullVersion() \u2192 ErrorCode"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_versioning.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".calculateETagFromChunks() \u2192 ETagChunks()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_versioning.go",
+   "t": "weed/filer/persisted_log_cache.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".deleteSpecificObjectVersion() \u2192 .lookup()",
+    "lookupVersionsEntryWithRetry() \u2192 .lookup()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_versioning.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 37,
+   "via": [
+    "isDeleteMarkerEntry() \u2192 Entry",
+    "setCachedListMetadata() \u2192 Entry",
+    ".nullDeleteMarkerEntry() \u2192 Entry",
+    "versionCollector \u2192 Entry"
    ]
   },
   {
@@ -10484,6 +14707,15 @@
   },
   {
    "s": "weed/s3api/s3api_put_handlers.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "storeSSEMetadata() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_put_handlers.go",
    "t": "weed/s3api/s3_constants/",
    "r": "calls",
    "w": 1,
@@ -10586,6 +14818,15 @@
   },
   {
    "s": "weed/s3api/s3api_put_object_helper.go",
+   "t": "weed/s3api/request_body.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "getRequestDataReader() \u2192 unwrapSignedPayload()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_put_object_helper.go",
    "t": "weed/s3api/s3api_auth.go",
    "r": "calls",
    "w": 1,
@@ -10616,6 +14857,33 @@
    "w": 1,
    "via": [
     "getRequestDataReader() \u2192 ErrorCode"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_server.go",
+   "t": "weed/filer/reader_cache.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "NewS3ApiServerWithStore() \u2192 NewReaderCache()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_server.go",
+   "t": "weed/filer/reader_cache.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "S3ApiServer \u2192 ReaderCache"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_server.go",
+   "t": "weed/filer/reader_cache_budget.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "NewS3ApiServerWithStore() \u2192 NewReaderCacheBudget()"
    ]
   },
   {
@@ -11009,10 +15277,12 @@
    "s": "weed/s3api/s3api_server.go",
    "t": "weed/s3api/s3api_object_anonymous_read.go",
    "r": "calls",
-   "w": 2,
+   "w": 4,
    "via": [
     ".recheckPolicyWithObjectEntry() \u2192 isAnonymousObjectRead()",
-    ".recheckPolicyWithObjectEntry() \u2192 .authorizeAnonymousObjectRead()"
+    ".recheckPolicyWithObjectEntry() \u2192 .authorizeAnonymousObjectRead()",
+    ".recheckPolicyWithObjectEntry() \u2192 .isVersionFileKey()",
+    ".recheckTagConditionedPolicyWithLookup() \u2192 .hasVersionFileShape()"
    ]
   },
   {
@@ -11342,6 +15612,15 @@
   },
   {
    "s": "weed/s3api/s3api_status_handlers.go",
+   "t": "weed/s3api/s3_sse_s3.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".StatusHandler() \u2192 GetSSES3KeyManager()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_status_handlers.go",
    "t": "weed/s3api/s3err/",
    "r": "calls",
    "w": 1,
@@ -11446,6 +15725,15 @@
   },
   {
    "s": "weed/s3api/s3api_tables.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".WithFilerClient() \u2192 SeaweedFilerClient"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_tables.go",
    "t": "weed/s3api/auth_credentials.go",
    "r": "calls",
    "w": 3,
@@ -11503,7 +15791,7 @@
    "s": "weed/s3api/s3api_tables.go",
    "t": "weed/s3api/s3tables/",
    "r": "calls",
-   "w": 9,
+   "w": 11,
    "via": [
     "NewS3TablesApiServer() \u2192 NewS3TablesHandler()",
     "buildTableBucketRequestWithARN() \u2192 ParseBucketNameFromARN()",
@@ -11535,6 +15823,57 @@
    "w": 1,
    "via": [
     ".registerS3TablesRoutes() \u2192 track()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_vector_iam.go",
+   "t": "weed/s3api/auth_credentials.go",
+   "r": "calls",
+   "w": 7,
+   "via": [
+    ".EvaluateIAMPolicy() \u2192 Action",
+    ".EvaluateIAMPolicy() \u2192 buildPrincipalARN()",
+    ".EvaluateIAMPolicy() \u2192 hasSessionToken()",
+    ".EvaluateIAMPolicy() \u2192 .evaluateAttachedIAMPolicies()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_vector_iam.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".EvaluateIAMPolicy() \u2192 GetIdentityFromContext()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_vector_iam.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3api_vector_iam.go",
+   "t": "weed/s3api/s3err/",
+   "r": "imports_from",
+   "w": 4,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3api_vector_iam.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3api_vector_iam.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".EvaluateIAMPolicy() \u2192 PolicyContext"
    ]
   },
   {
@@ -11636,10 +15975,38 @@
   },
   {
    "s": "weed/s3api/s3lifecycle/",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "SuccessorFromEntryStamp() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3lifecycle/",
    "t": "weed/s3api/s3_constants/",
    "r": "imports_from",
    "w": 13,
    "via": []
+  },
+  {
+   "s": "weed/s3api/s3lifecycle/scheduler/",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "LoadCompileInputs() \u2192 SeaweedFilerClient",
+    "IsBucketVersioned() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3lifecycle/scheduler/",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "LoadCompileInputs() \u2192 SeaweedList()"
+   ]
   },
   {
    "s": "weed/s3api/s3lifecycle/scheduler/",
@@ -11692,10 +16059,65 @@
   },
   {
    "s": "weed/s3api/s3tables/",
-   "t": "weed/s3api/policy_engine/",
+   "t": "weed/filer/filer_delete_entry.go",
    "r": "calls",
    "w": 1,
    "via": [
+    ".deleteEmptyDirectoryIfMatches() \u2192 DeleteEntryError()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3tables/",
+   "t": "weed/pb/filer.proto",
+   "r": "embeds",
+   "w": 2,
+   "via": [
+    "markRemovalWrites \u2192 SeaweedFilerClient",
+    "readOnlyFilerClient \u2192 SeaweedFilerClient"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3tables/",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 111,
+   "via": [
+    ".createDirectory() \u2192 SeaweedFilerClient",
+    ".createDirectoryExclusive() \u2192 SeaweedFilerClient",
+    ".createDirectoryEntry() \u2192 SeaweedFilerClient",
+    ".ensureDirectory() \u2192 SeaweedFilerClient"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3tables/",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".deleteEntryIfExists() \u2192 DoRemove()",
+    ".deleteDirectory() \u2192 DoRemove()",
+    ".removeLeftoverDirectory() \u2192 DoRemoveRequest()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3tables/",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 7,
+   "via": [
+    ".ensureDirectory() \u2192 LookupEntry()",
+    ".mutateEntryAsserting() \u2192 LookupEntry()",
+    ".getExtendedAttribute() \u2192 LookupEntry()",
+    ".lookupEntry() \u2192 LookupEntry()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3tables/",
+   "t": "weed/s3api/policy_engine/",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    "validatePolicyDocument() \u2192 GetConditionEvaluator()",
     "matchesConditionOperator() \u2192 GetConditionEvaluator()"
    ]
   },
@@ -11726,6 +16148,22 @@
    "via": []
   },
   {
+   "s": "weed/s3api/s3vectors/describe.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".bucketEncrypts() \u2192 DeclaredEncryption()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/describe.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
    "s": "weed/s3api/s3vectors/execute.go",
    "t": "weed/s3api/s3_constants/",
    "r": "calls",
@@ -11740,6 +16178,18 @@
    "r": "imports_from",
    "w": 13,
    "via": []
+  },
+  {
+   "s": "weed/s3api/s3vectors/handlers.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 4,
+   "via": [
+    ".vectorPolicy() \u2192 LookupEntry()",
+    ".indexTags() \u2192 LookupEntry()",
+    ".vectorPolicyView() \u2192 LookupEntry()",
+    ".mutateVectorPolicy() \u2192 LookupEntry()"
+   ]
   },
   {
    "s": "weed/s3api/s3vectors/handlers.go",
@@ -11761,12 +16211,12 @@
    "s": "weed/s3api/s3vectors/handlers.go",
    "t": "weed/s3api/s3tables/",
    "r": "calls",
-   "w": 15,
+   "w": 12,
    "via": [
     ".handleCreateVectorBucket() \u2192 ValidateEncryptionConfiguration()",
     ".handleCreateVectorBucket() \u2192 ValidateTagsWithLimit()",
-    ".handleCreateVectorBucket() \u2192 CheckPermissionWithContext()",
-    ".handleListVectorBuckets() \u2192 CheckPermissionWithContext()"
+    ".handleDeleteVectorBucket() \u2192 WithTableBucketCreatedAt()",
+    "validateVectorPolicy() \u2192 ConditionValue()"
    ]
   },
   {
@@ -11792,9 +16242,12 @@
    "s": "weed/s3api/s3vectors/handlers.go",
    "t": "weed/s3api/s3vectors/server.go",
    "r": "calls",
-   "w": 1,
+   "w": 7,
    "via": [
-    "vectorErr() \u2192 operationFromRequest()"
+    "vectorErr() \u2192 operationFromRequest()",
+    ".handleCreateVectorBucket() \u2192 setRequestTarget()",
+    ".handleCreateVectorBucket() \u2192 authorizeRequest()",
+    ".checkVectorPolicyDoc() \u2192 setRequestTarget()"
    ]
   },
   {
@@ -11831,11 +16284,74 @@
    ]
   },
   {
+   "s": "weed/s3api/s3vectors/iam.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".checkPermission() \u2192 CheckPermissionWithContext()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/iam.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "imports_from",
+   "w": 18,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3vectors/iam.go",
+   "t": "weed/s3api/s3tables/",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".EvaluateIAMPolicy() \u2192 PolicyContext",
+    ".checkPermission() \u2192 PolicyContext"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/limits.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3vectors/limits.go",
+   "t": "weed/s3api/s3vectors/server.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".limitRequest() \u2192 operationFromRequest()",
+    ".limitRequest() \u2192 setRequestTarget()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/limits.go",
+   "t": "weed/s3api/s3vectors/types.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".limitRequest() \u2192 readJSON()",
+    ".limitRequest() \u2192 writeError()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/server.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    ".WithFilerClient() \u2192 SeaweedFilerClient"
+   ]
+  },
+  {
    "s": "weed/s3api/s3vectors/server.go",
    "t": "weed/s3api/s3_constants/",
    "r": "calls",
-   "w": 3,
+   "w": 4,
    "via": [
+    ".instrument() \u2192 EnsureIdentityHolder()",
     ".Auth() \u2192 SetRequestBodyLimitInContext()",
     ".Auth() \u2192 SetIdentityInContext()",
     ".Auth() \u2192 SetIdentityNameInContext()"
@@ -11851,6 +16367,18 @@
   {
    "s": "weed/s3api/s3vectors/server.go",
    "t": "weed/s3api/s3err/",
+   "r": "calls",
+   "w": 6,
+   "via": [
+    ".instrument() \u2192 WithAccessLogOperation()",
+    ".instrument() \u2192 EnsureAuditTracking()",
+    ".instrument() \u2192 AuditAlreadyLogged()",
+    ".instrument() \u2192 PostAccessLog()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3vectors/server.go",
+   "t": "weed/s3api/s3err/",
    "r": "imports_from",
    "w": 4,
    "via": []
@@ -11859,9 +16387,10 @@
    "s": "weed/s3api/s3vectors/server.go",
    "t": "weed/s3api/s3err/",
    "r": "references",
-   "w": 1,
+   "w": 2,
    "via": [
-    ".AuthenticateRequest() \u2192 ErrorCode"
+    ".AuthenticateRequest() \u2192 ErrorCode",
+    "accessLog() \u2192 AccessLog"
    ]
   },
   {
@@ -12043,10 +16572,696 @@
    "via": []
   },
   {
+   "s": "weed/server/filer_grpc_server.go",
+   "t": "weed/filer/entry.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".CreateEntry() \u2192 FromPbEntry()",
+    ".applyObjectMutation() \u2192 FromPbEntry()",
+    ".UpdateEntry() \u2192 FromPbEntry()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server.go",
+   "t": "weed/filer/entry.go",
+   "r": "references",
+   "w": 5,
+   "via": [
+    ".fencedFindEntry() \u2192 Entry",
+    ".latestVersionedConditionEntry() \u2192 Entry",
+    ".applyStorageDefaultsToEntry() \u2192 Entry",
+    "validateUpdateEntryPreconditions() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server.go",
+   "t": "weed/filer/entry_codec.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".UpdateEntry() \u2192 EqualEntry()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server.go",
+   "t": "weed/filer/filechunk_manifest.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".cleanupChunks() \u2192 SeparateManifestChunks()",
+    ".cleanupChunks() \u2192 MaybeManifestize()",
+    ".AppendToEntry() \u2192 MaybeManifestize()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 4,
+   "via": [
+    ".ListEntries() \u2192 FileSize()",
+    ".cleanupChunks() \u2192 MinusChunks()",
+    ".cleanupChunks() \u2192 CompactFileChunks()",
+    ".AppendToEntry() \u2192 TotalSize()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server.go",
+   "t": "weed/filer/filer_delete_entry.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".applyObjectMutation() \u2192 WithKeepRemoteObject()",
+    ".DeleteEntry() \u2192 WithKeepRemoteObject()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server.go",
+   "t": "weed/filer/metadata_event_sink.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".CreateEntry() \u2192 WithMetadataEventSink()",
+    ".UpdateEntry() \u2192 WithMetadataEventSink()",
+    ".DeleteEntry() \u2192 WithMetadataEventSink()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 36,
+   "via": [
+    ".LookupDirectoryEntry() \u2192 LookupDirectoryEntryRequest",
+    ".LookupDirectoryEntry() \u2192 LookupDirectoryEntryResponse",
+    ".ListEntries() \u2192 ListEntriesRequest",
+    ".ListEntries() \u2192 SeaweedFiler_ListEntriesServer"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/server/filer_grpc_server.go",
+   "t": "weed/server/filer_grpc_server_condition.go",
+   "r": "calls",
+   "w": 8,
+   "via": [
+    ".CreateEntry() \u2192 conditionIsSet()",
+    ".CreateEntry() \u2192 writeConditionSatisfied()",
+    ".ObjectTransaction() \u2192 conditionIsSet()",
+    ".ObjectTransaction() \u2192 writeConditionSatisfied()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server.go",
+   "t": "weed/server/filer_grpc_server_route.go",
+   "r": "calls",
+   "w": 15,
+   "via": [
+    ".CreateEntry() \u2192 entryRouteKey()",
+    ".UpdateEntry() \u2192 entryRouteKey()",
+    ".DeleteEntry() \u2192 entryRouteKey()",
+    ".CreateEntry() \u2192 .forwardToWriteOwner()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_admin.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 6,
+   "via": [
+    ".Statistics() \u2192 StatisticsRequest",
+    ".Statistics() \u2192 StatisticsResponse",
+    ".Ping() \u2192 PingRequest",
+    ".Ping() \u2192 PingResponse"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_batch_lookup.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 8,
+   "via": [
+    ".LookupDirectoryEntries() \u2192 LookupDirectoryEntriesRequest",
+    ".LookupDirectoryEntries() \u2192 LookupDirectoryEntriesResponse",
+    "selectFilerBatchVolumeLookup() \u2192 LookupDirectoryEntriesRequest",
+    "populateBatchReadAuth() \u2192 LookupDirectoryEntriesResponse"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_batch_lookup.go",
+   "t": "weed/server/filer_grpc_server.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "lookupDirectoryEntries() \u2192 wdclientLocationsToPb()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_batch_lookup.go",
+   "t": "weed/server/filer_grpc_server.go",
+   "r": "indirect_call",
+   "w": 1,
+   "via": [
+    ".LookupDirectoryEntries() \u2192 .fencedFindEntry()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_condition.go",
+   "t": "weed/filer/entry.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "clauseSatisfied() \u2192 FromPbEntry()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_condition.go",
+   "t": "weed/filer/entry.go",
+   "r": "references",
+   "w": 4,
+   "via": [
+    "writeConditionSatisfied() \u2192 Entry",
+    "clauseSatisfied() \u2192 Entry",
+    "chunkFidsEqual() \u2192 Entry",
+    "storedEntryETag() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_condition.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "storedEntryETag() \u2192 ETagChunks()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_condition.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "conditionIsSet() \u2192 WriteCondition",
+    "writeConditionSatisfied() \u2192 WriteCondition",
+    "clauseSatisfied() \u2192 WriteCondition_Clause"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_condition.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "clauseSatisfied() \u2192 BeforeEntrySerialization()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_condition.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/server/filer_grpc_server_dlm.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 11,
+   "via": [
+    ".DistributedLock() \u2192 LockRequest",
+    ".DistributedLock() \u2192 LockResponse",
+    "forwardedLockAcquired() \u2192 LockResponse",
+    ".DistributedUnlock() \u2192 UnlockRequest"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_dlm.go",
+   "t": "weed/server/filer_grpc_server_route.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".DistributedLock() \u2192 .checkMovedMarker()",
+    ".DistributedUnlock() \u2192 .checkMovedMarker()",
+    ".FindLockOwner() \u2192 .checkMovedMarker()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_kv.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 4,
+   "via": [
+    ".KvGet() \u2192 KvGetRequest",
+    ".KvGet() \u2192 KvGetResponse",
+    ".KvPut() \u2192 KvPutRequest",
+    ".KvPut() \u2192 KvPutResponse"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_mount_peer.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 4,
+   "via": [
+    ".MountRegister() \u2192 MountRegisterRequest",
+    ".MountRegister() \u2192 MountRegisterResponse",
+    ".MountList() \u2192 MountListRequest",
+    ".MountList() \u2192 MountListResponse"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_posix_lock.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 5,
+   "via": [
+    ".PosixLock() \u2192 PosixLockRequest",
+    ".PosixLock() \u2192 PosixLockResponse",
+    ".posixCoolingOrWarmup() \u2192 PosixLockRange",
+    "posixRangeFromPb() \u2192 PosixLockRange"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_posix_lock.go",
+   "t": "weed/server/filer_grpc_server_route.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".PosixLock() \u2192 .checkMovedMarker()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_remote.go",
+   "t": "weed/filer/entry.go",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".pruneEntryMissingFromRemote() \u2192 Entry",
+    "isPrunableRemoteEntry() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_remote.go",
+   "t": "weed/filer/entry_codec.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".doCacheRemoteObjectToLocalCluster() \u2192 EqualEntry()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_remote.go",
+   "t": "weed/filer/metadata_event_sink.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".doCacheRemoteObjectToLocalCluster() \u2192 WithMetadataEventSink()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_remote.go",
+   "t": "weed/filer/read_remote.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".resolveMountedRemote() \u2192 MapFullPathToRemoteStorageLocation()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_remote.go",
+   "t": "weed/filer/remote_mapping.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".resolveMountedRemote() \u2192 FindMountedRemoteMapping()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_remote.go",
+   "t": "weed/filer/remote_storage.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".resolveMountedRemote() \u2192 UnmarshalRemoteStorageMappings()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_remote.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 4,
+   "via": [
+    ".CacheRemoteObjectToLocalCluster() \u2192 CacheRemoteObjectToLocalClusterRequest",
+    ".CacheRemoteObjectToLocalCluster() \u2192 CacheRemoteObjectToLocalClusterResponse",
+    ".doCacheRemoteObjectToLocalCluster() \u2192 CacheRemoteObjectToLocalClusterRequest",
+    ".doCacheRemoteObjectToLocalCluster() \u2192 CacheRemoteObjectToLocalClusterResponse"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_remote.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/server/filer_grpc_server_remote.go",
+   "t": "weed/s3api/s3_objectlock/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "isPrunableRemoteEntry() \u2192 EntryHasActiveLock()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_remote.go",
+   "t": "weed/s3api/s3_objectlock/",
+   "r": "imports_from",
+   "w": 1,
+   "via": []
+  },
+  {
+   "s": "weed/server/filer_grpc_server_remote.go",
+   "t": "weed/server/filer_grpc_server.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".CacheRemoteObjectToLocalCluster() \u2192 .fencedFindEntry()",
+    ".doCacheRemoteObjectToLocalCluster() \u2192 .fencedFindEntry()",
+    ".pruneEntryMissingFromRemote() \u2192 .ObjectTransaction()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_remote.go",
+   "t": "weed/server/filer_grpc_server_route.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".pruneEntryMissingFromRemote() \u2192 entryRouteKey()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_rename.go",
+   "t": "weed/filer/entry.go",
+   "r": "references",
+   "w": 7,
+   "via": [
+    "metadataEvent \u2192 Entry",
+    "metadataEvent \u2192 Entry",
+    "pendingRemoteCopy \u2192 Entry",
+    "deleteRenamedRemoteObject() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_rename.go",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".moveSelfEntry() \u2192 MinusChunks()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_rename.go",
+   "t": "weed/filer/filer.go",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "releaseMetadataEventStamps() \u2192 Filer",
+    ".notify() \u2192 Filer",
+    "deleteRenamedRemoteObject() \u2192 Filer"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_rename.go",
+   "t": "weed/filer/filer_delete_entry.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".moveSelfEntry() \u2192 WithKeepRemoteObject()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_rename.go",
+   "t": "weed/filer/metadata_event_context.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".moveSelfEntry() \u2192 WithSuppressedMetadataEvents()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_rename.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 11,
+   "via": [
+    ".AtomicRenameEntry() \u2192 AtomicRenameEntryRequest",
+    ".AtomicRenameEntry() \u2192 AtomicRenameEntryResponse",
+    ".StreamRenameEntry() \u2192 StreamRenameEntryRequest",
+    ".StreamRenameEntry() \u2192 SeaweedFiler_StreamRenameEntryServer"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_rename.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".moveSelfEntry() \u2192 FileIdsString()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_route.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/server/filer_grpc_server_stream_mutate.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 8,
+   "via": [
+    "syncStream \u2192 StreamMutateEntryRequest",
+    "syncStream \u2192 StreamMutateEntryResponse",
+    ".Send() \u2192 StreamMutateEntryResponse",
+    ".StreamMutateEntry() \u2192 StreamMutateEntryRequest"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_stream_mutate.go",
+   "t": "weed/server/filer_grpc_server.go",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".handleStreamMutateRequest() \u2192 .CreateEntry()",
+    ".handleStreamMutateRequest() \u2192 .UpdateEntry()",
+    ".handleStreamMutateRequest() \u2192 .DeleteEntry()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_stream_mutate.go",
+   "t": "weed/server/filer_grpc_server_rename.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".handleStreamMutateRename() \u2192 .StreamRenameEntry()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_stream_mutate.go",
+   "t": "weed/server/filer_grpc_server_stream_mutate_scheduler.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".StreamMutateEntry() \u2192 newMutateScheduler()",
+    ".StreamMutateEntry() \u2192 classifyMutation()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_stream_mutate_scheduler.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "classifyMutation() \u2192 StreamMutateEntryRequest"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_sub_meta.go",
+   "t": "weed/filer/filer_notify_read.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".chunkDiskPass() \u2192 PersistedLogScanStartTsNs()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_sub_meta.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 20,
+   "via": [
+    ".Send() \u2192 SubscribeMetadataResponse",
+    ".Send() \u2192 SubscribeMetadataResponse",
+    "pipelinedSender \u2192 SubscribeMetadataResponse",
+    ".Send() \u2192 SubscribeMetadataResponse"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_sub_meta.go",
+   "t": "weed/pb/filer_pb/filer_pb_event_scan.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "eachLogEntryFn() \u2192 ScanMetadataEventSkeleton()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_sub_meta.go",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    "eachLogEntryFn() \u2192 MetadataEventMatchesSubscription()",
+    ".eachEventNotificationFn() \u2192 MetadataEventMatchesSubscription()"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_sub_meta.go",
+   "t": "weed/server/filer_grpc_server.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "gapPass \u2192 FilerServer"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_subscribers.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".ListMetadataSubscribers() \u2192 ListMetadataSubscribersRequest",
+    ".ListMetadataSubscribers() \u2192 ListMetadataSubscribersResponse"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_traverse_meta.go",
+   "t": "weed/filer/entry.go",
+   "r": "references",
+   "w": 3,
+   "via": [
+    "traverseFromSnapshot() \u2192 Entry",
+    "traverseFromSnapshot() \u2192 Entry",
+    ".iterateDirectory() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_traverse_meta.go",
+   "t": "weed/filer/filerstore.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "traverseFromSnapshot() \u2192 EntryScanner"
+   ]
+  },
+  {
+   "s": "weed/server/filer_grpc_server_traverse_meta.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".TraverseBfsMetadata() \u2192 TraverseBfsMetadataRequest",
+    ".TraverseBfsMetadata() \u2192 SeaweedFiler_TraverseBfsMetadataServer"
+   ]
+  },
+  {
+   "s": "weed/worker/tasks/iceberg/",
+   "t": "weed/filer/filechunks.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "metadataEntrySize() \u2192 FileSize()"
+   ]
+  },
+  {
+   "s": "weed/worker/tasks/iceberg/",
+   "t": "weed/filer/meta_replay.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "splitOrderedBin() \u2192 .flush()"
+   ]
+  },
+  {
+   "s": "weed/worker/tasks/iceberg/",
+   "t": "weed/filer/stream.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    "readEntryContent() \u2192 NewFileReader()",
+    "parquetSchemaByIcebergPath() \u2192 NewChunkStreamReader()"
+   ]
+  },
+  {
+   "s": "weed/worker/tasks/iceberg/",
+   "t": "weed/pb/filer.proto",
+   "r": "calls",
+   "w": 3,
+   "via": [
+    ".Detect() \u2192 NewSeaweedFilerClient()",
+    ".Execute() \u2192 NewSeaweedFilerClient()",
+    ".dialFiler() \u2192 NewSeaweedFilerClient()"
+   ]
+  },
+  {
+   "s": "weed/worker/tasks/iceberg/",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 60,
+   "via": [
+    ".compactDataFiles() \u2192 SeaweedFilerClient",
+    "collectPositionDeletes() \u2192 SeaweedFilerClient",
+    "readPositionDeleteFile() \u2192 SeaweedFilerClient",
+    "collectEqualityDeletes() \u2192 SeaweedFilerClient"
+   ]
+  },
+  {
+   "s": "weed/worker/tasks/iceberg/",
+   "t": "weed/pb/filer_pb/filer_client.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "deleteFilerFile() \u2192 DoRemove()"
+   ]
+  },
+  {
+   "s": "weed/worker/tasks/iceberg/",
+   "t": "weed/pb/filer_pb/filer_pb_helper.go",
+   "r": "calls",
+   "w": 7,
+   "via": [
+    "ensureFilerDir() \u2192 LookupEntry()",
+    "loadCurrentMetadata() \u2192 LookupEntry()",
+    "lookupResolvedEntry() \u2192 LookupEntry()",
+    "updateTableMetadataXattr() \u2192 LookupEntry()"
+   ]
+  },
+  {
    "s": "weed/worker/tasks/iceberg/",
    "t": "weed/s3api/s3tables/",
    "r": "calls",
-   "w": 16,
+   "w": 19,
    "via": [
     ".compactDataFiles() \u2192 ReadManifestList()",
     ".compactDataFiles() \u2192 ReadManifest()",

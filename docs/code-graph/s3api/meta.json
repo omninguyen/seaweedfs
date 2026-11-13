@@ -71,6 +71,46 @@
    "id": 11,
    "name": "Iceberg maintenance worker",
    "sub": "plugin-worker tasks that rewrite Iceberg table files and metadata directly on the filer (one collapsed node)"
+  },
+  {
+   "id": 12,
+   "name": "Filer protocol",
+   "sub": "filer_pb: the gRPC messages and services generated from filer.proto, and the hand-written client helpers every filer caller uses"
+  },
+  {
+   "id": 13,
+   "name": "Filer gRPC server",
+   "sub": "the filer side of every call the gateway makes: entry CRUD, conditional writes and object transactions, routing to a path's owner filer, metadata subscriptions"
+  },
+  {
+   "id": 14,
+   "name": "Filer namespace operations",
+   "sub": "create, update, delete, rename, hard links, buckets and listing on the filer's directory tree"
+  },
+  {
+   "id": 15,
+   "name": "Entries, stores and filer configuration",
+   "sub": "the Entry model and its encoding, the pluggable metadata stores behind it, and the path-based configuration (fs.configure)"
+  },
+  {
+   "id": 16,
+   "name": "Chunks and the read path",
+   "sub": "chunk lists, manifests, interval resolution, chunk caches and the streaming readers that turn chunks back into bytes"
+  },
+  {
+   "id": 17,
+   "name": "Metadata events and sync",
+   "sub": "the metadata change log, its persistence, subscriptions and the aggregation of peer filers' logs"
+  },
+  {
+   "id": 18,
+   "name": "Remote storage",
+   "sub": "mounting remote object stores into the filer tree: mappings, lazy fetch, eviction and tombstones"
+  },
+  {
+   "id": 19,
+   "name": "Filer housekeeping",
+   "sub": "background deletion of chunks and the cleanup of directories left empty"
   }
  ]
 }
