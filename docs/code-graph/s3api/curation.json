@@ -1972,5 +1972,307 @@
   "gotchas": [
    "For an STS session, an action its policies do not allow is a deny, so a vector bucket policy cannot grant the session more than its role allows."
   ]
+ },
+ "weed/pb/filer.proto": {
+  "character": "The filer's wire contract: the SeaweedFiler gRPC service and every message the gateway, mounts, shell and peer filers exchange with it. The node stands for the generated Go (filer.pb.go, filer_grpc.pb.go, filer_vtproto.pb.go), which is not drawn file by file",
+  "what": "Declares the SeaweedFiler service: entry lookup (single and batched LookupDirectoryEntries, up to 4096 paths, with per-item read fences, one deduplicated volume location map and exact-fid read tokens), ListEntries (stream; snapshot_ts_ns is a listing time the filer stamps and echoes for event replay, not a store snapshot; omit_chunks), Create/Update/Delete/TouchAccessTime/AppendToEntry, ObjectTransaction(Batch), AtomicRenameEntry and StreamRenameEntry, StreamMutateEntry (one ordered bidirectional stream per mount), PosixLock, volume assignment and lookup, collections, statistics, Ping, GetFilerConfiguration, TraverseBfsMetadata, Subscribe(Local)Metadata, ListMetadataSubscribers, KvGet/KvPut, CacheRemoteObjectToLocalCluster, the distributed lock RPCs (Lock, Unlock, FindLockOwner, TransferLocks, ReplicateLock) and the mount peer registry (MountRegister, MountList). Core types: Entry (chunks, FuseAttributes, extended map, inline content, remote entry, hard link id, quota, worm_enforced_at_ts_ns, commit_ts_ns), FileChunk (fid, offset, size, modified_ts_ns, cipher key, compression, manifest flag, per-chunk SSE type and metadata), EventNotification and SubscribeMetadataResponse (batched events, log file refs for direct reads, flushed watermark, mutation_ts_ns). WriteCondition is a list of AND-ed clauses (IF_NOT_EXISTS, IF_EXISTS, IF_ETAG_MATCH / NOT_MATCH with weak comparison, IF_(UN)MODIFIED_SINCE, IF_EXTENDED_NOT_EQUAL, IF_EXTENDED_TIME_ELAPSED with a gate key, IF_CHUNKS_EQUAL, IF_ENTRY_EQUAL) checked under the filer's per-path lock. ObjectMutation (PUT, DELETE, PATCH_EXTENDED, RECOMPUTE_LATEST with a mechanical Recompute: scan a directory, pick the first or last child by name, copy chosen fields into a pointer entry) is what ObjectTransaction applies in order under one lock, forwarded one hop to the ring owner named by route_key, deduplicated by request_id. FilerError gives stable machine codes; FilerConf.PathConf is the per-prefix storage rule (collection, replication, TTL, disk type, fsync, read-only, placement, name length, WORM).",
+  "why": "Consequence: every S3 write the gateway commits, every listing, every lock and every metadata subscription crosses this contract, so a field's meaning here is the meaning on both sides. Design: the filer is kept free of S3 semantics; conditions, the version recompute and the object-lock clauses are generic comparisons the caller composes, so the gateway can express If-Match, legal hold, retention with governance bypass and 'latest version' pointers without the filer knowing what they mean. Log positions (log_ts_ns with the stamping filer's signature) let a reader know which metadata events a response already reflects.",
+  "when": "Compiled into every component that talks to a filer; the gateway's calls go through filer_pb helpers and S3ApiServer.withFilerClient.",
+  "ux": "Invisible to S3 clients; it decides which conditional writes, locks and listings the gateway can offer.",
+  "if_broken": "A renumbered or retyped field silently corrupts entries between mixed-version components; a dropped condition kind turns a conditional write into an unconditional one.",
+  "gotchas": [
+   "UpdateEntryResponse has no error or error_code field, unlike CreateEntryResponse: an update failure, including PRECONDITION_FAILED, arrives only as a gRPC status, and filer_pb.UpdateEntryWithResponse passes the response through without inspecting it.",
+   "FilerError values are documented as stable: never reorder or reuse numbers. LookupDirectoryEntries was declared last on purpose to keep generated message indices stable.",
+   "KeepConnectedRequest/Response and LocateBrokerRequest/Response are still declared but no RPC of the service uses them.",
+   "IF_EXTENDED_TIME_ELAPSED compares against the filer's clock, not the gateway's; retention enforcement therefore depends on the filer host's time.",
+   "ObjectMutation entries are meant to be metadata-scoped: data-bearing chunks are uploaded before the transaction, so a failed transaction leaves their cleanup to the caller."
+  ]
+ },
+ "weed/pb/filer_pb/entry_scrub.go": {
+  "character": "A one-function log-safety helper for Entry",
+  "what": "ScrubCipherKeys returns a deep copy of an entry with every chunk's CipherKey cleared (nil for a nil entry).",
+  "why": "Consequence: entries are logged and serialized to JSON in error paths, and a chunk's cipher key is enough to decrypt its needle. Design: a clone, so the live entry keeps its keys.",
+  "when": "Before logging or marshaling an entry for humans: s3api bucket_metadata.go and the mount's manifest-resolution warning.",
+  "ux": "None directly; keeps keys out of logs.",
+  "if_broken": "Per-chunk encryption keys appear in logs or debug JSON.",
+  "gotchas": [
+   "Only CipherKey is scrubbed; per-chunk SseMetadata (which for SSE-S3 holds a wrapped key and IV) is left as is."
+  ]
+ },
+ "weed/pb/filer_pb/listing_options.go": {
+  "character": "A context flag that asks listings for attributes only",
+  "what": "WithChunksOmitted marks a context so a listing over gRPC sets ListEntriesRequest.omit_chunks and a listing from a local store skips building chunk lists; ChunksOmitted reads the mark. DoSeaweedListWithSnapshot copies it into every request.",
+  "why": "Consequence: chunk lists are the largest part of a listing response, and a FUSE readdir only needs names, modes and sizes. Design: a context value rather than a new parameter, so the many list helpers need no new signatures.",
+  "when": "weed mount's readdir paths.",
+  "ux": "Faster directory listings in mounts.",
+  "if_broken": "Either listings stay heavy, or a caller that writes entries back gets entries without chunks and drops file data.",
+  "gotchas": [
+   "Only a caller that reads attributes and nothing else may set it: an entry from such a listing that is cached, written back or deleted with data loses its chunks (author comment)."
+  ]
+ },
+ "weed/pb/filer_pb/filer_pb_helper.go": {
+  "character": "Methods on the generated Entry/FileChunk types plus thin RPC wrappers that turn filer responses into Go errors and classify metadata events",
+  "what": "Entry helpers: IsInRemoteOnly (no chunks but a remote size), IsDirectoryKeyObject (a directory that also carries an object: mime, chunks, content, remote data or the prefix-object mark), IsPrefixObject / MarkPrefixObject (a file turned into the directory that stores it so keys can nest under it, marked with SeaweedFSPrefixObject and given dir mode bits), GetExpiryTime / IsExpired (S3-lifecycle entries marked SeaweedFSExpiresS3 expire from mtime, ordinary TTL entries from crtime), IsOlderDir. FileId conversion between the string and structured forms; BeforeEntrySerialization / AfterEntryDeserialization move chunk ids into the compact Fid field for storage and back. CreateEntry(WithResponse) maps a response's FilerError code to a sentinel (ErrEntryNameTooLong, ErrParentIsFile, ErrExistingIsDirectory/File, ErrEntryAlreadyExists, ErrReadOnly, ErrPreconditionFailed) so callers use errors.Is; LookupEntry turns codes.NotFound, or the not-found text on codes.Unknown, into ErrNotFound; AssignVolumeResponseError wraps a coded failure. SnapshotExtended builds an expected_extended precondition that also asserts listed keys are absent. IsCreate/IsUpdate/IsDelete/IsRename classify events (a rename is an old+new pair whose directory or name changed), the MetadataEvent* functions give source and target paths, and MetadataEventMatchesSubscription decides whether an event's source or target path falls under a subscription's prefix, prefixes or exact directories. FilerConf_PathConf.Key makes path rules usable in a ptrie.",
+  "why": "Consequence: the gateway branches on filer errors (an O_EXCL collision, a failed precondition, a read-only bucket over quota) and on a miss versus a transport failure; string matching on error text was fragile across the gRPC boundary. Design: the filer sends a stable code and the client rebuilds the sentinel. Prefix objects let one key be both an object and the parent of nested keys, which a filesystem otherwise forbids.",
+  "when": "Everywhere a component calls the filer; the event classifiers in every metadata subscriber (s3api caches, mounts, replication, the empty-folder cleaner).",
+  "ux": "S3 clients see correct 404s, 409s and 412s instead of 500s; nested keys under an existing object work.",
+  "if_broken": "Misses are treated as failures (or failures as misses, which would let a write proceed over an entry it could not read), and subscribers apply renames as creates.",
+  "gotchas": [
+   "LookupEntry treats a not-found message only on codes.Unknown (or a non-status error) as a miss; the same text on another code is a failed read on purpose.",
+   "GetExpiryTime dereferences entry.Attributes without a nil check; IsExpired guards it, direct callers must.",
+   "UpdateEntryWithResponse returns the response unexamined: UpdateEntryResponse carries no error code, so a failed condition shows up only as the gRPC error.",
+   "metadataEventMatchesPath matches every path when pathPrefix is empty (strings.HasPrefix with \"\"), whatever pathPrefixes or directories say; a subscription that means 'only these directories' must pass a non-empty prefix it never matches.",
+   "IsOlderDir counts a directory as old once its crtime is more than 3 seconds in the past."
+  ]
+ },
+ "weed/pb/filer_pb/filer_client.go": {
+  "character": "The FilerClient interface and the generic entry operations built on it: get, paginated list with a snapshot boundary, exists, mkdir, mkfile, remove",
+  "what": "FilerClient is anything with WithFilerClient(streaming, fn), AdjustedUrl and GetDataCenter. GetEntry returns an entry with the log position and signature the filer stamped. ReadDirAllEntriesWithSnapshot pages a whole directory 10,000 entries at a time; the first page's snapshot_ts_ns (in a response, or in the stream trailer for an empty listing) is sent back on every later page so the whole walk reports one listing time, and a full page that does not advance its cursor is an error. DoSeaweedListWithSnapshot asks for limit+1 entries to know which one is last, holds each entry back one step so fn learns isLast, and carries OmitChunks from the context. Exists compares the entry's directory flag. Mkdir / MkdirExclusive (O_EXCL; a taken name is returned after the failover callback, so it is not counted against the filer) and MkFile build entries owned by the process uid/gid. Remove / DoRemoveRequest delete and treat a not-found answer as success.",
+  "why": "Consequence: a cache built from a listing (a mount's directory cache) must replay the metadata events that happened after the listing and only those, so it needs one listing time for the whole walk. Design: the filer only stamps and echoes that time (filer_grpc_server.go ListEntries passes nothing to the store), so later pages still read live data; the snapshot travels in a trailer for empty pages because older consumers would read a snapshot-only response as an entry. MkdirExclusive returns the collision outside the callback because failover helpers retry a callback error on the next filer.",
+  "when": "s3api (bucket and directory creation, listings, removes), shell commands, mounts, replication sinks and admin tools.",
+  "ux": "Consistent directory listings and idempotent deletes.",
+  "if_broken": "Listings loop forever or drop entries; deletes fail on already-missing entries; exclusive creates are retried across filers until they appear to succeed.",
+  "gotchas": [
+   "DoRemoveRequest treats any error whose text contains the not-found message as success and then returns a nil response; RemoveWithResponse callers must nil-check it.",
+   "MkFile and Mkdir stamp OS_UID/OS_GID of the calling process, not of an S3 identity.",
+   "A first listing that returns no entries and comes from a filer without the trailer reports snapshot 0, which callers such as CompleteDirectoryBuild read as 'no server snapshot' (author comment).",
+   "snapshot_ts_ns is not a store snapshot: the filer stamps time.Now() on the first page and echoes the caller's value afterwards, so entries created, renamed or deleted between pages can still be skipped or repeated."
+  ]
+ },
+ "weed/pb/filer_pb/filer_client_bfs.go": {
+  "character": "Client-side breadth-first tree walk and the consumer of the filer's server-side BFS metadata stream",
+  "what": "TraverseBfs walks a tree with 5 workers sharing a queue: each worker lists one directory fully (ReadDirAllEntries), calls fn for every entry and enqueues subdirectories. A visited set drops a directory delivered twice, the first error cancels the walk and is returned, and idle workers poll the queue every 50 ms. StreamBfs reads a TraverseBfsMetadata stream and calls fn with each entry's directory, entry and per-path commit timestamp.",
+  "why": "Consequence: a directory listed twice (a page-boundary race with a concurrent rename, or a store whose order misbehaves) would make the walk re-list the same subtree, possibly without end. Design: a pending counter, not channel closure, decides when the walk is done, because workers both consume and produce work.",
+  "when": "TraverseBfs: shell and maintenance walks. StreamBfs: filer.go's metadata catch-up from a peer (loading a snapshot of another filer's tree).",
+  "ux": "None directly.",
+  "if_broken": "Tree walks hang, repeat subtrees or stop early without an error.",
+  "gotchas": [
+   "StreamBfs's olderThanTsNs is only logged; it is not sent in the request, so any time filtering is up to fn.",
+   "fn runs concurrently from five goroutines and must be safe for that."
+  ]
+ },
+ "weed/pb/filer_pb/filer_client_dfs.go": {
+  "character": "A resumable depth-first tree walk that reports how far it got",
+  "what": "TraverseDfs walks under a path in listing order, 1024 entries per page. Files before the next directory are passed to fn concurrently (up to 5 at a time, visitDfsRun), and progress receives each file only once every entry before it is done; a directory is reported after its whole subtree. Given resumeAfter (a path previously reported), the walk starts inclusively at each component of that path, skipping what was done and descending into the directory it stopped in. A full page that does not advance is an error.",
+  "why": "Consequence: a long metadata backup interrupted midway would otherwise start over. Design: depth-first in listing order makes one path a complete checkpoint: everything before it, and the subtree of a directory it names, is done.",
+  "when": "weed filer.meta.backup (command/filer_meta_backup.go), the only caller.",
+  "ux": "A restarted filer.meta.backup resumes where it stopped.",
+  "if_broken": "Backups restart from the beginning, skip entries after a resume, or hang on a store whose ordering does not advance.",
+  "gotchas": [
+   "progress is called unconditionally; a nil progress callback panics.",
+   "fn may run concurrently for the files of one directory."
+  ]
+ },
+ "weed/pb/filer_pb/filer_pb_event_scan.go": {
+  "character": "A hand-written protobuf scanner that reads only the fields the subscription matcher needs from a logged metadata event",
+  "what": "ScanMetadataEventSkeleton walks a marshaled SubscribeMetadataResponse with protowire and keeps directory, ts_ns and, from the event notification, the old and new entry names and new_parent_path, skipping every other field (chunk lists above all). It returns ok=false on any malformed input or on a repeated message field (which protobuf would merge), telling the caller to fall back to a full unmarshal. Entry names follow proto's last-occurrence-wins rule.",
+  "why": "Consequence: a metadata subscriber that watches one prefix makes the filer test every logged event against it; unmarshaling whole entries with their chunk lists just to read two names dominated that cost. Design: decode only the matcher's inputs, and fully decode only events that match.",
+  "when": "filer_grpc_server_sub_meta.go, when replaying persisted log entries for a subscription.",
+  "ux": "Lower filer CPU for many narrow subscribers (mounts, S3 gateways).",
+  "if_broken": "Subscribers miss events (a field misread) or the filer burns CPU decoding every event in full.",
+  "gotchas": [
+   "The skeleton's entries carry only names; nothing but the matcher may consume it, and a matching event must still be fully unmarshaled before it is sent."
+  ]
+ },
+ "weed/server/filer_grpc_server.go": {
+  "character": "The filer's core gRPC handlers: entry lookup and listing, create/update/delete/append, ObjectTransaction and its batch, volume assignment and collections",
+  "what": "LookupDirectoryEntry reads through fencedFindEntry, which stamps a log position under the path's shared lock so the answer reflects every event at or below it. ListEntries streams StreamListDirectoryEntries pages up to the limit (default DirListingLimit), drops chunks for omit_chunks after stamping FileSize, sends a listing time (the caller's snapshot_ts_ns or now) on the first entry and in the trailer. CreateEntry, UpdateEntry and DeleteEntry first forward to the key's ring write owner when the request is exclusive or conditional (O_EXCL, WriteCondition, expected_extended), then take the per-path exclusive lock, stamp the log fence, evaluate preconditions on the current entry, diff chunks against the old entry (cleanupChunks: MinusChunks, CompactFileChunks to drop covered chunks, MaybeManifestize), apply the storage rule (read-only prefixes reject, rule TTL fills a missing one) and commit, deleting garbage chunks only after a successful write and returning the metadata event. ObjectTransaction forwards to the owner of route_key (one hop, is_moved), locks lock_key, replays a recorded outcome for a repeated request_id, checks the request condition (against condition_key, with the condition_alt_key fallback that resolves the latest version through the .versions pointer and treats a bare implicit directory as absent), then applies each mutation in order with its own optional condition: PUT, DELETE (optionally removing an emptied parent), PATCH_EXTENDED (set/remove keys, replace content, touch mtime) and RECOMPUTE_LATEST (applyRecomputeLatest: scan the directory, pick the first or last child by name, copy mapped keys, size, mtime and name into the pointer, demote the previous child). ObjectTransactionBatch runs independent transactions in sequence. AppendToEntry appends chunks at the current end under a cluster short-lived lock plus the path lock. AssignVolume resolves the path's storage rule and asks the master, returning the replica holders and the rule's fsync. Also LookupVolume, CollectionList, DeleteCollection.",
+  "why": "Consequence: the S3 gateway's conditional PUT, versioned writes, delete markers, multipart completion and object-lock guards all commit through these handlers, so their atomicity is the gateway's atomicity. Design: the store's insert is an upsert, so a check-then-write is only atomic under one lock; routing every exclusive or conditional write of a key to one ring owner makes that owner's per-path lock the cluster-wide serialization point without a distributed lock round trip. Outcomes of a transaction are replayed rather than re-run on a retried request_id, because a re-run could write a stale mutation over whatever superseded it. Read-only and other verdicts are returned in the response body with a code, since clients treat gRPC errors as transport failures and fail over.",
+  "when": "Every gateway write and lookup via S3ApiServer.withFilerClient; routed writes from s3api_object_routed_write.go and s3api_object_versioned_finalize.go; mounts and shell for the plain calls.",
+  "ux": "S3 clients get atomic If-Match / If-None-Match, consistent latest-version answers and WORM guards; mounts get ordered metadata.",
+  "if_broken": "Conditional writes race and both succeed, versions or delete markers are lost, chunks still referenced by a live entry are deleted, or a retry applies a transaction twice.",
+  "gotchas": [
+   "ObjectTransaction serializes but does not roll back: mutations apply one by one, and a failure at mutation i leaves mutations 0..i-1 applied (failed_mutation tells the caller which).",
+   "The request_id replay record lives in this filer's memory for 2 minutes and at most 10,000 unexpired entries; a filer restart, or a full table (the new record is then dropped), turns a retry into a re-application.",
+   "RECOMPUTE_LATEST with descending order lists the whole scanned directory under the object's lock on every call, since the store has no reverse listing; a key with many versions pays that on each versioned write and delete.",
+   "Plain (unconditional) creates and updates are not forwarded and run under the local filer's lock only.",
+   "UpdateEntry reports a failed condition as codes.FailedPrecondition and a missing entry as codes.NotFound, never in the response body; CreateEntry reports PRECONDITION_FAILED in the body.",
+   "DeleteEntry with expected_extended fails as FailedPrecondition when the entry is missing, even if every expected value asserts absence.",
+   "LookupDirectoryEntry returns the raw ErrNotFound, which crosses gRPC as codes.Unknown with its text; filer_pb.LookupEntry relies on that text.",
+   "AppendToEntry commits with context.Background(), so the caller's deadline and metadata event sink do not reach the store write.",
+   "AssignVolume returns a master assignment failure as text only, without an error_code; only the read-only verdict is coded."
+  ]
+ },
+ "weed/server/filer_grpc_server_condition.go": {
+  "character": "Evaluation of WriteCondition clauses against the current entry, with an ETag that mirrors the S3 gateway's",
+  "what": "writeConditionSatisfied ANDs the clauses. IF_NOT_EXISTS / IF_EXISTS test presence; IF_ETAG_MATCH holds when the entry exists and its ETag is in the set, IF_ETAG_NOT_MATCH when it is absent or in none (RFC 7232 strong comparison unless allow_weak, which ignores W/ on both sides); IF_UNMODIFIED_SINCE / IF_MODIFIED_SINCE compare mtime in whole seconds and hold for an absent entry; IF_EXTENDED_NOT_EQUAL holds unless the key equals the blocking value; IF_EXTENDED_TIME_ELAPSED holds unless the stored unix-second deadline is still in the future (only when the optional gate key equals the gate value, which expresses governance bypass), and an unparseable deadline blocks; IF_CHUNKS_EQUAL compares chunk fids as multisets; IF_ENTRY_EQUAL compares serialized entries with chunks matched by fid. An unknown kind fails closed. storedEntryETag uses the stored S3 ETag attribute, then the remote ETag while the entry still holds the remote bytes, then Md5, then the chunk ETag (empty for an empty object).",
+  "why": "Consequence: object-lock, conditional PUT/DELETE and the chunk-preserving read-modify-write all reduce to these comparisons; a guard that evaluated open would delete a locked object or resurrect deleted needles. Design: generic primitives keep S3 out of the filer; fail-closed defaults (unknown kind, malformed deadline) favour blocking a write over letting it through.",
+  "when": "Under the path lock in CreateEntry, UpdateEntry, ObjectTransaction and its per-mutation guards.",
+  "ux": "412 PreconditionFailed and object-lock refusals that match AWS.",
+  "if_broken": "Conditional writes pass that should fail (overwrites, deleted locked versions) or fail that should pass.",
+  "gotchas": [
+   "storedEntryETag must stay in step with the gateway's ETag precedence; a divergence makes If-Match fail on objects whose ETag the client just read.",
+   "Retention deadlines are compared with the filer's clock.",
+   "IF_ENTRY_EQUAL with no expected entry holds only when the entry is absent."
+  ]
+ },
+ "weed/server/filer_grpc_server_route.go": {
+  "character": "Route-by-key plumbing for the filer side: who owns a key's writes, forwarding to it, and verifying a forwarded hop",
+  "what": "writeOwner asks the DLM lock ring for a key's write owner ('' when this filer owns it or there is no ring; a previous owner keeps the key through the cooling-off window of a ring change). forwardToWriteOwner sends the request to the owner and never re-sends it elsewhere on failure. entryRouteKey prefixes the path with the gateway's ObjectWriteRouteKeyPrefix so CreateEntry and an ObjectTransaction of the same object reach the same owner. checkMovedMarker accepts an is_moved request on a non-owner only when it arrived from a ring member's IP (movedFromPeer, with member hostnames resolved in parallel and cached for 5 minutes per membership), else answers PermissionDenied.",
+  "why": "Consequence: a forwarded request lost in transit and one the owner never saw look the same (Unavailable), so a retry on another filer could apply a committed write twice; an unreachable owner may also be partitioned rather than down. Design: fail the request and let the ring hand the key on after the cooling-off window, which bounds the outage. The is_moved marker is caller-controlled, so it is trusted only from ring members, to stop a client from forcing a conditional write under a non-owner's lock.",
+  "when": "Every forwarded CreateEntry, UpdateEntry, DeleteEntry and ObjectTransaction.",
+  "ux": "During an owner outage, writes to its keys fail until the ring moves on.",
+  "if_broken": "Two filers both apply a key's conditional writes (lost atomicity), or forwards loop between filers that disagree on the ring.",
+  "gotchas": [
+   "movedFromPeer checks the peer IP only: any process on a ring member's host (for example an S3 gateway co-located with a filer) can send an accepted is_moved.",
+   "A failed DNS lookup of a member is not cached, so the next forwarded request resolves again."
+  ]
+ },
+ "weed/server/filer_grpc_server_admin.go": {
+  "character": "Cluster-facing informational RPCs of the filer: statistics, ping and its configuration",
+  "what": "Statistics relays the master's capacity numbers (total, used, file count and their single-copy logical forms), asking with the filer's default replication when the caller names none, so free space is sized by the copies this filer's writes will make. Ping answers a self-probe for an empty target and otherwise only pings a peer the filer already knows: a filer the meta aggregator follows, a volume server the master client reports, or a configured or discovered master; it returns the start, remote and stop times. GetFilerConfiguration returns masters, default collection and replication, max chunk MB, the buckets directory, cipher flag, signature, metrics push settings, version and filer group.",
+  "why": "Consequence: an unrestricted Ping would make the filer an arbitrary outbound dialer for anyone who can reach its gRPC port. Design: target allow-list from state the filer already holds, all O(1) lookups. GetFilerConfiguration is how clients (the S3 gateway, mounts, shell) learn the buckets path, cipher mode and signature instead of being configured twice.",
+  "when": "S3 gateway startup (GetFilerConfiguration for DirBuckets, cipher and filer group), weed shell cluster.check and volume tools (Ping, Statistics), mounts.",
+  "ux": "Correct free-space numbers in df-style views; health checks that reach only cluster members.",
+  "if_broken": "The gateway uses the wrong buckets path or cipher setting, capacity is misreported by a factor of the replica count, or Ping becomes an SSRF primitive.",
+  "gotchas": [
+   "Ping to a master dials with context.Background(), so the caller's deadline bounds only the Ping RPC, not the connection setup."
+  ]
+ },
+ "weed/server/filer_grpc_server_kv.go": {
+  "character": "The filer store's key-value side door over gRPC",
+  "what": "KvGet reads a raw key from the filer store (a missing key is an empty value, not an error); KvPut writes it, and an empty value deletes the key. Store errors come back in the response's error string.",
+  "why": "Design: small cluster state that is not a file (sync offsets, checkpoints, tool state) lives in the same store as the metadata, so it is as durable and replicated as the store itself.",
+  "when": "filer.sync / replication offsets, filer.remote.sync and other tools that persist a cursor.",
+  "ux": "None directly.",
+  "if_broken": "Sync tools lose their checkpoint and replay or skip changes.",
+  "gotchas": [
+   "There is no way to store an empty value: KvPut with an empty value is a delete.",
+   "The RPCs carry no per-key authorization; access is whatever the filer's gRPC transport security allows."
+  ]
+ },
+ "weed/server/filer_grpc_server_mount_peer.go": {
+  "character": "gRPC face of the mount peer registry used for peer-to-peer chunk sharing",
+  "what": "MountRegister records or refreshes a mount's advertised peer address with its data center, rack and TTL; MountList returns the live entries with their last-seen times. runMountPeerRegistrySweeper evicts expired entries every 60 s (List also evicts lazily).",
+  "why": "Consequence: mounts that read the same data can fetch chunks from each other instead of from volume servers, which needs a shared view of who is alive. Design: a soft-state registry with TTL heartbeats; each mount builds its rendezvous-hash view from MountList.",
+  "when": "weed mount with peer chunk sharing enabled: periodic register and list.",
+  "ux": "Lower volume-server load and faster repeated reads across mounts.",
+  "if_broken": "Mounts stop sharing chunks (more volume reads) or keep sending requests to departed peers.",
+  "gotchas": [
+   "The advertised peer_addr and the TTL are taken from the request as given; the filer does not check them against the caller's address."
+  ]
+ },
+ "weed/server/filer_grpc_server_subscribers.go": {
+  "character": "Registry record and listing RPC for this filer's connected metadata subscribers",
+  "what": "metadataSubscriber holds one connected subscriber (name '<type>@<address>', type, address, path prefix, client id and epoch, connect time), created on subscribe and removed on disconnect under knownListenersLock. ListMetadataSubscribers returns them, optionally filtered by client type, sorted by name then prefix, each tagged with this filer's address.",
+  "why": "Design: an admin view of who is following metadata (mounts, S3 gateways, filer.sync, peer filers) without scraping logs. Each filer knows only its own subscribers, so a cluster view queries every filer.",
+  "when": "The admin UI and shell tools listing subscribers.",
+  "ux": "Operators can see which mounts and gateways are connected.",
+  "if_broken": "The admin page shows stale or missing subscribers.",
+  "gotchas": []
+ },
+ "weed/server/filer_grpc_server_batch_lookup.go": {
+  "character": "The batched exact-path lookup RPC: up to 4096 entries in one call, with their volume locations and read tokens",
+  "what": "LookupDirectoryEntries validates the batch (1 to 4096 requests, absolute directories, a plain name without '/', '.', '..' or NUL), looks the paths up with up to 32 workers through fencedFindEntry (each result keeps its own log fence), keeping request order. A miss is found=false, a lookup error is an error on that item. It then collects the volume ids of every found entry's chunks and resolves them in one deduplicated master lookup: from the cache, or authoritatively when the caller set unavailable_volume_is_miss. A volume with no locations marks every entry that uses it with an error, except that for a cache caller an authoritative 'master does not serve it' turns the entry into a miss. When volume read guarding is on, each chunk fid gets a short-lived read JWT in read_auth.",
+  "why": "Consequence: clients that resolve many small objects (mount caches, gateways) paid one RPC per path and then one volume lookup per entry. Design: one bounded RPC and one location map; per-item fences so a cache can order each result against the metadata events it has seen. DeletedVids is a best-effort invalidation hint, so a cache that treats an unknown volume as a miss must confirm with the master rather than its own cache. Exact-fid tokens let a data-plane client read just these needles instead of holding a service credential for all of them.",
+  "when": "Mounts and other cache clients resolving many paths at once.",
+  "ux": "Faster cold reads of many small files.",
+  "if_broken": "Caches serve entries whose volumes are gone, or misses that are really transient master failures.",
+  "gotchas": [
+   "Locations and read tokens cover the entry's own chunks; for a manifest chunk that is the manifest needle's volume, not the volumes of the data chunks the manifest lists."
+  ]
+ },
+ "weed/server/filer_grpc_server_dlm.go": {
+  "character": "The distributed lock manager's gRPC face: lock, unlock and owner lookup with one-hop forwarding, plus primary-to-backup replication and hand-off on ring changes",
+  "what": "DistributedLock asks the local DLM to take or renew a named lock until now + seconds_to_lock; when the ring says another filer is the lock's host it forwards once (is_moved, checked with checkMovedMarker) and returns that filer's token, owner, generation and error, plus lock_host_moved_to. DistributedUnlock and FindLockOwner forward the same way; an unknown lock is NotFound. ReplicateLock applies a primary's insert or unlock on this backup, ordered by generation and seq. TransferLocks inserts locks handed over by another filer. OnDlmChangeSnapshot, run on every ring change, promotes backup locks this filer now owns and re-replicates them, transfers primary locks to their new primary before demoting them (keeping them if the transfer fails), and hands off locks it no longer holds any role for. SetupDlmReplication installs the replication callback (3 s timeout, failures only logged).",
+  "why": "Consequence: the S3 gateway's object write lock, AppendToEntry and other cluster-wide mutual exclusion depend on a lock surviving the loss of the filer holding it. Design: each lock has a primary and a backup on the consistent-hash ring, replication is asynchronous with sequence numbers so stale mutations are rejected, and a primary demotes only after a successful hand-off.",
+  "when": "cluster.LockClient users: the S3 gateway's distributed object write lock (the fallback path when route-by-key is unavailable), AppendToEntry, shell and admin exclusive operations.",
+  "ux": "Concurrent writers to one key serialize; a filer restart does not drop held locks.",
+  "if_broken": "Two holders of the same lock (lost writes), or locks that never release and block writers until expiry.",
+  "gotchas": [
+   "TransferLocks and ReplicateLock take no is_moved or peer check: any client that reaches the filer's gRPC port can insert a lock with any token and owner.",
+   "seconds_to_lock comes from the request without an upper bound.",
+   "Replication to the backup is fire-and-forget; a lock acquired just before its primary dies may not exist on the backup that is promoted."
+  ]
+ },
+ "weed/server/filer_grpc_server_posix_lock.go": {
+  "character": "Advisory POSIX and flock locks for weed mount, held in the owner filer's memory with leases, warm-up and a cooling-window probe",
+  "what": "PosixLock resolves the inode key's primary on the DLM ring and forwards to it once; the owner applies the operation to its in-memory table: TRY_LOCK (grant or report the conflict), UNLOCK, GET_LK, RELEASE_POSIX_OWNER (on flush), RELEASE_FLOCK_OWNER (on release) and KEEP_ALIVE (renew the mount session's lease, or re-assert its full set of held locks so a new owner can rebuild). A sweeper reaps sessions without a keepalive for 15 s. For 10 s after start, and while a ring change's previous owner may still hold locks (it is asked with a cooling_probe GET_LK under a 2 s deadline), a grant that cannot be confirmed safe is deferred: the client sees EAGAIN or retries, never a double grant.",
+  "why": "Consequence: applications on different mounts (databases, build tools) rely on fcntl/flock to exclude each other; a double grant corrupts their files. Design: one authority per inode (the ring owner) with soft state rebuilt from client re-assertions after restart or ownership change, preferring a deferred grant over an unsafe one. Blocking waits (SetLkw) are polled by the mount, so the filer never parks an RPC.",
+  "when": "weed mount with -posixLock: every fcntl/flock call and the session keepalive.",
+  "ux": "Cross-mount advisory locking that behaves like a local filesystem's, with brief EAGAINs around filer restarts.",
+  "if_broken": "Two mounts both hold a write lock on the same range, or locks of a dead mount are never released.",
+  "gotchas": [
+   "Lock state is memory only; correctness after a restart depends on every mount re-asserting its locks within the warm-up window.",
+   "The owner is the ring primary (GetPrimary), not writeOwner's choice that keeps the previous owner through the cooling window; the cooling probe covers that gap instead."
+  ]
+ },
+ "weed/server/filer_grpc_server_traverse_meta.go": {
+  "character": "The server side of TraverseBfsMetadata: stream every entry under a directory, as a breadth-first walk or from one store snapshot",
+  "what": "TraverseBfsMetadata finds the start directory, skips paths under excluded prefixes (matched on a path-component boundary through a ptrie), and by default sends the start entry and then walks breadth first, listing 1024 entries per page (iterateDirectory) and queuing only directory paths; each response carries the path's commit timestamp (EntryCommitTsNs, falling back to mtime). When the request metadata asks for snapshot mode and the store implements filer.EntryScanner, it streams the store's snapshot scan instead (any order, entry_ts_ns 0) and says so in the response header; a store that declines before yielding anything falls back to the walk.",
+  "why": "Consequence: a peer filer bootstrapping or an fs.meta.save export reads a whole tree, and holding queued entries with their chunk lists exhausted the filer's memory on large trees. Design: queue paths, stream entries. Snapshot mode gives a consistent image where the store can provide one; the walk gives the per-path timestamps consumers that replay events need.",
+  "when": "filer.go peer bootstrap (StreamBfs from the meta aggregator, excluding the system log directory), weed shell fs.meta.save, the admin file browser's metadata export.",
+  "ux": "Metadata exports and new-filer bootstrap complete on large namespaces.",
+  "if_broken": "Bootstraps run the filer out of memory, or exports leak excluded subtrees (the admin export excludes /etc for read-only roles).",
+  "gotchas": [
+   "An excluded prefix with a trailing slash excludes nothing below it: the component-boundary check needs the character after the prefix to be '/'. Callers pass prefixes without one.",
+   "The walk is not a snapshot: entries changed during it may appear in their old or new form."
+  ]
+ },
+ "weed/server/filer_grpc_server_stream_mutate.go": {
+  "character": "The StreamMutateEntry bidirectional stream: one ordered pipe for a mount's creates, updates, deletes and renames",
+  "what": "StreamMutateEntry receives requests in a loop and runs each in its own goroutine (at most 1024 outstanding per stream) after admission by the per-stream mutateScheduler (64 concurrent, path-ordered). Each request is handled by the ordinary CreateEntry, UpdateEntry, DeleteEntry or StreamRenameEntry and answered with its request_id; renames go through renameStreamProxy, which forwards each rename event as a non-final message and then a final is_last message. Sends are serialized by syncStream's mutex. A failed operation carries its error text and an errno; an unknown request type answers EINVAL so the client's waiter is released. The first failed Send ends the stream after in-flight work drains.",
+  "why": "Consequence: a FUSE mount issues many small metadata mutations; one RPC each cost a round trip and gave no ordering between them. Design: one stream per mount keeps arrival order per path while letting unrelated paths run in parallel, and the receive loop blocks only on the outstanding cap, so a conflicted path cannot stall receipt of unrelated ones.",
+  "when": "weed mount's metadata write path.",
+  "ux": "Faster file creation and rename in mounts, with POSIX-ordered results.",
+  "if_broken": "Mount operations are applied out of order (a rename before the create it depends on) or hang waiting for a response that never comes.",
+  "gotchas": [
+   "Every create, update and delete failure is reported as EIO, whatever the cause (a missing entry, an existing name, a failed precondition); only renames map 'not found', 'not empty' and 'not directory' text to ENOENT, ENOTEMPTY and ENOTDIR.",
+   "The proxy's RecvMsg fails on purpose: a rename must never read from the shared stream."
+  ]
+ },
+ "weed/server/filer_grpc_server_stream_mutate_scheduler.go": {
+  "character": "Path-keyed admission control for StreamMutateEntry, with subtree barriers, ported from filer.sync's MetadataProcessor",
+  "what": "classifyMutation gives each request its path(s) and kind: a file event, a barrier directory event (directory create, every delete, every rename with both old and new paths) or a non-barrier directory attribute update; malformed requests become a barrier at '/'. Admit queues the waiter on each of its paths and admits it only when it heads every queue it joined, conflicts with nothing active (a barrier blocks its path and every descendant; a file conflicts with a file at the same path; a barrier waits for active descendants to drain) and the 64-slot limit allows. Done releases the slot and promotes newly admissible heads.",
+  "why": "Consequence: two requests for the same path on one stream must apply in arrival order, and a directory rename must not interleave with writes inside it. Design: per-path FIFO queues on top of the conflict rules, so even a condition broadcast cannot reorder same-path requests; attribute-only directory updates do not serialize their subtree.",
+  "when": "Every request on a StreamMutateEntry stream.",
+  "ux": "None directly; it is why mount operations on one stream appear in order.",
+  "if_broken": "Out-of-order mutations, or a stream that deadlocks when a waiter is never promoted.",
+  "gotchas": [
+   "Ordering is per stream only; two mounts writing the same path are serialized by the filer's path lock, not by this scheduler.",
+   "Every delete is a barrier because the request does not say whether it targets a directory, so a delete waits for all active work under its path."
+  ]
+ },
+ "weed/server/filer_grpc_server_rename.go": {
+  "character": "Rename of a file or a whole directory tree inside one store transaction, with deferred chunk and remote-object cleanup",
+  "what": "AtomicRenameEntry and StreamRenameEntry check CanRename, lock the old and new paths (in path order, descendants unlocked), open a store transaction, and call moveEntry. moveSelfEntry refuses a file over a directory and the reverse, deletes an existing target (events suppressed), inserts the new entry with the same attributes, chunks, extended attributes and hard-link data, then for a directory moves every child recursively 1024 at a time (moveFolderSubEntries) and deletes the old entry. Chunks of an overwritten target are deleted only after the commit; metadata events are queued and published after the commit. Remote-only entries are copied on the remote first, or, over a remote-only target, after the commit with the new entry reading the old key (ExtRemoteRenameSourceKey) until the copy lands; old remote objects are deleted after the commit only when no remote-only entry has taken their path. AtomicRenameEntry can refuse an existing target (fail_if_target_exists, under the path locks). StreamRenameEntry follows POSIX for directories: the target must be an empty directory; it streams each child's move event to the caller.",
+  "why": "Consequence: a rename that failed halfway and had already deleted the target's chunks would leave live metadata pointing at freed needles. Design: everything destructive (chunk deletes, remote deletes, events) waits for the commit, and a failed rename releases its commit stamps so the delivered and flushed watermarks are not pinned below it. Path locks are held through notification so a fenced lookup never sees renamed state under an earlier fence.",
+  "when": "S3 object rename extensions and s3tables moves (AtomicRenameEntry), mounts (StreamRenameEntry, also via StreamMutateEntry), shell mv.",
+  "ux": "mv in a mount and rename APIs behave atomically on transactional stores.",
+  "if_broken": "Renamed trees lose children, overwritten targets leave orphaned or prematurely freed chunks, or remote-mounted objects are deleted while still referenced.",
+  "gotchas": [
+   "On stores without transactions (BeginTransaction is a no-op: the LevelDB and most KV stores), a directory rename that fails midway leaves some children moved and some not.",
+   "A directory rename copies and deletes every descendant entry: its cost is proportional to the subtree size, and descendants are not locked while it runs.",
+   "StreamRenameEntry sends each move event to the caller before the commit, so a client can see events for a rename that is then rolled back.",
+   "AtomicRenameEntry has no empty-target-directory check; moving a directory over a non-empty one fails only because the target delete is not recursive."
+  ],
+  "issue": "bug",
+  "issue_note": "StreamRenameEntry leaks the store transaction when a directory is renamed onto a non-empty directory. It calls BeginTransaction, then for a directory source checks the target and, on 'is not empty', returns the error without RollbackTransaction (filer_grpc_server_rename.go, the ListDirectoryEntries check after FindEntry(targetDir)); the 'is not directory' branch just above does roll back. On the SQL stores BeginTransaction opens a *sql.Tx with BeginTx on a context the wrapper has detached from cancellation (filerstore_wrapper.go: context.WithoutCancel), so database/sql never rolls it back: each such rename holds one pooled connection until the filer restarts. A mount where users repeatedly 'mv dir existing-nonempty-dir' (or a tool retrying it) drains the pool, after which every store call waits for a connection. The emptiness check also lists with context.Background() rather than the transaction context, so on SQL stores it reads outside the transaction. Found by reading at 917cf534; not reproduced. The fix is a RollbackTransaction before that return."
+ },
+ "weed/server/filer_grpc_server_remote.go": {
+  "character": "CacheRemoteObjectToLocalCluster: pull a remote-mounted object into local volume needles and point its entry at them",
+  "what": "The handler rejects an entry larger than the caller's max_size before joining a singleflight per path, runs the download on a context detached from the caller (a caller that leaves gets ctx.Err() while the download continues), and retries with its own flight when a shared flight failed only on a co-caller's tighter size bound. doCacheRemoteObjectToLocalCluster returns the entry as is when it is not remote-only or already has chunks; otherwise it resolves the mount mapping and remote conf freshly from /etc/remote, picks a chunk size aiming at about 32 chunks (5 MiB floor, the filer's max MB cap, at most 1000 chunks), and for each chunk assigns a needle and asks the volume server to FetchAndWriteNeedle the byte range straight from the remote (8 chunks in parallel by default, capped at 1024; per-chunk multipart download concurrency passed through). On failure it deletes the needles already written, triggers remote-cache eviction on capacity errors, and, when the remote confirms the object is gone, prunes the entry with a conditional ObjectTransaction (IF_ENTRY_EQUAL, keep remote) unless it is a version file, hard link, inline-content entry or under an active object lock. On success it re-reads the entry under the path lock, discards the download if the entry changed meanwhile, else stores the chunks with last_local_sync_ts_ns and publishes an update event.",
+  "why": "Consequence: reading a remote-mounted object through the gateway needs its bytes local, and many readers of one cold object would otherwise each start a download. Design: the volume servers fetch directly from the remote, so data never passes through the filer; the detached context keeps a long download from being thrown away (and its needles deleted) every time an impatient caller times out. Not-found sentinels are re-coded as codes.NotFound because a raw error crosses gRPC as Unknown.",
+  "when": "The S3 gateway when GetObject or CopyObject hits a remote-only entry (s3api cacheRemoteObjectForCopy and the read path), the filer HTTP read path, weed shell remote.cache.",
+  "ux": "The first read of a remote-mounted object is slow or answered 503 + Retry-After by the gateway; later reads are local.",
+  "if_broken": "Cold objects never become readable, downloads leak needles on every retry, or a concurrent overwrite is clobbered by a stale cached copy.",
+  "gotchas": [
+   "The commit takes this filer's path lock, not the key's ring owner's, and writes with Store.UpdateEntry directly.",
+   "After the first failed chunk the other workers keep downloading; their needles are deleted only once all finish."
+  ]
+ },
+ "weed/server/filer_grpc_server_sub_meta.go": {
+  "character": "Metadata subscription streams: replay a filer's persisted metadata log and then follow its in-memory log, for one filer or aggregated across peers, with gap detection and watermark holds",
+  "what": "SubscribeMetadata serves the aggregated stream (this filer's events merged with every peer's, through the MetaAggregator's log buffer) once peers exist; a single filer, or one whose peers have not appeared yet, serves the local stream and ends it with errAggregationUpgrade when a peer arrives so the client reconnects for the aggregated one. SubscribeLocalMetadata serves only this filer's events. Each stream registers the client (client_id and epoch: a newer epoch replaces, a duplicate is refused), then loops: read the persisted log from disk from the cursor (or, for clients that read volume chunks themselves, send LogFileChunkRefs in batches of 64 and only the chunks not sent before), then follow the in-memory buffer until it is exhausted, and repeat. Events pass the path filter twice: a cheap skeleton scan before unmarshaling (filer_pb_event_scan.go) and the full match after; events from the subscriber's own signature are dropped, the filer's signature is appended, the system log directory is never sent, and after 1000 filtered events an empty event carries the timestamp forward. pipelinedSender decouples reading from gRPC sends (1024 buffered) and, for clients that support batching, packs up to 256 events per Send when they are more than 2 minutes behind. Idle heartbeats (5 s, or a 200 ms delivery claim on a filer with peers) and flush reports tell caught-up clients how far delivery and flushing have reached. When the in-memory buffer has evicted the range after the cursor and the disk does not hold it yet, the subscriber parks (gapStallReporter, metrics) and gives up after 15 minutes, skipping the gap with an error log. The aggregated stream also holds reads at the peers' low delivery and flush watermarks so an event from a slower peer cannot be skipped past, with a settled-horizon escape when a peer's watermark stalls.",
+  "why": "Consequence: S3 gateways (IAM, bucket config and circuit-breaker caches), mounts, filer.sync, backup and replication all learn about changes only through this stream; a skipped event is a stale cache or an unreplicated file, a duplicated one is usually harmless. Design: a subscriber resumes from a timestamp, so the server must prove a range is either on disk or still in memory before moving the cursor past it, and with several filers it must not deliver beyond the slowest peer's watermark. Giving up after a bounded stall trades completeness for liveness when a peer is dead, and the skip is counted and logged.",
+  "when": "Long-lived streams from every metadata follower; the S3 gateway subscribes to /etc/ at startup (s3api_server.go subscribeMetaEvents).",
+  "ux": "Changes made through one gateway or filer show up in the others' caches within moments; a stalled peer delays them by up to its watermark horizon.",
+  "if_broken": "Caches and replicas silently miss changes (stale IAM credentials, bucket policies, circuit-breaker limits), or followers spin re-reading the same log files.",
+  "gotchas": [
+   "A subscriber with client_id 0 is never registered, and hasClient answers false for it, so the loop ends such a stream at its first liveness check; followers must send a non-zero id.",
+   "After 15 minutes parked on an unprovable gap the stream skips the range: events a peer flushes into it later are never delivered to that subscriber.",
+   "The local stream negates client_id (req.ClientId = -req.ClientId) so a client's local and aggregated subscriptions do not collide in the registry.",
+   "Filtering is by path only; a subscriber that wants a narrow set of events still costs the filer a skeleton scan of every logged event."
+  ]
  }
 }
