@@ -2706,5 +2706,269 @@
   "gotchas": [
    "Files beyond about 250,000 chunks would need nested manifests, which MaybeManifestize does not build (author comment)."
   ]
+ },
+ "weed/filer/filer_notify.go": {
+  "character": "Emitting metadata events: commit stamps, the local metadata log buffer and its flush to log files",
+  "what": "NotifyUpdateEvent builds a SubscribeMetadataResponse for an old/new entry pair (skipping the system log directory and contexts marked WithSuppressedMetadataEvents), appends this filer's signature, stamps it with the commit timestamp the mutation reserved (or a fresh one), sends it to the external notification queue if one is configured, appends it to LocalMetaLogBuffer, records it in the request's event sink and runs onMetadataChangeEvent. metaLogInflight hands out strictly increasing stamps and tracks which are still in flight, so LocalDeliveredThroughTsNs / LocalFlushedThroughTsNs can claim a watermark no unannounced mutation lies below. logFlushFunc writes each minute's buffer to /topics/.system/log/<date>/<hh-mm>.<filerId>, in pieces of at most one log-buffer size (lowered when a volume reports a smaller file limit), retrying every 737 ms until it succeeds or shutdown cancels the flush context (then the rest is dropped and counted). ReadPersistedLogBuffer replays those files from a position through an ordered visitor with an 8192-entry readahead, at most 64 replays at once.",
+  "why": "Consequence: every subscriber (S3 gateways, mounts, filer.sync, peer filers) learns changes only through this log; an event stamped below a watermark already claimed would be skipped by readers that trust the watermark. Design: mutations reserve their stamp before the store write and release it if they abort, so the claimed watermark never passes a mutation that may still be announced.",
+  "when": "Every filer mutation; the log buffer flushes every minute.",
+  "ux": "Change propagation latency across gateways and mounts.",
+  "if_broken": "Subscribers miss or reorder events, caches go stale, peers diverge.",
+  "gotchas": [
+   "The external notification queue is called synchronously inside every mutation and its errors are only logged, so a slow queue slows writes and a failing one loses its events.",
+   "A metadata-log flush that keeps failing (for example no writable volume) retries forever until shutdown, while the buffer keeps holding the window."
+  ]
+ },
+ "weed/filer/filer_notify_append.go": {
+  "character": "Appending a metadata-log piece to its log file as a new chunk",
+  "what": "appendToFile gzips the piece when that saves more than 10%, assigns a volume in the metadata-log collection and replication (filer.options.metaLog.* overrides, then the filer default, then the path rule), uploads it, and commitAppendedChunk appends the chunk at the file's current end with CreateEntry, creating the file if needed. If CreateEntry reports failure but the chunk is in the stored entry, the append is counted as landed; otherwise the uploaded chunk is deleted.",
+  "why": "Design: log files are append-only lists of chunks, one per flush piece, so a reader can fetch just the new chunks (the client direct-read path ships chunk refs).",
+  "when": "logFlushFunc, once a minute per filer.",
+  "ux": "None directly.",
+  "if_broken": "Metadata history is lost (subscribers that fall behind cannot catch up) or orphaned log chunks accumulate.",
+  "gotchas": [
+   "The append is a find-then-create without a path lock; it relies on each filer writing its own file name (the filer id suffix)."
+  ]
+ },
+ "weed/filer/filer_notify_read.go": {
+  "character": "Reading persisted metadata-log files: ordered replay across filers and chunk refs for client-side reading",
+  "what": "collectPersistedLogBuffer lists the day directories from one flush interval before the start, and OrderedLogVisitor merges every filer's minute files in timestamp order with a heap of per-filer iterators (LogFileQueueIterator over LogFileIterator, which reads [4-byte size | LogEntry] records, through the persisted-log cache when possible). CollectLogFileRefs lists the same files as LogFileChunkRefs (chunks, minute, filer id) for clients that read volume servers directly; LastShippedLogEntryTsNsForFiler finds the last timestamp a set of shipped refs covers and whether the last file was complete. HasPersistedLogFiles checks for any day directory at or after a position.",
+  "why": "Consequence: a subscriber resuming from a timestamp must see events from every filer that wrote to this store, in order. Design: one file per filer per minute, merged on read; shipping refs lets a client fetch log chunks itself instead of the filer streaming every event.",
+  "when": "SubscribeMetadata disk passes (filer_grpc_server_sub_meta.go).",
+  "ux": "Subscribers can resume after downtime.",
+  "if_broken": "Resumed subscribers miss or duplicate events.",
+  "gotchas": [
+   "A log chunk that cannot be found (volume deleted or lost) makes the iterator skip the rest of that file with a warning, so its events are never replayed.",
+   "Day and minute directories are compared as strings; the layout must stay zero-padded."
+  ]
+ },
+ "weed/filer/filer_on_meta_event.go": {
+  "character": "The filer's own reactions to metadata events: config reloads, bucket hooks, empty-folder tracking and remote tombstones",
+  "what": "onMetadataChangeEvent runs for every local event and every event applied from a peer: reloads filer.conf when /etc/seaweedfs/filer.conf changes, reloads remote storage configuration and mappings on /etc/remote changes, calls the store's OnBucketCreation / OnBucketDeletion for directories created, deleted or renamed directly under the buckets path, feeds creates, deletes and renames to the empty-folder cleaner (and invalidates its cached bucket policy), and records remote deletions. LoadFilerConf and LoadRemoteStorageConfAndMapping load them at startup.",
+  "why": "Design: configuration lives in the filer namespace, so watching the event stream makes a change made on any filer take effect on all of them without a restart.",
+  "when": "Inline in NotifyUpdateEvent and in the meta aggregator's peer event processing.",
+  "ux": "fs.configure and remote.mount take effect immediately cluster-wide.",
+  "if_broken": "Storage rules or remote mounts go stale on some filers; per-bucket SQL tables are not created or dropped.",
+  "gotchas": [
+   "It runs synchronously in the mutation path; a filer.conf stored as chunks is fetched from volume servers inside the write that changed it.",
+   "Deleting filer.conf does not reset the rules: only events with a new entry trigger a reload, so the old rules stay until restart.",
+   "f.FilerConf is replaced without synchronization while writes read it."
+  ]
+ },
+ "weed/filer/meta_aggregator.go": {
+  "character": "MetaAggregator: following every peer filer's metadata log, merging it into one aggregated buffer and replicating peers' changes into this filer's store",
+  "what": "OnPeerUpdate starts or stops a subscription loop per filer (itself included), reconnecting every 1.7 s after an error. doSubscribeToOneFiler reads the peer's store signature; a peer on a different store is replicated: its offset is read from KV (filer.meta.offset by signature) or, on first contact, the peer's whole tree is copied (traversePeerMetadata, excluding the system log) and the offset saved one minute before the copy began. It then calls SubscribeLocalMetadata (batching, idle heartbeats, log chunk refs read client-side), appends each event to MetaLogBuffer, replays it into the local store when the peer has a different store (replicateMetadataChange retries transient errors), runs onMetadataChangeEvent, and advances the peer's delivery and flush watermarks; the offset is persisted at most once a minute and on exit, clamped below the first event that failed to replay. Low watermarks across peers, change channels and RemotePeerArrivedChan let aggregated subscribers hold back until every peer has delivered or flushed a range.",
+  "why": "Consequence: with several filers, each sees only its own mutations; subscribers and (for separate stores) the stores themselves need everyone's. Design: peers sharing one store only aggregate events, peers with their own stores also replay them; watermarks make the merged stream safe to resume.",
+  "when": "Filers in a cluster with more than one filer (AggregateFromPeers at startup).",
+  "ux": "A write through one filer is visible through all of them.",
+  "if_broken": "Filers with separate stores diverge, or aggregated subscribers miss peer events.",
+  "gotchas": [
+   "A replay that fails with a non-transient error is skipped for the rest of the session: only the persisted offset is held below it, so it is retried after a restart, not before.",
+   "Last-writer-wins between filers compares commit timestamps from different hosts' clocks, so clock skew decides conflicting writes.",
+   "Shutdown waits for every peer loop without a deadline, logging every 5 s."
+  ]
+ },
+ "weed/filer/meta_replay.go": {
+  "character": "Applying a peer filer's metadata event to the local store, newest commit wins",
+  "what": "Replay locks the event's old and new paths exclusively and their ancestors shared, then: for an in-place update, skips it if the local commit is newer, else updates directories in place and replaces files; for a delete or rename source, skips if newer locally, else deletes (a directory's children are swept recursively, keeping any child committed locally after the event and any remote-only entry that took a path since the listing, deleting children's remote objects unless the delete was metadata-only or from another cluster, and their chunks in batches when the event deletes chunks); for a create or rename target, inserts unless the local commit is newer. Writes go straight to the store with the event's mutation timestamp as the commit stamp.",
+  "why": "Consequence: two filers with separate stores receive each other's writes in an order that can differ from their own; applying blindly would let an older event overwrite a newer local write. Design: per-path commit timestamps decide, and a directory delete keeps the children that changed after it.",
+  "when": "meta_aggregator.go for every event from a peer with a different store.",
+  "ux": "None directly.",
+  "if_broken": "Deleted files reappear on some filers, or newer writes are lost to older replicated ones.",
+  "gotchas": [
+   "Replayed writes go to the store directly and publish no local event of their own; subscribers of the aggregated stream see the peer's event instead.",
+   "A child path held by a local mutation makes the sweep fail with ErrLockContended rather than wait."
+  ]
+ },
+ "weed/filer/meta_path_ts.go": {
+  "character": "Per-path commit timestamps for ordering replicated changes",
+  "what": "CommitTsNs and EntryCommitTsNs return the entry's stored commit timestamp, or a fallback (the event time) for entries written before the field existed; localCommitTsNs uses the entry's mtime as that fallback and 0 for a missing entry.",
+  "why": "Design: the commit timestamp is the version of a path; replay, bootstrap and the BFS traversal compare it to decide which side is newer.",
+  "when": "meta_replay.go, applyTraversedEntry, TraverseBfsMetadata.",
+  "ux": "None directly.",
+  "if_broken": "Replicated writes are applied out of order.",
+  "gotchas": [
+   "For entries without a stored commit timestamp the comparison falls back to mtime in whole-second precision from the store."
+  ]
+ },
+ "weed/filer/metadata_event_context.go": {
+  "character": "Context flag that suppresses automatic metadata events",
+  "what": "WithSuppressedMetadataEvents marks a context so NotifyUpdateEvent emits nothing for operations under it.",
+  "why": "Design: a rename is implemented as creates and deletes; their individual events would look like a copy plus a delete to subscribers, so the rename publishes its own rename events after commit instead.",
+  "when": "Rename's internal creates and deletes, rename target replacement.",
+  "ux": "Mounts and replicas see a rename as a rename.",
+  "if_broken": "Renames replicate as delete+create (losing hard-link and inode continuity), or produce duplicate events.",
+  "gotchas": []
+ },
+ "weed/filer/metadata_event_sink.go": {
+  "character": "Request-scoped capture of the metadata event a mutation produced",
+  "what": "WithMetadataEventSink attaches a sink to a context; NotifyUpdateEvent records each event into it, keeping the last; the RPC returns it in metadata_event.",
+  "why": "Consequence: a client that wrote an entry wants to update its own cache with the exact event (timestamp included) without waiting for the subscription to deliver it.",
+  "when": "CreateEntry, UpdateEntry, DeleteEntry and remote-cache RPCs.",
+  "ux": "Mounts see their own writes immediately.",
+  "if_broken": "Clients apply their own writes late or twice.",
+  "gotchas": [
+   "Only the last event is kept; a recursive delete returns the directory's event, not its children's."
+  ]
+ },
+ "weed/filer/mount_peer_registry.go": {
+  "character": "In-memory registry of live weed mount peers for peer chunk sharing",
+  "what": "MountPeerRegistry maps a peer address to its data center, rack, last-seen and expiry. Register refreshes an entry (TTL defaults to 60 s, capped at one hour; new entries are refused beyond 10,000). List returns unexpired entries; Sweep deletes expired ones.",
+  "why": "Design: soft state rebuilt by heartbeats, bounded so a misbehaving client cannot grow it without limit.",
+  "when": "MountRegister / MountList RPCs and the filer's sweeper.",
+  "ux": "None directly.",
+  "if_broken": "Mounts route chunk requests to dead peers or never find live ones.",
+  "gotchas": [
+   "The registry is per filer and not replicated; mounts connected to different filers see different peer sets."
+  ]
+ },
+ "weed/filer/persisted_log_cache.go": {
+  "character": "LRU cache of decoded metadata-log chunks shared by all subscribers",
+  "what": "persistedLogCache keeps decoded LogEntry lists by chunk file id (256 MiB total, idle entries evicted after 5 minutes), loads each chunk once through singleflight under a 128 MiB load budget, and caches only chunks that decode completely (whole records, increasing timestamps); a partial chunk returns errLogChunkIncomplete so callers fall back to streaming.",
+  "why": "Consequence: many subscribers catching up over the same minutes refetched and re-decoded the same log chunks. Design: decode once, share; never cache a chunk that is still being appended to.",
+  "when": "LogFileIterator and LastShippedLogEntryTsNs during subscription catch-up.",
+  "ux": "Faster catch-up for many lagging subscribers.",
+  "if_broken": "Memory spikes during catch-up, or subscribers served a truncated chunk.",
+  "gotchas": [
+   "Cached entry slices are shared between subscribers and must not be mutated."
+  ]
+ },
+ "weed/filer/topics.go": {
+  "character": "Paths of the topics tree and the system metadata log",
+  "what": "TopicsDir is /topics, SystemLogDir is /topics/.system/log (where every filer writes its per-minute metadata log), TopicConfFile is topic.conf.",
+  "why": "Design: the metadata log lives in the namespace itself, so it is stored and replicated like any file.",
+  "when": "Log flush and replay, event filtering (events under SystemLogDir are never published), traversals that exclude it.",
+  "ux": "None directly.",
+  "if_broken": "Log files publish events about themselves (feedback loop) or are copied into backups.",
+  "gotchas": []
+ },
+ "weed/filer/remote_storage.go": {
+  "character": "Remote storage configuration and mount rules held by the filer",
+  "what": "FilerRemoteStorage loads /etc/remote: each <name>.conf (a RemoteConf, optionally checked by a validator that rejects unsafe endpoints) and mount.mapping (local directory -> remote name, bucket, path), into a ptrie of mount directories; reloads are serialized and swapped in under a lock, and remote storage clients for removed confs are released. FindMountDirectory returns the deepest mount containing a path; FindRemoteStorageConf / GetRemoteStorageConf return its conf. ReadRemoteStorageConf, DetectMountInfo and UnmarshalRemoteStorageMappings serve shell commands.",
+  "why": "Design: a remote mount makes a local directory a cache of a cloud bucket path; mounts and credentials are stored in the filer so every filer and tool sees the same set.",
+  "when": "Startup and every /etc/remote change (filer_on_meta_event.go); every lookup under a mounted path.",
+  "ux": "weed shell remote.configure / remote.mount.",
+  "if_broken": "Mounted paths stop resolving to their remote, or a removed mount keeps being used.",
+  "gotchas": [
+   "GetRemoteStorageClient / FindRemoteStorageClient build clients with remote_storage.GetRemoteStorage directly, bypassing the filer's guarded builder (BuildGuardedRemoteClient); nothing in this repository calls them, the filer paths use buildRemoteStorageClient."
+  ]
+ },
+ "weed/filer/remote_mapping.go": {
+  "character": "Read and edit the mount.mapping file",
+  "what": "FindMountedRemoteMapping picks the longest mapping containing a directory; ReadMountMappings reads the file; InsertMountMapping and DeleteMountMapping read it, add or remove one directory, and save it back.",
+  "why": "Design: one small protobuf file lists every remote mount.",
+  "when": "weed shell remote.mount / remote.unmount and related tools; the filer's remote-cache RPC.",
+  "ux": "Mounting and unmounting remote storage.",
+  "if_broken": "Mounts lost or not applied.",
+  "gotchas": [
+   "Insert and Delete are read-modify-write with the unconditional SaveInsideFiler; two concurrent mount edits can lose one.",
+   "addRemoteStorageMapping ignores an unmarshal error, so a corrupt mapping file is replaced by one holding only the new mapping."
+  ]
+ },
+ "weed/filer/read_remote.go": {
+  "character": "Remote-entry helpers: remote-only test, path mapping and the cache request",
+  "what": "IsInRemoteOnly is true for an entry with no chunks and a positive remote size. MergeRemoteContentEncoding copies the remote object's content encoding into the extended map (deleting it when the remote says none). MapFullPathToRemoteStorageLocation and MapRemoteStorageLocationPathToFullPath convert between a local path under a mount and the remote location. CacheRemoteObjectToLocalCluster asks a filer to cache an entry's bytes locally.",
+  "why": "Design: remote-only entries are metadata stubs whose bytes stay on the remote until cached.",
+  "when": "Lazy fetch and listing, deletes, renames, the S3 gateway and filer read paths deciding whether to cache first.",
+  "ux": "Reads of remote-mounted objects.",
+  "if_broken": "Remote objects resolve to the wrong remote key.",
+  "gotchas": [
+   "MapFullPathToRemoteStorageLocation slices the path by the mount directory's length without checking it is under the mount."
+  ]
+ },
+ "weed/filer/filer_remote_evict.go": {
+  "character": "Finding locally cached remote objects that can be evicted",
+  "what": "IsEvictableRemoteEntry is true for a file with a remote copy, local chunks and a sync stamp no older than its mtime (no local change since it was synced). ListEvictableRemoteEntries walks every mount directory recursively through the store and returns such entries synced before a cutoff, oldest sync first. chunksEqual compares chunk lists by fid, size, offset and timestamp.",
+  "why": "Consequence: cached remote objects fill local volumes; only copies identical to the remote can be dropped safely. Design: the sync stamp proves the local chunks equal the remote object.",
+  "when": "The filer's remote-cache eviction when a cache write hits a capacity error (filer_grpc_server_remote.go reclaimRemoteCacheSpace).",
+  "ux": "Remote-mount caches shrink when volumes fill.",
+  "if_broken": "Local-only changes are evicted (data loss) or the cache never shrinks.",
+  "gotchas": [
+   "The walk collects every candidate under every mount in memory before sorting."
+  ]
+ },
+ "weed/filer/filer_lazy_remote.go": {
+  "character": "On-demand materialization of remote-mount entries and remote deletes",
+  "what": "maybeLazyFetchFromRemote runs on a FindEntry miss under a remote mount: after the tombstone rebuild finishes and unless a delete is pending for the path, it stats the remote object (singleflight per path), creates any missing parent directories the same way, and persists a remote-only entry (mtime and size from the remote, content encoding merged), retracting it if a delete landed meanwhile. maybeDeleteFromRemote deletes a file's remote object or a directory's remote prefix; deleteSweptEntryRemote deletes only if the remote object is unchanged (conditional delete where supported, else stat-and-compare), releasing a pending rename source. RemoteSourcePath / RemoteReadPath follow ExtRemoteRenameSourceKey to where a renamed, not-yet-copied entry's bytes still live; CopyRemoteOnlyEntry and RemoteCopyLocations copy a remote-only object to a new key on the remote (refused out of the mount or for storage types without copy).",
+  "why": "Consequence: a remote mount can hold millions of objects; listing them all at mount time would be slow and stale. Design: entries appear when first looked up or listed, and a delete pending on the remote must not be resurrected by the next lookup.",
+  "when": "FindEntry misses and deletes under remote mounts; renames of remote-only entries.",
+  "ux": "S3 GET or mount access of an object that exists only in the mounted bucket works without a prior sync.",
+  "if_broken": "Remote objects invisible, deleted objects reappearing, or remote objects deleted while still referenced.",
+  "gotchas": [
+   "A remote stat that fails for any reason is treated as 'not found', so a transient remote error makes the object look absent (404).",
+   "Misses are not cached: every lookup of a key absent locally under a mount calls the remote."
+  ]
+ },
+ "weed/filer/filer_lazy_remote_listing.go": {
+  "character": "Refreshing a remote-mount directory listing into the filer, with a per-directory TTL",
+  "what": "maybeLazyListFromRemote, when the mount has a listing cache TTL and the directory's remote.listing.synced_at is older than it, lists the remote directory (singleflight per directory) and for each child creates a remote-only entry or directory, or refreshes an existing remote-backed entry's remote stamp, size, mtime and content encoding; entries without a remote stamp and paths with a pending delete are left alone. It then records the sync time on the directory.",
+  "why": "Design: listing the remote on every directory read would be slow and costly; a TTL bounds staleness.",
+  "when": "doListDirectoryEntries under remote mounts with ListingCacheTtlSeconds > 0.",
+  "ux": "ls / S3 ListObjects on a remote mount shows remote objects added outside SeaweedFS within the TTL.",
+  "if_broken": "Remote additions never appear, or listings hammer the remote.",
+  "gotchas": [
+   "Refreshed entries are written straight to the store with no metadata event, so subscribers (mount caches, peers) do not see listing-driven updates.",
+   "Store and remote errors are logged and swallowed; a failed listing looks like an unchanged directory."
+  ]
+ },
+ "weed/filer/filer_remote_tombstone.go": {
+  "character": "Tombstones that keep deleted remote-mount paths from being lazily resurrected until the remote delete is applied",
+  "what": "remoteDeletionTombstones records deleted files and directories (a directory covers its subtree) under remote mounts with the delete's commit stamp and, once its event lands, its stream position. isRemoteDeletionPending blocks lazy fetch and listing for a path until the write-back daemon's persisted sync offset for the mount passes that position, the path is written again, or 24 hours pass; a tombstone recorded before its event (pending) lifts only by its event or the TTL. When the table (65,536 paths) is full, all lazy fetches stay off until it drains. RebuildRemoteDeletionTombstones replays the persisted metadata log from the oldest sync offset at startup, gating lazy reads until done; onRemoteDeletionEvents maintains the table from the event stream.",
+  "why": "Consequence: deleting a file under a remote mount removes the local entry immediately, but filer.remote.sync deletes the remote object later; a lookup in between would recreate the entry from the remote. Design: track what is owed to the remote and lift it when the sync offset proves it was paid.",
+  "when": "Deletes under remote mounts, lazy fetch and listing, filer startup.",
+  "ux": "Deleted objects under a remote mount stay deleted.",
+  "if_broken": "Deleted remote-mount objects reappear, or lazy fetch stays disabled.",
+  "gotchas": [
+   "Without a write-back daemon (no filer.remote.sync), every tombstone lasts the full 24 hours: an object recreated on the remote at a deleted path stays hidden that long.",
+   "Events still in the unflushed log tail at a crash are not replayed by the rebuild (author comment)."
+  ]
+ },
+ "weed/filer/empty_folder_cleanup/cleanup_queue.go": {
+  "character": "Time-ordered, deduplicated queue of folders waiting to be checked for emptiness",
+  "what": "CleanupQueue keeps one item per folder in a list ordered by event time, with a map for O(1) lookup. Add inserts or moves a folder to a newer time; Remove drops it (a create in the folder cancels its cleanup); PopOlderThan returns the oldest folder only once it has waited longer than the delay; ShouldProcess, Peek, Len, OldestAge and Contains support the processor and metrics.",
+  "why": "Design: waiting a fixed delay after the last delete lets a burst of deletes and re-creates in one folder settle before anything checks it, and deduplication keeps one check per folder.",
+  "when": "EmptyFolderCleaner.OnDeleteEvent / OnCreateEvent and its 30 s processor loop.",
+  "ux": "Empty folders disappear about two minutes after their last object is deleted.",
+  "if_broken": "Folders removed while still in use, or never removed.",
+  "gotchas": [
+   "ShouldProcess's size trigger (1000 items) is not what the processor uses; it pops only items older than the delay."
+  ]
+ },
+ "weed/filer/empty_folder_cleanup/empty_folder_cleaner.go": {
+  "character": "EmptyFolderCleaner: removing folders under buckets that become empty after deletes, with per-bucket opt-out and restore-on-race",
+  "what": "Fed by delete, create and rename events (local and from peers), for folders at least one level below a bucket, outside .uploads, and owned by this filer on the DLM ring (one filer per folder). A delete that leaves the cached rough count at zero queues the folder; a create removes it. Every 30 s the processor takes folders queued longer than the delay (filer.options.s3.empty_folder_cleanup_delay in filer.toml, 2 minutes by default) and, if no create came after the last delete, loads the bucket's policy (cached 5 minutes, invalidated by bucket entry updates): the bucket attribute Seaweed-X-Amz-Allow-Empty-Folders=true opts out. It then counts entries (up to 1000), skips directories that are themselves objects (prefix objects, data) and S3 Tables catalog entries, remembers the folder's mode and owner, deletes it non-recursively, and recurses to the parent. A folder written to during or shortly after its delete (within a 2-minute observation window) is restored with its old attributes. Policy-load failures are retried up to 3 times.",
+  "why": "Consequence: S3 has no real directories; after the last object under a/b/ is deleted, clients expect a/b/ to vanish from listings, but the filer keeps the directories it created implicitly. Design: event-driven and delayed, so busy folders are not churned; restore-on-race because a non-recursive delete can still interleave with a write into the folder from another filer.",
+  "when": "Created by AggregateFromPeers on every filer; events arrive through onMetadataChangeEvent.",
+  "ux": "Empty 'folders' disappear from S3 listings shortly after their contents are deleted; weed mount sets the opt-out on its buckets so mkdir'd empty directories survive.",
+  "if_broken": "Empty prefixes linger in listings (Spark and Hadoop clients see phantom directories), or folders are removed while objects are being written into them.",
+  "gotchas": [
+   "Until the delay passes, the empty folder still exists and an S3 ListObjects with a delimiter returns it as a CommonPrefix (see the s3api_object_handlers_list.go flag).",
+   "State (rough counts, queue, deleted set) is in memory per filer; a restart forgets queued folders, which are then cleaned only by a later delete in them.",
+   "The folder delete is a filer delete like any other and publishes a metadata event; directories removed by the TTL expiry path in filer.go do not go through this cleaner."
+  ]
+ },
+ "weed/filer/filer_deletion.go": {
+  "character": "Asynchronous chunk deletion: the deletion queue, batch deletes on volume servers and the retry queue",
+  "what": "DeleteChunks queues a file's chunk ids (resolving manifest chunks to their data chunks first) unless the path's storage rule disables chunk deletion; DeleteChunksNotRecursive queues ids as given; deleteChunksIfNotNew queues what an update dropped. loopProcessingDeletion drains the queue every 1.1 s in batches of up to 100,000 unique ids, deletes them through the volume servers (locations from the master client's cache) and classifies each result: success and not-found leave the durable ledger; retryable errors (read-only volume, timeouts, lookup failures, rate limiting and similar text) go to DeletionRetryQueue with backoff from 5 minutes doubling to 6 hours; permanent errors are dropped. After 10 attempts an id is given up.",
+  "why": "Consequence: deleting needles synchronously in every write would tie metadata latency to volume servers. Design: metadata commits first, needles are deleted asynchronously and retried, and a durable ledger (filer_deletion_persist.go) makes the queue survive restarts.",
+  "when": "Every overwrite, delete and rename that frees chunks; the filer process background loop.",
+  "ux": "Space is reclaimed after deletes (after volume vacuum).",
+  "if_broken": "Disk space never reclaimed, or chunks still referenced deleted.",
+  "gotchas": [
+   "Ids that exhaust their retries, or fail with a non-retryable error, are forgotten and stay on disk as orphans until volume.fsck.",
+   "If a manifest chunk cannot be resolved, the manifest itself is still deleted while its data chunks are not, leaking them.",
+   "Retryable versus permanent is decided by matching error text."
+  ]
+ },
+ "weed/filer/filer_deletion_persist.go": {
+  "character": "Durable ledger of chunk ids queued for deletion but not yet confirmed gone",
+  "what": "Every queued id is recorded in an in-memory pending set with an epoch; terminal outcomes remove it (an expiry only removes a matching epoch, so a re-queued id survives). The set is snapshotted to the store's KV under filer.deleteQueue.ledger.v1 plus this filer's address when it changes, every 10 s and on shutdown, split into 64 KiB parts written per generation with the manifest published last; an index of ledger keys lets a filer restarted under a new address claim its old ledger. On startup the ledger is reloaded and its ids re-queued after a 30 s grace, so a peer still aggregating metadata can re-reference a chunk first. A failed startup read blocks snapshots until a read succeeds, so an unread ledger is never overwritten. Settings: filer.deleteQueue.persist, .persistInterval, .recoveryGrace.",
+  "why": "Consequence: a crash between queuing a delete and the volume confirming it used to leak the chunk forever. Design: additive on enqueue, subtractive only on terminal outcomes, idempotent volume deletes absorb replays.",
+  "when": "SetStore at startup, every queueDeletions, the snapshot timer and shutdown.",
+  "ux": "Space from deletes is reclaimed even across filer restarts.",
+  "if_broken": "Leaked chunks after crashes, or the ledger overwriting itself with a partial set.",
+  "gotchas": [
+   "Re-queued ledger ids are deleted after the grace without re-checking that no entry references them; correctness relies on the ledger only ever holding chunks that metadata had already dropped."
+  ]
  }
 }
