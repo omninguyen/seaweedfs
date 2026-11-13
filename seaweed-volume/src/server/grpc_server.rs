@@ -56,6 +56,24 @@ fn needle_not_found(needle_id: NeedleId) -> Status {
     Status::not_found(format!("needle not found {}", needle_id.0))
 }
 
+/// The disks holding `shard_id` of `vid`.
+fn ec_shard_disks(
+    store: &crate::storage::store::Store,
+    vid: VolumeId,
+    shard_id: ShardId,
+) -> Vec<usize> {
+    store
+        .locations
+        .iter()
+        .enumerate()
+        .filter(|(_, loc)| {
+            loc.find_ec_volume(vid)
+                .is_some_and(|ecv| ecv.has_shard(shard_id))
+        })
+        .map(|(disk, _)| disk)
+        .collect()
+}
+
 /// Mirrors Go's `isNotLeaderErr`: the master returns raft's NotLeaderError,
 /// which arrives as an Unknown-status message.
 fn is_not_leader_status(e: &Status) -> bool {
@@ -4114,10 +4132,7 @@ impl VolumeServer for VolumeGrpcService {
                     crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
                 format!("{}.vif", base)
             };
-            let file = tokio::fs::File::create(&file_path)
-                .await
-                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
-            drain_copy_stream_to_file(&mut stream, file, &file_path, ".vif").await?;
+            drain_optional_copy_to_file(&mut stream, &file_path, ".vif").await?;
         }
 
         // Copy the generation-0 bitrot checksum sidecar (.ecsum) when requested, so
@@ -4151,17 +4166,7 @@ impl VolumeServer for VolumeGrpcService {
                     crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
                 format!("{}.ecsum", base)
             };
-            let file = tokio::fs::File::create(&file_path)
-                .await
-                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
-            let written =
-                drain_copy_stream_to_file(&mut stream, file, &file_path, ".ecsum").await?;
-            // A missing source yields an empty stream; drop the 0-byte file so mount
-            // sees no sidecar (protection Off) rather than a truncated/invalid one.
-            // (drain_copy_stream_to_file has already closed the file on return.)
-            if written == 0 {
-                let _ = tokio::fs::remove_file(&file_path).await;
-            }
+            drain_optional_copy_to_file(&mut stream, &file_path, ".ecsum").await?;
         }
 
         Ok(Response::new(
@@ -4339,13 +4344,40 @@ impl VolumeServer for VolumeGrpcService {
 
         // Mount one shard at a time, returning error on first failure.
         // Matches Go: for _, shardId := range req.ShardIds { err = vs.store.MountEcShards(...) }
+        // A failed shard stops the batch, but the shards mounted before it still
+        // get the sidecar reload and the heartbeat notify below.
         let mut store = self.state.store.write().unwrap();
+        let mut mount_err = None;
         for &shard_id in &validated {
-            store
-                .mount_ec_shard(vid, &req.collection, shard_id, &req.source_disk_type)
-                .map_err(|e| {
-                    Status::internal(format!("mount {}.{}: {}", req.volume_id, shard_id, e))
-                })?;
+            let held_before = ec_shard_disks(&store, vid, shard_id);
+            let disk =
+                match store.mount_ec_shard(vid, &req.collection, shard_id, &req.source_disk_type) {
+                    Ok(disk) => disk,
+                    Err(e) => {
+                        mount_err = Some(Status::internal(format!(
+                            "mount {}.{}: {}",
+                            req.volume_id, shard_id, e
+                        )));
+                        break;
+                    }
+                };
+            // Mirrors Go's MountEcShards: a caller moving the shard here keeps
+            // its source copy, and the heartbeat never announces it. A shard
+            // this call mounted is dropped again, so it does not draw later
+            // copies to the same disk.
+            if store.locations[disk]
+                .find_ec_volume(vid)
+                .is_some_and(|ecv| ecv.get_io_error_state().2)
+            {
+                if !held_before.contains(&disk) {
+                    store.locations[disk].unmount_ec_shards(vid, &[shard_id]);
+                }
+                mount_err = Some(Status::internal(format!(
+                    "mount {}.{}: ec volume is quarantined after IO errors, shard not announced",
+                    req.volume_id, shard_id
+                )));
+                break;
+            }
         }
         // A delivery can bring the checksum manifest alongside the shards, but
         // the receive path only writes the file. When this server already had
@@ -4366,10 +4398,13 @@ impl VolumeServer for VolumeGrpcService {
         // however often it reloaded. One delivered copy, reachable from all.
         let ec_metadata_dirs = store.ec_metadata_dirs();
         for ec_vol in store.find_all_ec_volumes_mut(vid) {
-            ec_vol.reload_bitrot_sidecar(&ec_metadata_dirs);
+            let _ = ec_vol.reload_bitrot_sidecar(&ec_metadata_dirs);
         }
         drop(store);
         self.state.volume_state_notify.notify_one();
+        if let Some(status) = mount_err {
+            return Err(status);
+        }
 
         Ok(Response::new(
             volume_server_pb::VolumeEcShardsMountResponse {},
@@ -4442,6 +4477,12 @@ impl VolumeServer for VolumeGrpcService {
         if req.encode_ts_ns != 0 && req.encode_ts_ns != ec_vol.encode_ts_ns {
             return Err(Status::failed_precondition(format!(
                 "ec shard {}.{} belongs to a different encode run",
+                req.volume_id, req.shard_id
+            )));
+        }
+        if ec_vol.get_io_error_state().2 {
+            return Err(Status::unavailable(format!(
+                "ec shard {}.{} is on a disk quarantined after IO errors",
                 req.volume_id, req.shard_id
             )));
         }
@@ -5011,13 +5052,18 @@ impl VolumeServer for VolumeGrpcService {
                 // for and referenced by nothing. Go does not gate here either:
                 // its progress callback only runs during the transfer.
                 // Update volume info with remote file reference, unless the
-                // volume was compacted, replaced or removed mid-upload: the
-                // object would not match what now holds this id.
+                // volume was compacted, replaced, removed or written to
+                // mid-upload: the object would not match what now holds this
+                // id. One write lease spans the checks, the .vif save and the
+                // backend swap, so no write or commit lands in between.
                 let abort = {
                     let store = state.store.read().unwrap();
-                    let abort = match store.find_volume(vid) {
+                    let vol = store.find_volume(vid).map(|(_, v)| v);
+                    let _sync_guard = vol.as_ref().map(|v| v.data_file_sync_lock().lock().unwrap());
+                    let _lease = vol.as_ref().map(|v| v.instance().write_lock());
+                    let abort = match &vol {
                         None => Some(Status::not_found(format!("volume {} not found", vid))),
-                        Some((_, v))
+                        Some(v)
                             if !v.is_instance(&instance)
                                 || v.super_block().compaction_revision != compaction_revision =>
                         {
@@ -5026,12 +5072,22 @@ impl VolumeServer for VolumeGrpcService {
                                 vid
                             )))
                         }
-                        Some(_) => None,
+                        Some(v) => match v.dat_file_size() {
+                            Ok(dat_size) if dat_size == size => None,
+                            Ok(dat_size) => Some(Status::failed_precondition(format!(
+                                "volume {} data file is {} bytes, the copy holds {}: written during the copy",
+                                vid, dat_size, size
+                            ))),
+                            Err(e) => Some(Status::internal(format!(
+                                "stat volume {} data file: {}",
+                                vid, e
+                            ))),
+                        },
                     };
                     if abort.is_none()
-                        && let Some((_, vol)) = store.find_volume(vid)
+                        && let Some(vol) = &vol
                     {
-                        vol.update_remote_files(|files| {
+                        vol.update_remote_files_held(|files| {
                             files.push(volume_server_pb::RemoteFile {
                                 backend_type: backend_type.clone(),
                                 backend_id: backend_id.clone(),
@@ -5059,7 +5115,7 @@ impl VolumeServer for VolumeGrpcService {
                         // Switch the data backend from the local .dat to the remote
                         // object so reads keep working after upload (matches Go's
                         // LoadRemoteFile).
-                        if let Err(e) = vol.load_remote_dat_file() {
+                        if let Err(e) = vol.load_remote_dat_file_held() {
                             return Err(Status::internal(format!(
                                 "volume {} failed to load remote file: {}",
                                 vid, e
@@ -5631,27 +5687,7 @@ impl VolumeServer for VolumeGrpcService {
                 let needle_id = req.needle_id;
                 let size = req.size;
                 handles.push(tokio::spawn(async move {
-                    let form = reqwest::multipart::Form::new()
-                        .part("file", reqwest::multipart::Part::bytes(data_clone));
-                    let resp = client_clone
-                        .post(&url)
-                        .multipart(form)
-                        .send()
-                        .await
-                        .map_err(|e| {
-                            format!("remote write needle {} size {}: {}", needle_id, size, e)
-                        })?;
-                    if resp.status().is_success() {
-                        Ok(())
-                    } else {
-                        Err(format!(
-                            "remote write needle {} size {}: {} returned status {}",
-                            needle_id,
-                            size,
-                            url,
-                            resp.status()
-                        ))
-                    }
+                    fetch_and_write_replica(&client_clone, &url, data_clone, needle_id, size).await
                 }));
             }
         }
@@ -7001,6 +7037,30 @@ fn set_file_mtime(path: &str, modified_ts_ns: i64) -> std::io::Result<()> {
     file.set_times(ft)
 }
 
+/// An optional copy (the source may lack the file) streams into
+/// `<file_path>.copying` and is renamed into place only once the source sent
+/// bytes, so a missing source or a failed stream leaves an existing destination
+/// untouched, as Go's writeToFile does for ignore_source_file_not_found.
+async fn drain_optional_copy_to_file(
+    stream: &mut tonic::Streaming<volume_server_pb::CopyFileResponse>,
+    file_path: &str,
+    what: &str,
+) -> Result<u64, Status> {
+    let staging = format!("{}.copying", file_path);
+    let mut incomplete = crate::server::store_ec::RemoveIncomplete::new(&staging);
+    let file = tokio::fs::File::create(&staging)
+        .await
+        .map_err(|e| Status::internal(format!("create {}: {}", staging, e)))?;
+    let written = drain_copy_stream_to_file(stream, file, &staging, what).await?;
+    if written > 0 {
+        tokio::fs::rename(&staging, file_path)
+            .await
+            .map_err(|e| Status::internal(format!("commit {}: {}", file_path, e)))?;
+        incomplete.committed();
+    }
+    Ok(written)
+}
+
 /// Drain a CopyFile stream into `file`, returning the number of bytes written.
 ///
 /// Uses async, buffered I/O (`tokio::fs` + `BufWriter`) so the receive-and-write
@@ -7775,6 +7835,45 @@ impl EcDecodeJob {
             )));
         }
 
+        let shard_paths: Vec<String> = shard_dirs
+            .iter()
+            .enumerate()
+            .map(|(i, dir)| {
+                crate::storage::erasure_coding::ec_shard::EcVolumeShard::new(
+                    dir,
+                    &collection,
+                    vid,
+                    i as ShardId,
+                )
+                .file_name()
+            })
+            .collect();
+        // A rebuild's backfill writes the sidecar without reloading the
+        // mounted runtimes, so resolve it again the way a shard mount does.
+        // Any runtime left finds it on every disk; with none left (an unmount
+        // raced the decode) the protection would read as Off.
+        let (bitrot, bitrot_status) = {
+            let mut store = state.store.write().unwrap();
+            let ec_metadata_dirs = store.ec_metadata_dirs();
+            let runtimes = store.find_all_ec_volumes_mut(vid);
+            if runtimes.is_empty() {
+                return Err(Status::internal(format!(
+                    "ec volume {} was unmounted during the decode",
+                    vid
+                )));
+            }
+            for ec_vol in runtimes {
+                ec_vol
+                    .reload_bitrot_sidecar(&ec_metadata_dirs)
+                    .map_err(|e| Status::internal(format!("ec volume {}: {}", vid, e)))?;
+            }
+            crate::storage::erasure_coding::ec_volume::EcVolume::select_bitrot_protection(
+                &store.find_all_ec_volumes(vid),
+            )
+        };
+        ec_bitrot::verify_ec_volume_data_shards(bitrot.as_ref(), bitrot_status, &shard_paths)
+            .map_err(|e| Status::internal(format!("ec volume {}: {}", vid, e)))?;
+
         // Calculate .dat file size from .ecx entries (.ec00 lives on
         // its own disk, .ecx on the index disk).
         let dat_file_size = ec_decoder::find_dat_file_size_with_dirs(
@@ -7895,6 +7994,51 @@ impl EcDecodeJob {
     }
 }
 
+/// The base bound on one `fetch_and_write_needle` replica write, from connect to
+/// the response status. Mirrors the Go volume server's fetchAndWriteReplicaTimeout.
+const FETCH_AND_WRITE_REPLICA_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The slowest link a replica write's chunk may cross within its bound. The
+/// reqwest timeout includes sending the body, and a remote-cache chunk can be
+/// a thousandth of a very large object.
+const REPLICA_MIN_BYTES_PER_SEC: u64 = 1 << 20;
+
+fn fetch_and_write_replica_timeout(body_len: usize) -> std::time::Duration {
+    FETCH_AND_WRITE_REPLICA_TIMEOUT
+        + std::time::Duration::from_millis(
+            (body_len as u64).saturating_mul(1000) / REPLICA_MIN_BYTES_PER_SEC,
+        )
+}
+
+async fn fetch_and_write_replica(
+    client: &reqwest::Client,
+    url: &str,
+    data: Vec<u8>,
+    needle_id: u64,
+    size: i64,
+) -> Result<(), String> {
+    let timeout = fetch_and_write_replica_timeout(data.len());
+    let form = reqwest::multipart::Form::new().part("file", reqwest::multipart::Part::bytes(data));
+    let resp = client
+        .post(url)
+        .multipart(form)
+        .timeout(timeout)
+        .send()
+        .await
+        .map_err(|e| format!("remote write needle {} size {}: {}", needle_id, size, e))?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "remote write needle {} size {}: {} returned status {}",
+            needle_id,
+            size,
+            url,
+            resp.status()
+        ))
+    }
+}
+
 /// Bytes compacted between two `VacuumVolumeCompact` progress reports.
 const COMPACT_REPORT_INTERVAL: i64 = 128 * 1024 * 1024;
 
@@ -7939,7 +8083,7 @@ fn run_vacuum_compact(
         .begin_compact_volume(vid, preallocate);
     let result = match job {
         Ok(Some(job)) => job.run(progress),
-        Ok(None) => Ok(()), // already compacting
+        Ok(None) => Err(crate::storage::volume::compacting_error(vid)),
         Err(e) => Err(e),
     };
 
@@ -9562,6 +9706,68 @@ mod tests {
         let _ = s3.shutdown.send(());
     }
 
+    // A write acknowledged while the upload runs is not in the object; the
+    // volume must keep serving the local .dat that holds it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_tier_move_to_remote_aborts_when_written_mid_upload() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        seed_compactable_volume(&service);
+        let mut s3 = spawn_multipart_s3_server();
+        register_tier_backend("s3.tier_up_written", s3.endpoint.clone());
+
+        let stream = start_parked_tier_move(&service, &mut s3, "s3.tier_up_written", false).await;
+        let data = b"needle-3".to_vec();
+        let mut n = Needle {
+            id: NeedleId(3),
+            cookie: Cookie(3),
+            data_size: data.len() as u32,
+            data: data.clone(),
+            ..Needle::default()
+        };
+        service
+            .state
+            .store
+            .read()
+            .unwrap()
+            .write_volume_needle(VolumeId(1), &mut n, true)
+            .expect("the write lands while the upload is parked");
+        s3.release.add_permits(1);
+
+        let terminal = tier_move_error(stream).await;
+        global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.tier_up_written");
+        let err = terminal.expect("the tier move must fail once the volume was written");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{err:?}");
+        assert_eq!(
+            s3.delete_count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the stale object must be deleted"
+        );
+        {
+            let store = service.state.store.read().unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
+            assert!(!vol.has_remote_file());
+            assert!(vol.volume_info().files.is_empty());
+        }
+        assert!(tmp.path().join("1.dat").exists());
+        let mut n = Needle {
+            id: NeedleId(3),
+            cookie: Cookie(3),
+            ..Needle::default()
+        };
+        service
+            .state
+            .store
+            .read()
+            .unwrap()
+            .read_volume_needle(VolumeId(1), &mut n)
+            .expect("the acknowledged write must stay readable");
+        assert_eq!(n.data, data);
+        let _ = s3.shutdown.send(());
+    }
+
     // Go fails here too: unmounting closes the descriptor its copy reads.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_tier_move_to_remote_fails_when_volume_is_unmounted_mid_upload() {
@@ -9858,6 +10064,229 @@ mod tests {
             copied,
             dat_bytes.len()
         );
+    }
+
+    // An optional sidecar copy from a peer that lacks the file must leave the
+    // destination's own copy in place; one from a peer that has it replaces it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_optional_copy_keeps_destination_when_source_lacks_file() {
+        let (source_service, source_tmp) = make_local_service_with_volume("optional_copy", None);
+        let (port, _shutdown) = serve_source(source_service).await;
+        let channel = tonic::transport::Endpoint::from_shared(format!("http://127.0.0.1:{}", port))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel);
+        let request = |ext: &str| volume_server_pb::CopyFileRequest {
+            volume_id: 1,
+            ext: ext.to_string(),
+            is_ec_volume: true,
+            compaction_revision: u32::MAX,
+            stop_offset: i64::MAX as u64,
+            ignore_source_file_not_found: true,
+            ..Default::default()
+        };
+
+        let dest_tmp = TempDir::new().unwrap();
+        let dest = format!("{}/1.ecsum", dest_tmp.path().to_str().unwrap());
+        std::fs::write(&dest, b"local sidecar").unwrap();
+
+        let mut missing = client
+            .copy_file(request(".ecsum"))
+            .await
+            .unwrap()
+            .into_inner();
+        let written = drain_optional_copy_to_file(&mut missing, &dest, ".ecsum")
+            .await
+            .unwrap();
+        assert_eq!(written, 0);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"local sidecar");
+        assert!(!std::path::Path::new(&format!("{}.copying", dest)).exists());
+
+        std::fs::write(
+            format!("{}/1.ecsum", source_tmp.path().to_str().unwrap()),
+            b"peer sidecar",
+        )
+        .unwrap();
+        let mut present = client
+            .copy_file(request(".ecsum"))
+            .await
+            .unwrap()
+            .into_inner();
+        drain_optional_copy_to_file(&mut present, &dest, ".ecsum")
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"peer sidecar");
+    }
+
+    // Missing-index recovery copies the peer's .vif the same way, so a peer
+    // without one cannot truncate the local .vif that carries the EC ratio.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_index_recovery_vif_copy_keeps_local_vif_when_peer_lacks_it() {
+        let (source_service, source_tmp) = make_local_service_with_volume("optional_vif", None);
+        let source_vif = format!("{}/1.vif", source_tmp.path().to_str().unwrap());
+        let _ = std::fs::remove_file(&source_vif);
+        let (port, _shutdown) = serve_source(source_service).await;
+        let channel = tonic::transport::Endpoint::from_shared(format!("http://127.0.0.1:{}", port))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel);
+        let request = volume_server_pb::CopyFileRequest {
+            volume_id: 1,
+            ext: ".vif".to_string(),
+            is_ec_volume: true,
+            compaction_revision: u32::MAX,
+            stop_offset: i64::MAX as u64,
+            ignore_source_file_not_found: true,
+            ..Default::default()
+        };
+
+        let dest_tmp = TempDir::new().unwrap();
+        let dest = format!("{}/1.vif", dest_tmp.path().to_str().unwrap());
+        std::fs::write(&dest, b"local vif").unwrap();
+
+        let missing = client
+            .copy_file(request.clone())
+            .await
+            .unwrap()
+            .into_inner();
+        crate::server::store_ec::drain_optional_copy_stream(missing, &dest)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"local vif");
+        assert!(!std::path::Path::new(&format!("{}.copying", dest)).exists());
+
+        std::fs::write(&source_vif, b"peer vif").unwrap();
+        let present = client.copy_file(request).await.unwrap().into_inner();
+        crate::server::store_ec::drain_optional_copy_stream(present, &dest)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"peer vif");
+    }
+
+    /// A CopyFile stream that delivers `frame` and then fails, or stalls
+    /// forever when the second field is set.
+    struct FailAfterFrame(Option<bytes::Bytes>, bool);
+
+    impl http_body::Body for FailAfterFrame {
+        type Data = bytes::Bytes;
+        type Error = Status;
+
+        fn poll_frame(
+            mut self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Result<http_body::Frame<bytes::Bytes>, Status>>> {
+            match self.0.take() {
+                Some(frame) => std::task::Poll::Ready(Some(Ok(http_body::Frame::data(frame)))),
+                None if self.1 => std::task::Poll::Pending,
+                None => std::task::Poll::Ready(Some(Err(Status::unavailable("source went away")))),
+            }
+        }
+    }
+
+    fn copy_stream_after_bytes(
+        stall: bool,
+    ) -> tonic::Streaming<volume_server_pb::CopyFileResponse> {
+        let message = prost::Message::encode_to_vec(&volume_server_pb::CopyFileResponse {
+            file_content: b"partial".to_vec(),
+            modified_ts_ns: 1,
+            ..Default::default()
+        });
+        let mut frame = vec![0u8];
+        frame.extend_from_slice(&(message.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&message);
+        tonic::Streaming::new_response(
+            tonic_prost::ProstDecoder::<volume_server_pb::CopyFileResponse>::default(),
+            FailAfterFrame(Some(frame.into()), stall),
+            tonic::codegen::http::StatusCode::OK,
+            None,
+            None,
+        )
+    }
+
+    // A stream that fails after sending bytes leaves the destination as it was
+    // and removes the staged copy, on both optional-copy paths.
+    #[tokio::test]
+    async fn test_optional_copy_keeps_destination_when_stream_fails() {
+        let dest_tmp = TempDir::new().unwrap();
+        let dir = dest_tmp.path().to_str().unwrap();
+
+        let ecsum = format!("{}/1.ecsum", dir);
+        std::fs::write(&ecsum, b"local sidecar").unwrap();
+        let mut stream = copy_stream_after_bytes(false);
+        assert!(
+            drain_optional_copy_to_file(&mut stream, &ecsum, ".ecsum")
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&ecsum).unwrap(), b"local sidecar");
+        assert!(!std::path::Path::new(&format!("{}.copying", ecsum)).exists());
+
+        let vif = format!("{}/1.vif", dir);
+        std::fs::write(&vif, b"local vif").unwrap();
+        assert!(
+            crate::server::store_ec::drain_optional_copy_stream(
+                copy_stream_after_bytes(false),
+                &vif
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(std::fs::read(&vif).unwrap(), b"local vif");
+        assert!(!std::path::Path::new(&format!("{}.copying", vif)).exists());
+    }
+
+    /// Polls `copy` until `staging` exists, then drops it as a cancelled RPC
+    /// would.
+    async fn cancel_once_staged(copy: impl std::future::Future, staging: &str) {
+        let staged = async {
+            while !std::path::Path::new(staging).exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        };
+        tokio::select! {
+            _ = copy => panic!("a stalled copy must not complete"),
+            r = tokio::time::timeout(std::time::Duration::from_secs(5), staged) => {
+                r.expect("staging file was not created")
+            }
+        }
+    }
+
+    // A copy dropped mid-stream, as when its RPC is cancelled, still removes
+    // the staged copy and leaves the destination as it was.
+    #[tokio::test]
+    async fn test_optional_copy_removes_staging_when_cancelled() {
+        let dest_tmp = TempDir::new().unwrap();
+        let dir = dest_tmp.path().to_str().unwrap();
+
+        let ecsum = format!("{}/1.ecsum", dir);
+        let staging = format!("{}.copying", ecsum);
+        std::fs::write(&ecsum, b"local sidecar").unwrap();
+        let mut stream = copy_stream_after_bytes(true);
+        cancel_once_staged(
+            drain_optional_copy_to_file(&mut stream, &ecsum, ".ecsum"),
+            &staging,
+        )
+        .await;
+        assert_eq!(std::fs::read(&ecsum).unwrap(), b"local sidecar");
+        assert!(!std::path::Path::new(&staging).exists());
+
+        let vif = format!("{}/1.vif", dir);
+        let staging = format!("{}.copying", vif);
+        std::fs::write(&vif, b"local vif").unwrap();
+        cancel_once_staged(
+            crate::server::store_ec::drain_optional_copy_stream(
+                copy_stream_after_bytes(true),
+                &vif,
+            ),
+            &staging,
+        )
+        .await;
+        assert_eq!(std::fs::read(&vif).unwrap(), b"local vif");
+        assert!(!std::path::Path::new(&staging).exists());
     }
 
     // A copy that mounts and then fails validation (check_copy_counts) is
@@ -12707,16 +13136,16 @@ mod tests {
             .unwrap();
     }
 
-    /// Leaves `service` holding only EC shard 1 of volume 1, with shard 0 (the
-    /// one with needle 11's bytes) served by a peer; `peer_deletes` journals
-    /// the needle's delete on the peer alone.
+    /// Leaves `service` holding `local_shards` of EC volume 1, with shard 0 (the
+    /// one with needle 11's bytes) also served by a peer; `peer_deletes`
+    /// journals the needle's delete on the peer alone.
     async fn put_ec_1_needle_shard_on_a_peer(
         service: &VolumeGrpcService,
         tmp: &TempDir,
+        local_shards: Vec<u32>,
         peer_deletes: bool,
     ) -> (TempDir, tokio::sync::oneshot::Sender<()>) {
-        // One local shard, not the needle's: only a peer read can answer.
-        generate_and_mount_ec_1(service, vec![1]).await;
+        generate_and_mount_ec_1(service, local_shards).await;
 
         let (peer, peer_tmp) = make_local_service_with_volume("", None);
         peer.state
@@ -12772,7 +13201,7 @@ mod tests {
     async fn test_volume_needle_status_reads_an_ec_needle_from_a_peer_shard() {
         let (service, tmp) = make_local_service_with_volume("", None);
         let want = needle_status(&service, 11).await.unwrap();
-        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, false).await;
+        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, vec![1], false).await;
 
         let got = needle_status(&service, 11)
             .await
@@ -12785,11 +13214,256 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_volume_needle_status_reports_a_peer_reported_ec_deletion() {
         let (service, tmp) = make_local_service_with_volume("", None);
-        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, true).await;
+        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, vec![1], true).await;
 
         let err = needle_status(&service, 11).await.unwrap_err();
         assert_eq!(err.code(), tonic::Code::Unknown, "{err}");
         assert_eq!(err.message(), "already deleted");
+    }
+
+    fn quarantine_ec_1(service: &VolumeGrpcService) {
+        service
+            .state
+            .store
+            .read()
+            .unwrap()
+            .find_ec_volume(VolumeId(1))
+            .unwrap()
+            .mark_io_quarantined();
+    }
+
+    /// A quarantined disk is not read while a peer holds the shard: the peer's
+    /// answer, here that the needle is deleted, replaces the local copy's.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_read_skips_quarantined_local_shards() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, (0..14).collect(), true).await;
+        needle_status(&service, 11)
+            .await
+            .expect("healthy local shards answer first");
+
+        quarantine_ec_1(&service);
+        let miss = crate::server::store_ec::read_ec_shard_needle_or_miss(
+            &service.state,
+            VolumeId(1),
+            NeedleId(11),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert_eq!(miss, crate::server::store_ec::EcMiss::Deleted);
+    }
+
+    /// Leaves `service` holding `local_shards` of EC volume 1 on a quarantined
+    /// disk, with every shard's other holder unreachable.
+    async fn quarantine_ec_1_without_peers(service: &VolumeGrpcService, local_shards: Vec<u32>) {
+        generate_and_mount_ec_1(service, local_shards).await;
+        {
+            let mut store = service.state.store.write().unwrap();
+            store.unmount_volume(VolumeId(1)).unwrap();
+            store
+                .find_ec_volume(VolumeId(1))
+                .unwrap()
+                .merge_shard_locations(
+                    (0u8..14)
+                        .map(|sid| (sid, vec!["127.0.0.1:255.1".to_string()]))
+                        .collect(),
+                );
+        }
+        quarantine_ec_1(service);
+    }
+
+    /// When no healthy copy answers, the quarantined shards still serve the read.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_read_falls_back_to_quarantined_shards() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let want = needle_status(&service, 11).await.unwrap();
+        quarantine_ec_1_without_peers(&service, (0..14).collect()).await;
+
+        let got = needle_status(&service, 11)
+            .await
+            .expect("only the quarantined disk holds the shards");
+        assert_eq!(got, want);
+    }
+
+    /// Reconstruction falls back to quarantined local shards when the healthy
+    /// sources cannot supply enough of them.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_read_reconstructs_from_quarantined_shards() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let want = needle_status(&service, 11).await.unwrap();
+        quarantine_ec_1_without_peers(&service, (4..14).collect()).await;
+
+        let got = needle_status(&service, 11)
+            .await
+            .expect("the needle's shard is gone and only quarantined shards can rebuild it");
+        assert_eq!(got, want);
+    }
+
+    /// Peers move on to the next holder or reconstruct when a shard sits on a
+    /// quarantined disk.
+    #[tokio::test]
+    async fn test_volume_ec_shard_read_refuses_a_quarantined_shard() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        generate_and_mount_ec_1(&service, vec![0]).await;
+        let read = || {
+            service.volume_ec_shard_read(Request::new(
+                volume_server_pb::VolumeEcShardReadRequest {
+                    volume_id: 1,
+                    shard_id: 0,
+                    offset: 0,
+                    size: 8,
+                    ..Default::default()
+                },
+            ))
+        };
+        assert!(read().await.is_ok());
+
+        quarantine_ec_1(&service);
+        match read().await {
+            Ok(_) => panic!("a quarantined shard was served"),
+            Err(status) => assert_eq!(status.code(), tonic::Code::Unavailable, "{status}"),
+        }
+    }
+
+    /// A shard mounted onto a quarantined EC volume fails the mount, so a
+    /// caller moving it here keeps its source copy.
+    #[tokio::test]
+    async fn test_volume_ec_shards_mount_refuses_a_quarantined_volume() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        generate_and_mount_ec_1(&service, vec![0]).await;
+        quarantine_ec_1(&service);
+
+        let mount = |shard_id: u32| {
+            service.volume_ec_shards_mount(Request::new(
+                volume_server_pb::VolumeEcShardsMountRequest {
+                    volume_id: 1,
+                    shard_ids: vec![shard_id],
+                    ..Default::default()
+                },
+            ))
+        };
+        let shard_mounted = |shard_id: ShardId| {
+            service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .find_ec_volume_with_shard(VolumeId(1), shard_id)
+                .is_some()
+        };
+
+        let err = mount(1).await.unwrap_err();
+        assert!(err.message().contains("quarantined"), "{err}");
+        assert!(!shard_mounted(1), "the refused shard stayed mounted");
+
+        let err = mount(0).await.unwrap_err();
+        assert!(err.message().contains("quarantined"), "{err}");
+        assert!(
+            shard_mounted(0),
+            "a refused remount unmounted a shard that was already mounted"
+        );
+    }
+
+    /// While a quarantined sibling holds the same shard, the result follows
+    /// the disk the store picks for the shard: the healthy disk mounts it,
+    /// the quarantined one refuses and leaves no copy on the healthy disk.
+    #[tokio::test]
+    async fn test_volume_ec_shards_mount_beside_a_quarantined_sibling() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        generate_and_mount_ec_1(&service, vec![]).await;
+        let sibling = TempDir::new().unwrap();
+        let dir = sibling.path().to_str().unwrap();
+        let picked = {
+            let mut store = service.state.store.write().unwrap();
+            store
+                .add_location(
+                    dir,
+                    dir,
+                    10,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(1.0),
+                    Vec::new(),
+                )
+                .unwrap();
+            store.locations[0].unmount_ec_shards(VolumeId(1), &[1]);
+            for name in ["1.ec01", "1.ecx", "1.ecj", "1.vif"] {
+                let src = tmp.path().join(name);
+                if src.exists() {
+                    std::fs::copy(&src, sibling.path().join(name)).unwrap();
+                }
+            }
+            store.locations[1]
+                .mount_ec_shards_with_idx_dir(VolumeId(1), "", &[1], dir, "")
+                .unwrap();
+            store.locations[1]
+                .find_ec_volume(VolumeId(1))
+                .unwrap()
+                .mark_io_quarantined();
+            let picked = store.mount_ec_shard(VolumeId(1), "", 1, "").unwrap();
+            if picked == 0 {
+                store.locations[0].unmount_ec_shards(VolumeId(1), &[1]);
+            }
+            picked
+        };
+
+        let mounted = service
+            .volume_ec_shards_mount(Request::new(volume_server_pb::VolumeEcShardsMountRequest {
+                volume_id: 1,
+                shard_ids: vec![1],
+                ..Default::default()
+            }))
+            .await;
+        let healthy_holds = service.state.store.read().unwrap().locations[0]
+            .find_ec_volume(VolumeId(1))
+            .is_some_and(|ecv| ecv.has_shard(1));
+        assert_eq!(
+            mounted.is_ok(),
+            picked == 0,
+            "mount returned {:?} with disk {picked} picked",
+            mounted.err()
+        );
+        assert_eq!(mounted.is_ok(), healthy_holds);
+    }
+
+    /// A shard that fails to mount stops the batch, but the shards mounted
+    /// before it are still announced.
+    #[tokio::test]
+    async fn test_volume_ec_shards_mount_failure_still_announces_earlier_shards() {
+        use futures::FutureExt;
+        let (service, tmp) = make_local_service_with_volume("", None);
+        generate_and_mount_ec_1(&service, vec![0]).await;
+        let _ = service.state.volume_state_notify.notified().now_or_never();
+        std::fs::remove_file(tmp.path().join("1.ec02")).unwrap();
+
+        service
+            .volume_ec_shards_mount(Request::new(
+                volume_server_pb::VolumeEcShardsMountRequest {
+                    volume_id: 1,
+                    shard_ids: vec![1, 2],
+                    ..Default::default()
+                },
+            ))
+            .await
+            .unwrap_err();
+        assert!(
+            service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .find_ec_volume_with_shard(VolumeId(1), 1)
+                .is_some()
+        );
+        assert!(
+            service
+                .state
+                .volume_state_notify
+                .notified()
+                .now_or_never()
+                .is_some(),
+            "shard 1 was mounted but the heartbeat was never told"
+        );
     }
 
     /// A volume unmounted before the EC read resolves it is "volume not found",
@@ -12997,7 +13671,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_batch_delete_peer_reported_ec_deletion_is_not_an_error() {
         let (service, tmp) = make_local_service_with_volume("", None);
-        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, true).await;
+        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, vec![1], true).await;
 
         assert_eq!(
             batch_delete_1(&service, 11, 0x3344, true).await,
@@ -14546,6 +15220,149 @@ mod tests {
         assert!(std::path::Path::new(&idx_sidecar).exists());
     }
 
+    /// A data shard that fails its .ecsum checksum must fail the decode and
+    /// leave every shard and the sidecar in place for a repair.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_ec_shards_to_volume_rejects_a_corrupt_data_shard() {
+        let (service, _tmp, data, _idx, _) = make_split_idx_ec_decode_service(&[], false).await;
+        assert_corrupt_data_shard_rejected(&service, &data).await;
+    }
+
+    /// A rebuild's backfill writes the sidecar after the shards are mounted,
+    /// without reloading the runtimes: the decode must still find it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_ec_shards_to_volume_rejects_a_corrupt_shard_with_a_late_sidecar() {
+        let (service, _tmp, data, _idx, _) = make_split_idx_ec_decode_service(&[], false).await;
+        let sidecar = format!("{data}/1.ecsum");
+        let hidden = format!("{data}/1.ecsum.hidden");
+        std::fs::rename(&sidecar, &hidden).unwrap();
+        {
+            let mut store = service.state.store.write().unwrap();
+            for ec_vol in store.find_all_ec_volumes_mut(VolumeId(1)) {
+                ec_vol.reload_bitrot_sidecar(&[]).unwrap();
+                assert_eq!(
+                    ec_vol.bitrot_protection().1,
+                    crate::storage::erasure_coding::ec_bitrot::BitrotStatus::Off,
+                    "precondition: the mounted runtime holds no protection"
+                );
+            }
+        }
+        std::fs::rename(&hidden, &sidecar).unwrap();
+        assert_corrupt_data_shard_rejected(&service, &data).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_ec_shards_to_volume_refuses_a_late_sidecar_with_another_layout() {
+        use crate::storage::erasure_coding::ec_bitrot;
+        let (service, _tmp, data, _idx, _) = make_split_idx_ec_decode_service(&[], false).await;
+        let sidecar = format!("{data}/1.ecsum");
+        let hidden = format!("{data}/1.ecsum.hidden");
+        std::fs::rename(&sidecar, &hidden).unwrap();
+        {
+            let mut store = service.state.store.write().unwrap();
+            for ec_vol in store.find_all_ec_volumes_mut(VolumeId(1)) {
+                ec_vol.reload_bitrot_sidecar(&[]).unwrap();
+            }
+        }
+        let mut prot = ec_bitrot::load_bitrot_sidecar(&hidden).unwrap();
+        prot.ec_shard_config.as_mut().unwrap().parity_shards = 2;
+        ec_bitrot::save_bitrot_sidecar(&sidecar, &prot).unwrap();
+        std::fs::remove_file(&hidden).unwrap();
+
+        let err = service
+            .volume_ec_shards_to_volume(ec_shards_to_volume_request())
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.message().contains("refusing to serve"),
+            "unexpected error: {}",
+            err.message()
+        );
+        assert!(!std::path::Path::new(&format!("{data}/1.dat")).exists());
+        for shard_id in 0..14 {
+            assert!(std::path::Path::new(&format!("{data}/1.ec{shard_id:02}")).exists());
+        }
+    }
+
+    /// An unmount between the job snapshot and the verification leaves no
+    /// runtime to resolve the sidecar: the job must refuse, not verify as Off.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_ec_decode_job_refuses_when_every_runtime_was_unmounted() {
+        let (service, _tmp, data, _idx, _) = make_split_idx_ec_decode_service(&[], false).await;
+        let job = {
+            let store = service.state.store.read().unwrap();
+            let (ec_vol, shard_dirs) = store
+                .collect_ec_shard_dirs(
+                    VolumeId(1),
+                    crate::storage::erasure_coding::ec_shard::MAX_SHARD_COUNT,
+                )
+                .unwrap();
+            let data_shards = ec_vol.data_shards as usize;
+            EcDecodeJob {
+                vid: VolumeId(1),
+                dat_dir: ec_vol.dir.clone(),
+                ecx_dir: ec_vol.ecx_actual_dir().to_string(),
+                idx_dir: ec_vol.dir_idx.clone(),
+                collection: ec_vol.collection.clone(),
+                vif_dat_file_size: ec_vol.dat_file_size,
+                large_block_size: ec_vol.large_block_size() as usize,
+                small_block_size: ec_vol.small_block_size() as usize,
+                shard_dirs: shard_dirs[..data_shards]
+                    .iter()
+                    .map(|d| d.clone().unwrap())
+                    .collect(),
+                needle_map_kind: store.needle_map_kind,
+            }
+        };
+        service
+            .volume_ec_shards_unmount(Request::new(
+                volume_server_pb::VolumeEcShardsUnmountRequest {
+                    volume_id: 1,
+                    shard_ids: (0..14).collect(),
+                    encode_ts_ns: 0,
+                },
+            ))
+            .await
+            .unwrap();
+        let shard = format!("{data}/1.ec03");
+        let mut bytes = std::fs::read(&shard).unwrap();
+        bytes[0] ^= 0xff;
+        std::fs::write(&shard, bytes).unwrap();
+
+        let err = job.run(&service.state).unwrap_err();
+
+        assert!(
+            err.message().contains("unmounted during the decode"),
+            "unexpected error: {}",
+            err.message()
+        );
+        assert!(!std::path::Path::new(&format!("{data}/1.dat")).exists());
+    }
+
+    async fn assert_corrupt_data_shard_rejected(service: &VolumeGrpcService, data: &str) {
+        let shard = format!("{data}/1.ec03");
+        let mut bytes = std::fs::read(&shard).unwrap();
+        bytes[0] ^= 0xff;
+        std::fs::write(&shard, bytes).unwrap();
+
+        let err = service
+            .volume_ec_shards_to_volume(ec_shards_to_volume_request())
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.message().contains("data shard 3"),
+            "unexpected error: {}",
+            err.message()
+        );
+        assert!(!std::path::Path::new(&format!("{data}/1.dat")).exists());
+        assert!(std::path::Path::new(&format!("{data}/1.ecsum")).exists());
+        for shard_id in 0..14 {
+            assert!(std::path::Path::new(&format!("{data}/1.ec{shard_id:02}")).exists());
+        }
+    }
+
     /// Replaces the idx-dir .ecj with a FIFO: the decode's open of it blocks
     /// until [`release_ecj_fifo`] opens the write end.
     #[cfg(unix)]
@@ -14907,6 +15724,84 @@ mod tests {
                 .into_inner();
             assert_eq!(resp.results[0].status, status, "skip={skip_cookie_check}");
             assert_eq!(resp.results[0].error, "not found");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fetch_and_write_replica_fails_when_the_peer_goes_silent() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://{}/3,01637037d6?type=replicate",
+            listener.local_addr().unwrap()
+        );
+        let client = reqwest::Client::new();
+        let started = tokio::time::Instant::now();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(600),
+            fetch_and_write_replica(&client, &url, b"needle".to_vec(), 1, 6),
+        )
+        .await
+        .expect("a replica that never answers must not hold the request");
+        let err = result.expect_err("a silent replica must fail the write");
+        assert!(err.contains("remote write needle 1 size 6"), "{err}");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= FETCH_AND_WRITE_REPLICA_TIMEOUT
+                && elapsed < FETCH_AND_WRITE_REPLICA_TIMEOUT + std::time::Duration::from_secs(1),
+            "failed after {elapsed:?}: {err}"
+        );
+        drop(listener);
+    }
+
+    #[test]
+    fn fetch_and_write_replica_timeout_grows_with_the_chunk() {
+        let mib = REPLICA_MIN_BYTES_PER_SEC as usize;
+        assert_eq!(
+            fetch_and_write_replica_timeout(0),
+            FETCH_AND_WRITE_REPLICA_TIMEOUT
+        );
+        assert_eq!(
+            fetch_and_write_replica_timeout(1024 * mib),
+            FETCH_AND_WRITE_REPLICA_TIMEOUT + std::time::Duration::from_secs(1024)
+        );
+        assert_eq!(
+            fetch_and_write_replica_timeout(mib / 2),
+            FETCH_AND_WRITE_REPLICA_TIMEOUT + std::time::Duration::from_millis(500)
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_and_write_replica_reports_the_peer_status() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for (status_line, ok) in [("201 Created", true), ("500 Internal Server Error", false)] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!(
+                "http://{}/3,01637037d6?type=replicate",
+                listener.local_addr().unwrap()
+            );
+            let peer = tokio::spawn(async move {
+                let (mut conn, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buf = [0u8; 4096];
+                while !request.ends_with(b"--\r\n") {
+                    let n = conn.read(&mut buf).await.unwrap();
+                    assert!(n > 0, "request ended early");
+                    request.extend_from_slice(&buf[..n]);
+                }
+                let reply = format!("HTTP/1.1 {status_line}\r\nContent-Length: 0\r\n\r\n");
+                conn.write_all(reply.as_bytes()).await.unwrap();
+                String::from_utf8_lossy(&request).into_owned()
+            });
+            let result =
+                fetch_and_write_replica(&reqwest::Client::new(), &url, b"needle".to_vec(), 1, 6)
+                    .await;
+            let request = peer.await.unwrap();
+            assert!(
+                request.starts_with("POST /3,01637037d6?type=replicate "),
+                "{request}"
+            );
+            assert!(request.contains("needle"), "{request}");
+            assert_eq!(result.is_ok(), ok, "{status_line}: {result:?}");
         }
     }
 }

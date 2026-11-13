@@ -135,7 +135,7 @@ func (s *Server) handleDeclareTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, lookupErr := s.loadLanceTable(r, bucket, ns, name)
+	_, lookupErr := s.loadLanceTableInternal(r, bucket, ns, name)
 	location, err = s.createTable(r, bucket, ns, name, location)
 	if err != nil {
 		writeStorageError(w, r, err)
@@ -143,7 +143,8 @@ func (s *Server) handleDeclareTable(w http.ResponseWriter, r *http.Request) {
 	}
 	// A declare that creates the table may write it: a Lance commit is a direct
 	// S3 write that never revisits the catalog, so the create authorization is
-	// the write evidence. One that only finds the table answers like describe.
+	// the write evidence. One that only finds the table answers like describe,
+	// including a table the caller cannot read, which CreateTable still returns.
 	var writable bool
 	if isNotFound(lookupErr) {
 		writable = s.mayWriteNamespace(r, bucket, ns)
@@ -179,6 +180,55 @@ func (s *Server) handleDeclareTable(w http.ResponseWriter, r *http.Request) {
 
 // handleDescribeTable resolves a table to a location, and to credentials when
 // the caller asks for them.
+// DescribeTable is the in-process form of handleDescribeTable for trusted
+// callers that already carry the request identity — no HTTP layer.
+func (s *Server) DescribeTable(r *http.Request, parts []string) (string, map[string]string, error) {
+	return s.describeTable(r, parts, false)
+}
+
+// DescribeTableInternal resolves a table like DescribeTable but runs the
+// catalog lookup through the trusted manager: callers reach it through the
+// vector coordinator, which only invokes it after the caller's own vector
+// permission authorized the operation. A caller's catalog grants must not
+// gate an internal resolution. Storage options are still vended for the
+// caller's principal, and for a table of the vector namespace they may write
+// it: the engine is that namespace's writer, and the operation it carries
+// out was authorized by the caller's vector permission, not by s3tables
+// grants the caller need not hold.
+func (s *Server) DescribeTableInternal(r *http.Request, parts []string) (string, map[string]string, error) {
+	return s.describeTable(r, parts, true)
+}
+
+func (s *Server) describeTable(r *http.Request, parts []string, internal bool) (string, map[string]string, error) {
+	bucket, ns, name, err := identifier(parts).table()
+	if err != nil {
+		return "", nil, err
+	}
+	var table *lanceTable
+	if internal {
+		table, err = s.loadLanceTableInternal(r, bucket, ns, name)
+	} else {
+		table, err = s.loadLanceTable(r, bucket, ns, name)
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	location := table.location
+	deregistered, _, err := s.datasetState(r, location)
+	if err != nil {
+		return "", nil, err
+	}
+	if deregistered {
+		return "", nil, &s3tables.S3TablesError{Type: s3tables.ErrCodeNoSuchTable, Message: "table is deregistered"}
+	}
+	canWrite := func() bool { return s.mayUpdateTable(r, bucket, ns, name) }
+	if internal && len(ns) == 1 && ns[0] == s3tables.VectorIndexNamespace {
+		canWrite = func() bool { return true }
+	}
+	options, err := s.storageOptions(r, bucket, location, true, canWrite)
+	return location, options, err
+}
+
 func (s *Server) handleDescribeTable(w http.ResponseWriter, r *http.Request) {
 	id, _, ok := routeIdentifier(w, r)
 	if !ok {
@@ -333,6 +383,7 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	restore := true
 	existing, err := s.loadLanceTable(r, bucket, ns, name)
 	switch {
 	case err != nil && !isNotFound(err):
@@ -350,7 +401,11 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, http.StatusConflict, codeTableAlreadyExists, "table already exists")
 			return
 		}
-		if err := s.tablesManager.CheckVectorNamespaceWrite(r.Context(), s.filerClient, bucket, ns); err != nil {
+		if err := s.manager(r).CheckVectorNamespaceWrite(r.Context(), s.filerClient, bucket, ns); err != nil {
+			writeStorageError(w, r, err)
+			return
+		}
+		if err := s.authorizeUpdateTable(r, bucket, ns, name); err != nil {
 			writeStorageError(w, r, err)
 			return
 		}
@@ -368,11 +423,26 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 			writeStorageError(w, r, err)
 			return
 		}
+		// CreateTable also answers for a table the caller cannot read, so
+		// bringing that one back still needs UpdateTable.
+		deregistered, _, stateErr := s.datasetState(r, location)
+		if stateErr != nil {
+			glog.V(1).Infof("lance: could not check %s for %s: %v", deregisteredMarker, location, stateErr)
+		}
+		if deregistered {
+			if err := s.authorizeUpdateTable(r, bucket, ns, name); err != nil {
+				writeStorageError(w, r, err)
+				return
+			}
+		}
+		restore = deregistered
 	}
 
 	// Registering a deregistered dataset brings it back.
-	if err := s.removeMarker(r, location, deregisteredMarker); err != nil {
-		glog.V(2).Infof("lance: could not clear %s for %s: %v", deregisteredMarker, location, err)
+	if restore {
+		if err := s.removeMarker(r, location, deregisteredMarker); err != nil {
+			glog.V(2).Infof("lance: could not clear %s for %s: %v", deregisteredMarker, location, err)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, RegisterTableResponse{
@@ -409,7 +479,11 @@ func (s *Server) handleDeregisterTable(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, r, err)
 		return
 	}
-	if err := s.tablesManager.CheckVectorNamespaceWrite(r.Context(), s.filerClient, bucket, ns); err != nil {
+	if err := s.manager(r).CheckVectorNamespaceWrite(r.Context(), s.filerClient, bucket, ns); err != nil {
+		writeStorageError(w, r, err)
+		return
+	}
+	if err := s.authorizeUpdateTable(r, bucket, ns, name); err != nil {
 		writeStorageError(w, r, err)
 		return
 	}
@@ -534,13 +608,23 @@ type lanceTable struct {
 // loadLanceTable reads a table and refuses one that is not a Lance table, so a
 // Lance client never resolves an Iceberg table's location and writes over it.
 func (s *Server) loadLanceTable(r *http.Request, bucket string, ns []string, name string) (*lanceTable, error) {
+	return s.loadLanceTableVia(r, s.execute, bucket, ns, name)
+}
+
+// loadLanceTableInternal is loadLanceTable through the trusted manager, for
+// resolutions the caller's catalog grants must not gate.
+func (s *Server) loadLanceTableInternal(r *http.Request, bucket string, ns []string, name string) (*lanceTable, error) {
+	return s.loadLanceTableVia(r, s.executeInternal, bucket, ns, name)
+}
+
+func (s *Server) loadLanceTableVia(r *http.Request, exec func(*http.Request, string, interface{}, interface{}) error, bucket string, ns []string, name string) (*lanceTable, error) {
 	req := &s3tables.GetTableRequest{
 		TableBucketARN: bucketARN(bucket),
 		Namespace:      ns,
 		Name:           name,
 	}
 	var resp s3tables.GetTableResponse
-	if err := s.execute(r, "GetTable", req, &resp); err != nil {
+	if err := exec(r, "GetTable", req, &resp); err != nil {
 		return nil, err
 	}
 	if resp.Format != s3tables.FormatLance {

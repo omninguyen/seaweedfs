@@ -26,7 +26,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -47,15 +46,14 @@ import (
 )
 
 func (iam *IdentityAccessManagement) reqSignatureV4Verify(r *http.Request) (*Identity, s3err.ErrorCode) {
-	switch {
-	case isRequestSignatureV4(r):
-		identity, _, errCode := iam.doesSignatureMatch(r)
-		return identity, errCode
-	case isRequestPresignedSignatureV4(r):
-		identity, _, errCode := iam.doesPresignedSignatureMatch(r)
+	if !isRequestSignatureV4(r) && !isRequestPresignedSignatureV4(r) {
+		return nil, s3err.ErrAccessDenied
+	}
+	identity, _, _, authInfo, errCode := iam.verifyV4Signature(r, false)
+	if errCode != s3err.ErrNone {
 		return identity, errCode
 	}
-	return nil, s3err.ErrAccessDenied
+	return identity, bindSignedPayload(r, authInfo.HashedPayload)
 }
 
 // Constants specific to this file
@@ -80,7 +78,7 @@ func streamHashRequestBody(r *http.Request, sizeLimit int64) (string, error) {
 		return "", err
 	}
 
-	r.Body = io.NopCloser(bytes.NewReader(body))
+	(&signedPayloadBody{data: bytes.NewReader(body)}).wrap(&r.Body)
 
 	if len(body) == 0 {
 		return emptySHA256, nil
@@ -531,6 +529,13 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 	claims := make(map[string]interface{}, len(sessionInfo.RequestContext))
 	for k, v := range sessionInfo.RequestContext {
 		claims[k] = v
+	}
+	// The session's user is the one it was issued to, never a claim the
+	// identity provider forwarded.
+	if sessionInfo.ExternalUserId != "" {
+		claims["aws:username"] = sessionInfo.ExternalUserId
+	} else {
+		delete(claims, "aws:username")
 	}
 
 	// Key the principal on the OIDC subject so a session resolves to the same

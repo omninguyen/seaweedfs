@@ -34,17 +34,33 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-// Whitelist resource list that will be used in query string for signature-V2 calculation.
-// The list should be alphabetically sorted
+// Query keys covered by a signature V2, in byte order. Every subresource that
+// selects an operation must be listed, or a signature issued for one operation
+// also authorizes the others.
 var resourceList = []string{
+	"accelerate",
 	"acl",
+	"analytics",
+	"attributes",
+	"cors",
 	"delete",
+	"encryption",
+	"intelligent-tiering",
+	"inventory",
+	"legal-hold",
 	"lifecycle",
 	"location",
 	"logging",
+	"metrics",
 	"notification",
+	"object-lock",
+	"ownershipControls",
 	"partNumber",
 	"policy",
+	"policyStatus",
+	"publicAccessBlock",
+	"renameObject",
+	"replication",
 	"requestPayment",
 	"response-cache-control",
 	"response-content-disposition",
@@ -52,6 +68,9 @@ var resourceList = []string{
 	"response-content-language",
 	"response-content-type",
 	"response-expires",
+	"retention",
+	"seaweedfs-quota",
+	"tagging",
 	"torrent",
 	"uploadId",
 	"uploads",
@@ -63,10 +82,17 @@ var resourceList = []string{
 
 // Verify if request has AWS Signature Version '2'.
 func (iam *IdentityAccessManagement) isReqAuthenticatedV2(r *http.Request) (*Identity, s3err.ErrorCode) {
+	var identity *Identity
+	var errCode s3err.ErrorCode
 	if isRequestSignatureV2(r) {
-		return iam.doesSignV2Match(r)
+		identity, errCode = iam.doesSignV2Match(r)
+	} else {
+		identity, errCode = iam.doesPresignV2SignatureMatch(r)
 	}
-	return iam.doesPresignV2SignatureMatch(r)
+	if errCode != s3err.ErrNone {
+		return identity, errCode
+	}
+	return identity, bindSignedPayload(r, unsignedPayload)
 }
 
 func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(ctx context.Context, formValues http.Header) (*Identity, s3err.ErrorCode) {
@@ -309,21 +335,16 @@ func getStringToSignV2(method string, encodedResource, encodedQuery string, head
 // canonicalizedResourceV2 - canonicalize the resource string for signature V2.
 func canonicalizedResourceV2(encodedResource, encodedQuery string) string {
 	queries := strings.Split(encodedQuery, "&")
-	keyval := make(map[string]string)
+	keyval := make(map[string][]string)
 	for _, query := range queries {
-		key := query
-		val := ""
-		index := strings.Index(query, "=")
-		if index != -1 {
-			key = query[:index]
-			val = query[index+1:]
-		}
-		keyval[key] = val
+		key, val, _ := strings.Cut(query, "=")
+		keyval[key] = append(keyval[key], val)
 	}
 
+	// Every value of a repeated key is signed: handlers read the first one.
 	var canonicalQueries []string
 	for _, resource := range resourceList {
-		if val, ok := keyval[resource]; ok {
+		for _, val := range keyval[resource] {
 			if val == "" {
 				canonicalQueries = append(canonicalQueries, resource)
 				continue

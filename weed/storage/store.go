@@ -170,8 +170,12 @@ func NewStore(
 
 		location.ecShardNotifyHandler = func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume) {
 			s.UpdateMaxVolumeIdSeen(vid)
+			if _, _, quarantined := ecVolume.GetIoErrorState(); quarantined {
+				return
+			}
 			si := erasure_coding.NewShardsInfo()
 			si.Set(erasure_coding.NewShardInfo(shardId, erasure_coding.ShardSize(ecVolume.ShardSize())))
+			fileCount, deleteCount := ecVolume.FileAndDeleteCount()
 
 			// Use non-blocking send during startup to avoid deadlock
 			// The channel reader only starts after connecting to master, but we're loading during startup
@@ -184,6 +188,8 @@ func NewStore(
 				DiskType:    string(location.DiskType),
 				ExpireAtSec: ecVolume.ExpireAtSec,
 				DiskId:      diskId,
+				FileCount:   fileCount,
+				DeleteCount: deleteCount,
 				EncodeTsNs:  ecVolume.EncodeTsNs,
 			}:
 			default:
@@ -897,13 +903,16 @@ func (s *Store) deleteExpiredEcVolumes() (ecShards, deleted []*master_pb.VolumeE
 		// Quarantine EC volumes on faulty media: keep them in memory (so
 		// healthz can observe the quarantine state and an operator can
 		// recover) but stop reporting them so the master re-replicates
-		// from healthy peers. Mirrors the regular volume quarantine.
+		// from healthy peers. Mirrors the regular volume quarantine. The
+		// shards go out as deleted once, so the master drops them now rather
+		// than at the next full EC heartbeat.
 		for _, ev := range ioQuarantinedEvs {
 			ioErr, ioCount, quarantined := ev.GetIoErrorState()
 			if !quarantined {
 				ev.MarkIoQuarantined()
 				glog.Warningf("ec volume %d quarantined after %d consecutive IO errors: %v",
 					ev.VolumeId, ioCount, ioErr)
+				deleted = append(deleted, ev.ToVolumeEcShardInformationMessage(uint32(diskId))...)
 			}
 		}
 	}

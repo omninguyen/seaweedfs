@@ -713,6 +713,36 @@ fn override_query_fields(query: &str, overrides: &[(&str, String)]) -> Result<St
     Ok(fields.join("&"))
 }
 
+/// Bound on one replica forward, from connecting until its response arrives.
+/// Without it a silently partitioned peer (packets dropped, no reset) holds the
+/// write until TCP gives up, minutes later; with it the forward fails and the
+/// writer gets "replication failed" (500). It bounds each forward after the
+/// master lookup, not the whole write: the lookup has only the client's connect
+/// bound. A forward with a body gets more time, see replica_request_timeout.
+pub(crate) const REPLICA_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The slowest link a replica forward's body may cross within its bound, so a
+/// large write is not cut off on a link that is merely slower than a LAN.
+const REPLICA_MIN_BYTES_PER_SEC: u64 = 1 << 20;
+
+fn replica_request_timeout(body_len: usize) -> std::time::Duration {
+    REPLICA_REQUEST_TIMEOUT
+        + std::time::Duration::from_millis(
+            (body_len as u64).saturating_mul(1000) / REPLICA_MIN_BYTES_PER_SEC,
+        )
+}
+
+fn replica_request(
+    client: &reqwest::Client,
+    method: axum::http::Method,
+    url: &str,
+    body_len: usize,
+) -> reqwest::RequestBuilder {
+    client
+        .request(method, url)
+        .timeout(replica_request_timeout(body_len))
+}
+
 /// Helper to synchronously replicate a request to peer volume servers.
 async fn do_replicated_request(
     state: &VolumeServerState,
@@ -787,7 +817,8 @@ async fn do_replicated_request(
         )?;
         let client = state.http_client.clone();
 
-        let mut req_builder = client.request(method.clone(), &url);
+        let body_len = body.as_ref().map_or(0, |b| b.len());
+        let mut req_builder = replica_request(&client, method.clone(), &url, body_len);
 
         // Forward relevant headers
         if let Some(ct) = headers.get(axum::http::header::CONTENT_TYPE) {
@@ -1977,8 +2008,9 @@ async fn range_from_source_response(
 ) -> Response {
     let range_str = range_str.to_string();
     let tracking = track_download.then(|| state.clone());
+    let chunk_size = streaming_chunk_size(state.read_buffer_size_bytes, info.data_size as usize);
     tokio::task::spawn_blocking(move || {
-        handle_range_request_from_source(&range_str, info, response_headers, tracking)
+        handle_range_request_from_source(&range_str, info, response_headers, tracking, chunk_size)
     })
     .await
     .unwrap_or_else(|e| {
@@ -2322,6 +2354,7 @@ fn handle_range_request_from_source(
     info: crate::storage::volume::NeedleStreamInfo,
     mut headers: HeaderMap,
     state: Option<Arc<VolumeServerState>>,
+    chunk_size: usize,
 ) -> Response {
     let total = info.data_size as i64;
     let ranges = match parse_range_header(range_str, total) {
@@ -2345,21 +2378,57 @@ fn handle_range_request_from_source(
         return (StatusCode::OK, headers).into_response();
     }
 
+    let block_crcs = if ranges.iter().any(|r| r.start != 0 || r.length != total) {
+        match info.verify_checksum(chunk_size) {
+            Ok(crcs) => Some(crcs),
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("range read error: {}", err),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        None
+    };
+
     let read_slice = |start: i64, length: i64| -> Result<Vec<u8>, std::io::Error> {
         if length <= 0 {
             return Ok(Vec::new());
         }
-        let mut buf = vec![0u8; length as usize];
-        match info
-            .source
-            .read_exact_at(&mut buf, info.data_file_offset + start as u64)
-        {
+        let read = match &block_crcs {
+            Some(crcs) if length != total => {
+                info.read_checked_range(crcs, start as u64, length as u64)
+            }
+            _ => {
+                let mut buf = vec![0u8; length as usize];
+                info.source
+                    .read_exact_at(&mut buf, info.data_file_offset + start as u64)
+                    .map(|()| buf)
+            }
+        };
+        match read {
+            Ok(buf) if length == total && !info.checksum_matches(&buf) => {
+                metrics::HANDLER_COUNTER
+                    .with_label_values(&[metrics::ERROR_CRC])
+                    .inc();
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "needle data checksum mismatch for needle {}",
+                        info.needle_id
+                    ),
+                ))
+            }
             // A finished range read clears the streak a failed meta read
             // counted, like readNeedleDataInto's terminal report.
-            Ok(()) => {
+            Ok(buf) => {
                 info.io_errors.check_read_write_error(None);
                 Ok(buf)
             }
+            // A block that fails its CRC leaves the streak alone, as Go's.
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => Err(e),
             Err(e) => {
                 info.io_errors.check_read_write_error(Some(&e));
                 Err(e)
@@ -3388,10 +3457,14 @@ async fn write_upload_needle(
         Ok(vol) => vol,
         Err(refused) => return Ok(Err(refused)),
     };
+    let pending = vol.track_pending_write(&n);
     if fsync {
-        vol.write_needle(&mut n, true, fsync).map(Ok)
+        vol.write_pending_needles(&mut [(n, true)], &[Some(pending)])
+            .pop()
+            .unwrap_or(Err(crate::storage::volume::VolumeError::NotFound))
+            .map(Ok)
     } else {
-        vol.write_needle_unsynced_or_refused(&mut n)
+        vol.write_pending_needle_unsynced(&mut n, Some(&pending))
     }
 }
 
@@ -3584,15 +3657,29 @@ pub async fn delete_handler(
 
     // Read needle first to validate cookie (matching Go behavior)
     let original_cookie = cookie;
+    let is_replicate = serde_urlencoded::from_str::<Vec<(String, String)>>(&del_query)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|(name, _)| name == "type")
+        .is_some_and(|(_, value)| value == "replicate");
     {
         let vol = {
             let store = state.store.read().unwrap();
             store.find_volume(vid).map(|(_, vol)| vol)
         };
-        match vol
+        let mut found = vol
+            .as_ref()
             .ok_or(crate::storage::volume::VolumeError::NotFound)
-            .and_then(|vol| vol.read_needle_with_option(&mut n, &mut delete_read_option()))
+            .and_then(|vol| vol.read_needle_with_option(&mut n, &mut delete_read_option()));
+        if found.is_err()
+            && is_replicate
+            && let Some(vol) = &vol
         {
+            // the write this delete undoes can still be queued here
+            vol.cancel_pending_writes(needle_id, original_cookie);
+            found = vol.read_needle_with_option(&mut n, &mut delete_read_option());
+        }
+        match found {
             Ok(_) => {}
             Err(_) => {
                 let result = DeleteResult { size: 0 };
@@ -3680,7 +3767,6 @@ pub async fn delete_handler(
         }
     };
 
-    let is_replicate = del_query.split('&').any(|p| p == "type=replicate");
     if !is_replicate && delete_result.is_ok() {
         let needs_replication = {
             let store = state.store.read().unwrap();
@@ -4955,6 +5041,127 @@ fn parse_content_disposition_filename(value: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// A replica that reads the forward and never answers. Each request's
+    /// first line is sent on the returned channel.
+    async fn spawn_silent_replica() -> (
+        std::net::SocketAddr,
+        tokio::sync::mpsc::UnboundedReceiver<String>,
+    ) {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (received, receipts) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let received = received.clone();
+                tokio::spawn(async move {
+                    let mut request = vec![0u8; 4096];
+                    let n = socket.read(&mut request).await.unwrap_or(0);
+                    let text = String::from_utf8_lossy(&request[..n]).into_owned();
+                    let _ = received.send(text.lines().next().unwrap_or("").to_string());
+                    std::future::pending::<()>().await;
+                });
+            }
+        });
+        (addr, receipts)
+    }
+
+    /// The whole replicated write path, not only the request builder: the
+    /// replica receives the forward, never answers, and the write fails at
+    /// the bound for its body with an error naming that replica.
+    #[tokio::test]
+    async fn test_replicated_write_fails_at_the_bound_when_a_peer_never_answers() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (peer, mut receipts) = spawn_silent_replica().await;
+        let state = remote_manifest_state(&tmp, spawn_lookup(peer).await);
+        let body = bytes::Bytes::from(vec![0u8; REPLICA_MIN_BYTES_PER_SEC as usize]);
+        let bound = replica_request_timeout(body.len());
+        let started = std::time::Instant::now();
+        let sent = do_replicated_request(
+            &state,
+            1,
+            axum::http::Method::POST,
+            "/1,01ab",
+            "",
+            &axum::http::HeaderMap::new(),
+            Some(body),
+        )
+        .await;
+        let took = started.elapsed();
+        let forwarded = receipts
+            .try_recv()
+            .expect("the replica never received the forward");
+        assert!(
+            forwarded.starts_with("POST /1,01ab?") && forwarded.contains("type=replicate"),
+            "{forwarded}"
+        );
+        let error = sent.expect_err("a silent replica cannot ack the write");
+        assert!(error.contains(&peer.to_string()), "{error}");
+        assert!(
+            took >= bound && took < bound + std::time::Duration::from_secs(5),
+            "{took:?}"
+        );
+    }
+
+    /// A peer that accepts the connection but never answers (a silent
+    /// partition after connect) must fail the forward at the bound, not hold
+    /// the write until TCP gives up.
+    #[tokio::test(start_paused = true)]
+    async fn test_replica_request_times_out_on_a_silent_peer() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _held = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            std::future::pending::<()>().await;
+            drop(socket);
+        });
+        let client = reqwest::Client::new();
+        let url = format!("http://{}/3,01ab?type=replicate", addr);
+        let body = vec![0u8; 1 << 20];
+        let bound = replica_request_timeout(body.len());
+        let started = tokio::time::Instant::now();
+        let sent = tokio::time::timeout(
+            std::time::Duration::from_secs(600),
+            replica_request(&client, axum::http::Method::POST, &url, body.len())
+                .body(body)
+                .send(),
+        )
+        .await
+        .expect("replica forward must not outlive its bound");
+        let err = sent.expect_err("a silent peer cannot ack the replica");
+        assert!(err.is_timeout(), "{err}");
+        assert!(started.elapsed() >= bound && started.elapsed() < bound * 2);
+    }
+
+    /// A forward's bound grows with its body at REPLICA_MIN_BYTES_PER_SEC, so
+    /// a write near the file size limit is not cut off at the bodiless bound.
+    #[test]
+    fn test_replica_request_bound_grows_with_the_body() {
+        assert_eq!(replica_request_timeout(0), REPLICA_REQUEST_TIMEOUT);
+        let mib = REPLICA_MIN_BYTES_PER_SEC as usize;
+        assert_eq!(
+            replica_request_timeout(256 * mib),
+            REPLICA_REQUEST_TIMEOUT + std::time::Duration::from_secs(256)
+        );
+        assert_eq!(
+            replica_request_timeout(mib / 2),
+            REPLICA_REQUEST_TIMEOUT + std::time::Duration::from_millis(500)
+        );
+        let request = replica_request(
+            &reqwest::Client::new(),
+            axum::http::Method::POST,
+            "http://127.0.0.1:1/3,01ab?type=replicate",
+            64 * mib,
+        )
+        .build()
+        .unwrap();
+        assert_eq!(
+            request.timeout(),
+            Some(&(REPLICA_REQUEST_TIMEOUT + std::time::Duration::from_secs(64)))
+        );
+    }
+
     /// The upload handler reads fsync off the decoded query fields rather than
     /// matching the raw string, because Go's r.FormValue decodes and a raw
     /// match would silently drop a percent-encoded value.
@@ -6227,6 +6434,171 @@ mod tests {
         })
     }
 
+    /// EC reconstructed-interval counter: one fresh volume per case, the needle (on
+    /// shard 0) EC-encoded under a known generation, the `missing` shards
+    /// unmounted and the shards in `corrupt` overwritten where the needle lies.
+    /// Returns the read's bytes and the marker lines logged at debug.
+    async fn read_ec_reconstructed(
+        vid: u32,
+        missing: &[crate::storage::erasure_coding::ec_shard::ShardId],
+        corrupt: &[crate::storage::erasure_coding::ec_shard::ShardId],
+    ) -> (Option<Vec<u8>>, Vec<String>) {
+        use crate::storage::erasure_coding::ec_encoder::write_ec_files;
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::volume::{VifEcShardConfig, VifVolumeInfo, Volume, VolumeSpec};
+        use std::io::{Seek, SeekFrom, Write};
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let dir = tmp.path().to_str().unwrap();
+        let v = Volume::new(
+            dir,
+            dir,
+            VolumeId(vid),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        )
+        .unwrap();
+        let mut n = Needle {
+            id: NeedleId(7),
+            cookie: Cookie(TEST_COOKIE),
+            data: b"ec degraded read".to_vec(),
+            data_size: 16,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, false).unwrap();
+        v.sync_to_disk().unwrap();
+        v.close();
+        let block_size = write_ec_files(dir, dir, "", VolumeId(vid), 10, 4).unwrap();
+        let vif = format!("{dir}/{vid}.vif");
+        let mut info: VifVolumeInfo =
+            serde_json::from_str(&std::fs::read_to_string(&vif).unwrap()).unwrap();
+        info.ec_shard_config = Some(VifEcShardConfig {
+            data_shards: 10,
+            parity_shards: 4,
+            encode_ts_ns: EC_GENERATION,
+            block_size,
+        });
+        crate::storage::store::save_vif_volume_info(&vif, &info).unwrap();
+        for shard in corrupt {
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(format!("{dir}/{vid}.ec{shard:02}"))
+                .unwrap();
+            f.seek(SeekFrom::Start(0)).unwrap();
+            f.write_all(&[0xA5; 256]).unwrap();
+        }
+        let mounted: Vec<_> = (0..14).filter(|s| !missing.contains(s)).collect();
+        state
+            .store
+            .write()
+            .unwrap()
+            .mount_ec_shards(VolumeId(vid), "", &mounted)
+            .unwrap();
+
+        let out = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_ansi(false)
+            .with_writer(out.clone())
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+        // Another test may have reached the marker's callsite first, with no
+        // subscriber, and cached it as never enabled.
+        tracing::callsite::rebuild_interest_cache();
+        let read = crate::server::store_ec::read_ec_shard_needle_or_miss(
+            &state,
+            VolumeId(vid),
+            NeedleId(7),
+        )
+        .await;
+        drop(guard);
+        let text = String::from_utf8(out.0.lock().unwrap().clone()).unwrap();
+        let lines = text
+            .lines()
+            .filter(|l| l.contains("ec reconstructed interval:"))
+            .map(|l| l.trim_end().to_string())
+            .collect();
+        (read.ok().and_then(Result::ok).map(|n| n.data), lines)
+    }
+
+    const EC_GENERATION: i64 = 1_700_000_000_123_456_789;
+
+    #[derive(Clone, Default)]
+    struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+        type Writer = Captured;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// What the counter and line mean, case by case. A direct read logs nothing;
+    /// a read that rebuilds shard 0 logs and counts one success; one with 5
+    /// shards left fails and logs one failure; a corrupt interval read directly
+    /// goes to the repair path and isn't marked. `success` is not needle
+    /// validation: rebuilt from corrupt parity, the interval logs success while
+    /// the read fails.
+    #[tokio::test]
+    async fn test_ec_reconstructed_interval() {
+        use crate::metrics::EC_RECONSTRUCTED_INTERVAL_COUNTER as C;
+        let prefix = |vid: u32| {
+            format!(
+                "ec reconstructed interval: volume={vid} generation={EC_GENERATION} needle=7 shard=0 "
+            )
+        };
+        let data = Some(b"ec degraded read".to_vec());
+
+        assert_eq!(
+            read_ec_reconstructed(61, &[], &[]).await,
+            (data.clone(), vec![])
+        );
+
+        let success = C.with_label_values(&["success"]).get();
+        let (read, lines) = read_ec_reconstructed(62, &[0], &[]).await;
+        assert_eq!(read, data);
+        assert!(
+            matches!(&lines[..], [l] if l.ends_with(&(prefix(62) + "result=success error=<nil>"))),
+            "{lines:?}"
+        );
+        assert!(C.with_label_values(&["success"]).get() > success);
+
+        let failure = C.with_label_values(&["failure"]).get();
+        let (read, lines) = read_ec_reconstructed(63, &[0, 6, 7, 8, 9, 10, 11, 12, 13], &[]).await;
+        assert_eq!(read, None);
+        assert!(
+            matches!(&lines[..], [l] if l.contains(&(prefix(63) + "result=failure error=")) && !l.ends_with("error=")),
+            "{lines:?}"
+        );
+        assert!(C.with_label_values(&["failure"]).get() > failure);
+
+        let (read, lines) = read_ec_reconstructed(64, &[], &[0, 10, 11, 12, 13]).await;
+        assert_eq!(
+            (read, lines),
+            (None, vec![]),
+            "an unrepairable corrupt read was marked"
+        );
+
+        let success = C.with_label_values(&["success"]).get();
+        let (read, lines) = read_ec_reconstructed(65, &[0], &[10, 11, 12, 13]).await;
+        assert_eq!(read, None, "a read rebuilt from corrupt parity was served");
+        assert!(
+            matches!(&lines[..], [l] if l.ends_with(&(prefix(65) + "result=success error=<nil>"))),
+            "{lines:?}"
+        );
+        assert!(C.with_label_values(&["success"]).get() > success);
+    }
+
     /// Write `data` as a chunk manifest on a fresh EC volume 2. Chunks stay on volume 1.
     fn put_ec_manifest(
         state: &VolumeServerState,
@@ -6679,11 +7051,143 @@ mod tests {
             io_unavailable: Arc::default(),
             io_errors: io_errors.clone(),
             needle_id: NeedleId(1),
-            checksum: 0,
+            checksum: CRC::new(&data).0,
+            append_at_ns: 0,
+            load_generation: u64::MAX,
         };
-        let resp = handle_range_request_from_source("bytes=10-19", info, HeaderMap::new(), None);
+        // The checksum pass leaves the streak to the range read.
+        info.verify_checksum(64).unwrap();
+        assert_eq!(io_errors.get_io_error_state().1, 2);
+        let resp =
+            handle_range_request_from_source("bytes=10-19", info, HeaderMap::new(), None, 64);
         assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
         assert_eq!(io_errors.get_io_error_state().1, 0);
+    }
+
+    /// A range carries no checksum of its own, so the first ranged read of a
+    /// needle checks the whole needle's CRC and sends none of the range on a
+    /// mismatch; the reader can then fall back to another replica. A verified
+    /// needle is checked again once the volume reloads.
+    #[tokio::test]
+    async fn test_range_read_checks_the_needle_checksum() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let payload =
+            |seed: u32| -> Vec<u8> { (0..3000u32).map(|i| ((i * 7 + seed) % 251) as u8).collect() };
+        let damage = |data: &[u8]| {
+            let dat = tmp.path().join("1.dat");
+            let mut bytes = std::fs::read(&dat).unwrap();
+            let at = bytes.windows(data.len()).position(|w| w == data).unwrap();
+            bytes[at + 10] ^= 0xff;
+            std::fs::write(&dat, bytes).unwrap();
+        };
+
+        let intact = payload(1);
+        let path = put_test_needle(&state, 0x6e7a_0c01, &intact);
+        let (status, _, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=1000-1499")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, &intact[1000..1500]);
+
+        // Damage a byte outside the range: the range itself is intact, but
+        // the needle is not, so this replica must not serve it.
+        let damaged = payload(2);
+        let path = put_test_needle(&state, 0x6e7a_0c02, &damaged);
+        damage(&damaged);
+        for range in [&b"bytes=1000-1499"[..], b"bytes=0-", b"bytes=0-1,1000-1001"] {
+            let (status, _, body) = send_read(&state, Method::GET, &path, Some(range)).await;
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{range:?}");
+            assert!(
+                !body.windows(2).any(|w| w == &damaged[1000..1002]),
+                "{range:?}"
+            );
+        }
+
+        // Concurrent first ranges of a needle all see the outcome of the check.
+        for (seed, damage_it) in [(3, false), (4, true)] {
+            let data = payload(seed);
+            let path = put_test_needle(&state, 0x6e7a_0c00 + seed as u64, &data);
+            if damage_it {
+                damage(&data);
+            }
+            let reads = (0..8).map(|_| send_read(&state, Method::GET, &path, Some(b"bytes=10-19")));
+            for (status, _, _) in futures::future::join_all(reads).await {
+                assert_eq!(status == StatusCode::PARTIAL_CONTENT, !damage_it, "{seed}");
+            }
+        }
+
+        // A verified needle is checked again after a reload, as a compaction
+        // commit does; until then later ranges skip the check.
+        let data = payload(5);
+        let path = put_test_needle(&state, 0x6e7a_0c05, &data);
+        let (status, _, _) = send_read(&state, Method::GET, &path, Some(b"bytes=10-19")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        let (_, v) = state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap();
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+        damage(&data);
+        let (status, _, _) = send_read(&state, Method::GET, &path, Some(b"bytes=10-19")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+
+        // Damage that appears after a needle passed its check is caught by
+        // the block it falls in, while ranges over intact blocks still read.
+        let block = 64 * 1024;
+        let data: Vec<u8> = (0..5 * block - 100)
+            .map(|i| (i * 7 + i / 251) as u8)
+            .collect();
+        let path = put_test_needle(&state, 0x6e7a_0c06, &data);
+        let range = |from: usize, to: usize| format!("bytes={}-{}", from, to - 1).into_bytes();
+        let damaged_ranges = [
+            (3 * block + 10, 3 * block + 110),
+            (block - 50, 4 * block - 50),
+        ];
+        for (from, to) in damaged_ranges {
+            let (status, _, body) =
+                send_read(&state, Method::GET, &path, Some(&range(from, to))).await;
+            assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+            assert_eq!(body, &data[from..to]);
+        }
+        let dat = tmp.path().join("1.dat");
+        let mut bytes = std::fs::read(&dat).unwrap();
+        let at = bytes.windows(64).position(|w| w == &data[..64]).unwrap();
+        bytes[at + 3 * block + 500] ^= 0xff;
+        std::fs::write(&dat, bytes).unwrap();
+        for (from, to) in damaged_ranges {
+            let (status, _, _) =
+                send_read(&state, Method::GET, &path, Some(&range(from, to))).await;
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{from}-{to}");
+        }
+        for (from, to) in [
+            (10, 110),
+            (2 * block + 1, 3 * block),
+            (4 * block + 5, data.len()),
+        ] {
+            let (status, _, body) =
+                send_read(&state, Method::GET, &path, Some(&range(from, to))).await;
+            assert_eq!(status, StatusCode::PARTIAL_CONTENT, "{from}-{to}");
+            assert_eq!(body, &data[from..to]);
+        }
+    }
+
+    #[test]
+    fn test_range_check_block_size() {
+        use crate::storage::volume::range_check_block_size;
+        let block = 64 * 1024;
+        let mib = 1024 * 1024;
+        for (size, want) in [
+            (0, block),
+            (64 * block, block),
+            (64 * block + 1, 2 * block),
+            (64 * mib, mib),
+            (1 << 34, mib),
+        ] {
+            assert_eq!(range_check_block_size(size), want, "{size}");
+        }
     }
 
     /// Range is read as Go reads it: a byte its parseRange cannot parse is a
@@ -8730,6 +9234,98 @@ mod tests {
                 response.headers().get("x-seaweed-write-outcome").is_none(),
                 "{query}"
             );
+        }
+    }
+
+    /// A write queued behind another write's fsync is not indexed yet, so a
+    /// replicate delete of it finds nothing. The delete cancels the write, so
+    /// it is taken back when it lands instead of reviving the needle on this
+    /// copy alone, even when its handler was dropped while it waited in the
+    /// durable queue. A plain delete that finds nothing is not sent on to the
+    /// replicas, so it leaves the write alone.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[allow(clippy::await_holding_lock)]
+    async fn test_replicate_delete_cancels_a_queued_write() {
+        use crate::server::write_queue::{SyncBatchOption, WriteQueue};
+        use crate::storage::volume::VolumeError;
+        use std::time::{Duration, Instant};
+
+        for (id, fsync, query, abandon) in [
+            (0x6e7a_0c01u64, false, "?type=replicate", false),
+            (0x6e7a_0c02, true, "?type=replicate", false),
+            (0x6e7a_0c03, true, "?type=replicate", true),
+            (0x6e7a_0c04, false, "", false),
+            (0x6e7a_0c05, false, "?%74ype=replicat%65", false),
+        ] {
+            let replicate = !query.is_empty();
+            let tmp = tempfile::TempDir::new().unwrap();
+            let state = volume_test_state(&tmp);
+            assert!(
+                state
+                    .write_queue
+                    .set(WriteQueue::new(
+                        state.clone(),
+                        128,
+                        SyncBatchOption::default()
+                    ))
+                    .is_ok()
+            );
+            let vol = state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .unwrap()
+                .1;
+            let held = vol.sync_lock_for_test();
+
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(TEST_COOKIE),
+                data: b"late write".to_vec(),
+                data_size: 10,
+                ..Needle::default()
+            };
+            n.checksum = CRC::new(&n.data);
+            let write = tokio::spawn({
+                let state = state.clone();
+                async move { write_upload_needle(&state, VolumeId(1), n, fsync).await }
+            });
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while vol.pending_writes_for_test(NeedleId(id)) == 0 {
+                assert!(Instant::now() < deadline, "the write never registered");
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+
+            let path = format!("/1,{:x}{:08x}{}", id, TEST_COOKIE, query);
+            assert_eq!(send_delete(&state, &path).await, StatusCode::NOT_FOUND);
+            if abandon {
+                write.abort();
+                drop(held);
+                while vol.pending_writes_for_test(NeedleId(id)) > 0 {
+                    assert!(Instant::now() < deadline, "the queued write never settled");
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            } else {
+                drop(held);
+                let written = write.await.unwrap();
+                if replicate {
+                    assert!(matches!(written, Err(VolumeError::Deleted)), "{id:x}");
+                } else {
+                    assert!(matches!(written, Ok(Ok(_))), "{id:x}");
+                }
+                assert_eq!(vol.pending_writes_for_test(NeedleId(id)), 0);
+            }
+
+            let read = vol.read_needle(&mut Needle {
+                id: NeedleId(id),
+                ..Needle::default()
+            });
+            if replicate {
+                assert!(read.is_err(), "{id:x}: the cancelled write is live");
+            } else {
+                assert!(read.is_ok(), "{id:x}: {read:?}");
+            }
         }
     }
 

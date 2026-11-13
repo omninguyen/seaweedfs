@@ -138,6 +138,10 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
+	root := CatalogRecordRoot(bucketName, viewPath, req.MetadataLocation, "")
+	if err := h.refuseClaimedLocation(w, r, filerClient, bucketName, viewPath, root); err != nil {
+		return err
+	}
 
 	now := time.Now()
 	versionToken := generateVersionToken()
@@ -169,7 +173,7 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 			ExtendedKeyEntryType: []byte(EntryTypeView),
 			ExtendedKeyDeleting:  []byte(createClaim),
 		}
-		if err := h.claimCatalogEntry(r.Context(), client, viewPath, attrs); err != nil {
+		if err := h.claimCatalogEntryAt(r.Context(), client, bucketName, viewPath, root, attrs, viewPath); err != nil {
 			return err
 		}
 		return h.confirmParent(r.Context(), client, namespacePath, isNamespace, viewPath, attrs, viewPath)
@@ -177,6 +181,10 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		if errors.Is(err, ErrNameTaken) {
 			h.writeError(w, http.StatusConflict, ErrCodeViewAlreadyExists, fmt.Sprintf("view %s already exists", viewName))
+			return err
+		}
+		if errors.Is(err, ErrLocationInUse) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
 			return err
 		}
 		if errors.Is(err, ErrConcurrentUpdate) {
@@ -459,7 +467,8 @@ func (h *S3TablesHandler) authorizeUpdateView(w http.ResponseWriter, r *http.Req
 		return nil, err
 	}
 
-	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName, namespaceName); err != nil {
+	// As for tables: the shape now, where it may point once authorized.
+	if _, err := validateMetadataLocationShape(req.MetadataLocation, bucketName); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return nil, err
 	}
@@ -501,6 +510,10 @@ func (h *S3TablesHandler) authorizeUpdateView(w http.ResponseWriter, r *http.Req
 	if !h.authorizeViewOp(r, "UpdateView", accountID, metadata.OwnerAccountID, bucketMetadata.OwnerAccountID, viewPolicy, bucketPolicy, viewARN, bucketName, namespaceName, viewName, bucketTags) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to update view")
 		return nil, NewAuthError("UpdateView", accountID, "not authorized to update view")
+	}
+
+	if err := h.refuseUpdatedMetadataLocation(w, r, filerClient, bucketName, namespaceName, viewPath, &metadata, req.MetadataLocation); err != nil {
+		return nil, err
 	}
 
 	return &updateViewTarget{
@@ -551,6 +564,13 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 			metadata.Metadata.FullMetadata = req.Metadata.FullMetadata
 		}
 	}
+	newRoot := CatalogRecordRoot(target.bucketName, viewPath, req.MetadataLocation, metadata.WarehouseLocation)
+	movesRoot := req.MetadataLocation != "" && newRoot != metadata.root(target.bucketName, viewPath)
+	if movesRoot {
+		if err := h.refuseClaimedLocation(w, r, filerClient, target.bucketName, viewPath, newRoot); err != nil {
+			return err
+		}
+	}
 	if req.MetadataLocation != "" {
 		metadata.MetadataLocation = req.MetadataLocation
 	}
@@ -573,7 +593,7 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 	// and a view deleted and created again under the name would take a write
 	// nobody authorized for it.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.mutateCatalogRecord(r.Context(), client, viewPath, func(extended map[string][]byte) error {
+		write := func(extended map[string][]byte) error {
 			if !bytes.Equal(extended[ExtendedKeyMetadata], target.storedMetadata) {
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyMetadata)
 			}
@@ -581,10 +601,19 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
 			}
 			extended[ExtendedKeyMetadata] = metadataBytes
+			delete(extended, ExtendedKeyMoving)
 			return nil
-		})
+		}
+		if !movesRoot {
+			return h.mutateCatalogRecord(r.Context(), client, viewPath, write)
+		}
+		return h.moveCatalogRecord(r.Context(), client, target.bucketName, viewPath, newRoot, target.storedMetadata, metadataBytes, write)
 	})
 	if err != nil {
+		if errors.Is(err, ErrLocationInUse) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
+			return err
+		}
 		if errors.Is(err, ErrConcurrentUpdate) {
 			h.writeError(w, http.StatusConflict, ErrCodeConflict, "view changed concurrently, retry the request")
 			return err

@@ -85,7 +85,7 @@ type IdentityAccessManagement struct {
 	// primeBucketForIAM loads a bucket's config (and with it the advanced-IAM
 	// bucket-policy mirror backfill) before an IAM authorization that will
 	// evaluate that mirror. Set by NewS3ApiServer; nil in tests.
-	primeBucketForIAM func(bucket string)
+	primeBucketForIAM func(bucket string) s3err.ErrorCode
 
 	// Cached policy engine for IAM policy fallback evaluation.
 	// Keyed by policy name, kept in sync by PutPolicy/DeletePolicy.
@@ -1410,6 +1410,17 @@ func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) erro
 					return fmt.Errorf("failed to marshal inline policy %q for user %q: %w", policyName, ident.Name, err)
 				}
 				config.Policies = append(config.Policies, &iam_pb.Policy{Name: runtimeName, Content: string(content)})
+			}
+		}
+		// The proto carries only the user's own keys; the merge replaces the
+		// identity, so its service account keys have to come from the store.
+		serviceAccounts, err := iam.credentialManager.ListServiceAccounts(context.Background())
+		if err != nil {
+			return err
+		}
+		for _, sa := range serviceAccounts {
+			if sa.ParentUser == ident.Name {
+				config.ServiceAccounts = append(config.ServiceAccounts, sa)
 			}
 		}
 	}
@@ -2737,12 +2748,14 @@ func (iam *IdentityAccessManagement) evaluateAttachedIAMPolicies(r *http.Request
 	if isBucketListingRequest(r, action) {
 		resourceObject = ""
 	}
-	resource := buildResourceARN(bucket, resourceObject)
+	s3Action, resource := resolveS3AuthTarget(action, bucket, resourceObject, r)
 	principal := buildPrincipalARN(identity, r)
-	s3Action := ResolveS3Action(r, string(action), bucket, resourceObject)
 	explicitAllow := false
 	conditions := engine.ExtractConditionValuesFromRequest(r)
-	for k, v := range policy_engine.ExtractPrincipalVariables(principal) {
+	for key, values := range vectorIAMConditions(r) {
+		conditions[key] = values
+	}
+	for k, v := range principalVariables(principal, identity.Claims) {
 		conditions[k] = v
 	}
 
@@ -3121,6 +3134,11 @@ func (iam *IdentityAccessManagement) authorizeObjectKeyAction(r *http.Request, i
 	keyReq := objectKeyPolicyRequest(r, method, bucket, objectKey, versionId)
 
 	if iam.policyEngine != nil {
+		if iam.primeBucketForIAM != nil {
+			if code := iam.primeBucketForIAM(bucket); code != s3err.ErrNone && code != s3err.ErrNoSuchBucket {
+				return code
+			}
+		}
 		principal := buildPrincipalARN(identity, keyReq)
 		allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, objectKey, string(action), principal, keyReq, identity.Claims, nil)
 		if err != nil {
@@ -3203,7 +3221,7 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 	// The evaluation below consults the bucket-policy:<bucket> mirror, so the
 	// bucket's lazy load (which backfills that mirror) must happen first -
 	// nothing earlier on a denied request's path would ever trigger it.
-	if iam.primeBucketForIAM != nil && bucket != "" {
+	if iam.primeBucketForIAM != nil && bucket != "" && !strings.HasPrefix(string(action), "s3vectors:") {
 		iam.primeBucketForIAM(bucket)
 	}
 
@@ -3265,6 +3283,9 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 // AuthorizeAction applies, so the native-permission floor's explicit-deny
 // check evaluates the same action and resource ARN as the policy engine.
 func resolveS3AuthTarget(action Action, bucket, object string, r *http.Request) (s3Action, resourceArn string) {
+	if strings.HasPrefix(string(action), "s3vectors:") {
+		return string(action), bucket
+	}
 	resourceObjectKey := object
 	if isBucketListingRequest(r, action) {
 		resourceObjectKey = ""

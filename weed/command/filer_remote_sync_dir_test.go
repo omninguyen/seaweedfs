@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -455,7 +456,19 @@ func (c *stubFilerClient) UpdateEntry(_ context.Context, req *filer_pb.UpdateEnt
 	if c.updateErr != nil {
 		return &filer_pb.UpdateEntryResponse{}, c.updateErr
 	}
+	if key := req.Directory + "/" + req.Entry.GetName(); c.entries[key] != nil {
+		c.entries[key] = req.Entry
+	} else if c.entry != nil && c.entry.Name == req.Entry.GetName() {
+		c.entry = req.Entry
+	}
 	return &filer_pb.UpdateEntryResponse{}, nil
+}
+
+func (c *stubFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	return (&lookupEntrySeaweedClient{entries: c.entries}).ListEntries(ctx, in, opts...)
 }
 
 func (c *stubFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
@@ -537,6 +550,230 @@ func entryWith(name string, remote *filer_pb.RemoteEntry, chunks ...*filer_pb.Fi
 	return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}, RemoteEntry: remote, Chunks: chunks}
 }
 
+// blockingFilerClient answers a lookup only when its context ends.
+type blockingFilerClient struct {
+	stubFilerClient
+}
+
+func (c *blockingFilerClient) LookupDirectoryEntry(ctx context.Context, _ *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	c.lookups++
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (c *blockingFilerClient) UpdateEntry(ctx context.Context, _ *filer_pb.UpdateEntryRequest, _ ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
+	c.updates++
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (c *blockingFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return fn(c)
+}
+
+func TestFilerLookupsOnTheSyncPathCarryADeadline(t *testing.T) {
+	remoteSyncLookupTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { remoteSyncLookupTimeout = 30 * time.Second })
+	const dir = "/buckets/ingest"
+	event := entryWith("lease.json", nil, chunk("3,01", "e1"))
+
+	started := time.Now()
+	current, err := currentEntry(&blockingFilerClient{}, dir, event.Name)
+	if current != nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("currentEntry = %v, %v; want nil, deadline exceeded", current, err)
+	}
+	if superseded, lookupErr := isSuperseded(&blockingFilerClient{}, dir, event); superseded || !errors.Is(lookupErr, context.DeadlineExceeded) {
+		t.Errorf("isSuperseded = %v, %v on a lookup that timed out; want false, deadline exceeded (no upload starts on an unanswered lookup)", superseded, lookupErr)
+	}
+	if _, writeErr := retriedWriteFile(nil, &blockingFilerClient{}, dir, event, &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "b", Path: "/lease.json"}); !errors.Is(writeErr, context.DeadlineExceeded) {
+		t.Errorf("retriedWriteFile = %v on an unanswered supersession lookup; want the lookup error, not an upload", writeErr)
+	}
+	stamp := &blockingFilerClient{}
+	if stampErr := updateLocalEntry(stamp, dir, event, &filer_pb.RemoteEntry{StorageName: "b2"}); stamp.updates != 1 || !errors.Is(stampErr, context.DeadlineExceeded) {
+		t.Errorf("updateLocalEntry = %v after %d updates on an unanswered stamp; want deadline exceeded after 1", stampErr, stamp.updates)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("four timed-out filer calls took %v; the deadline did not bound them", elapsed)
+	}
+}
+
+// answerThenBlockFilerClient answers the first lookup and blocks every later
+// one until its context ends.
+type answerThenBlockFilerClient struct {
+	stubFilerClient
+	entry *filer_pb.Entry
+}
+
+func (c *answerThenBlockFilerClient) LookupDirectoryEntry(ctx context.Context, _ *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	c.lookups++
+	if c.lookups == 1 {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entry}, nil
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (c *answerThenBlockFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return fn(c)
+}
+
+func TestRetriedWriteFileStopsWhenTheLookupAfterAFailureIsUnanswered(t *testing.T) {
+	remoteSyncLookupTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { remoteSyncLookupTimeout = 30 * time.Second })
+	const dir = "/buckets/ingest"
+	event := entryWith("lease.json", nil, chunk("3,01", "e1"))
+	dest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "tier", Path: "/" + event.Name}
+	transient := errors.New("RequestError: send request failed\ncaused by: Put \"https://s3.example.com/tier/x\": 503 Service Unavailable")
+	remote := &failingRemote{err: transient}
+	filerClient := &answerThenBlockFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"))}
+
+	started := time.Now()
+	_, err := retriedWriteFile(remote, filerClient, dir, event, dest)
+	if !errors.Is(err, errLookupUnanswered) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the unanswered-lookup error wrapping the deadline", err)
+	}
+	if remote.writes != 1 {
+		t.Errorf("wrote %d times, want 1: no further attempt until the filer answers", remote.writes)
+	}
+	if filerClient.lookups != 2 {
+		t.Errorf("looked up the filer %d times, want one before the attempt and one after it failed", filerClient.lookups)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("took %v; the retry loop did not stop on the unanswered lookup", elapsed)
+	}
+}
+
+func TestResolveLastSyncOffsetKeepsTheSavedOffsetWhenTheLookupFails(t *testing.T) {
+	saved := time.Date(2026, 11, 4, 17, 57, 10, 123_000_000, time.UTC)
+	lookupFails := func() (*filer_pb.Entry, error) { return nil, context.DeadlineExceeded }
+	savedOffset := func() (int64, error) { return saved.UnixNano(), nil }
+
+	got, err := resolveLastSyncOffset("/buckets/x", 0, lookupFails, savedOffset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Equal(saved) {
+		t.Fatalf("resolved %v, want the saved offset %v: a failed mount lookup must not start the replay at now", got, saved)
+	}
+
+	// a mount that answers resumes from the saved offset when it postdates the directory
+	entry := &filer_pb.Entry{Name: "x", Attributes: &filer_pb.FuseAttributes{Crtime: saved.Add(-time.Hour).Unix()}}
+	got, err = resolveLastSyncOffset("/buckets/x", 0, func() (*filer_pb.Entry, error) { return entry, nil }, savedOffset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Equal(saved) {
+		t.Fatalf("resolved %v, want %v", got, saved)
+	}
+
+	// remote.unmount recreates the directory, then saves the offset in the same
+	// second: starting at the creation second would replay the unmount's purge
+	unmounted := &filer_pb.Entry{Name: "x", Attributes: &filer_pb.FuseAttributes{Crtime: saved.Unix()}}
+	got, err = resolveLastSyncOffset("/buckets/x", 0, func() (*filer_pb.Entry, error) { return unmounted, nil }, savedOffset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Equal(saved) {
+		t.Fatalf("resolved %v, want the saved offset %v", got, saved)
+	}
+}
+
+func TestResolveLastSyncOffsetReturnsTheErrorToTheRetryLoop(t *testing.T) {
+	lookupFails := func() (*filer_pb.Entry, error) { return nil, context.DeadlineExceeded }
+	noOffset := func() (int64, error) { return 0, nil }
+	readFails := func() (int64, error) { return 0, errors.New("filer unavailable") }
+
+	// no saved offset to fall back on: the error goes back to the caller
+	if _, err := resolveLastSyncOffset("/buckets/x", 0, lookupFails, noOffset); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("got %v, want the lookup error: without a saved offset the caller's retry loop decides, not an exit", err)
+	}
+
+	// no directory and no saved offset yet: a first run starts no later than
+	// the lookup, so a bucket created while the offset is read is replayed
+	started := time.Now()
+	var lookedUp time.Time
+	notFound := func() (*filer_pb.Entry, error) {
+		lookedUp = time.Now()
+		return nil, fmt.Errorf("lookup /buckets: %w", filer_pb.ErrNotFound)
+	}
+	slowNoOffset := func() (int64, error) { time.Sleep(10 * time.Millisecond); return 0, nil }
+	if got, err := resolveLastSyncOffset("/buckets", 0, notFound, slowNoOffset); err != nil || got.Before(started) || got.After(lookedUp) {
+		t.Fatalf("got %v, %v; want a start between %v and the lookup at %v", got, err, started, lookedUp)
+	}
+
+	// the mount answers but the saved offset is unreadable: never its creation time
+	mount := &filer_pb.Entry{Name: "x", Attributes: &filer_pb.FuseAttributes{Crtime: 1}}
+	if _, err := resolveLastSyncOffset("/buckets/x", 0, func() (*filer_pb.Entry, error) { return mount, nil }, readFails); err == nil || !strings.Contains(err.Error(), "filer unavailable") {
+		t.Fatalf("got %v, want the offset read error: the creation time would replay everything already synced", err)
+	}
+
+	// -timeAgo set, the saved offset unreadable: never now minus timeAgo
+	if _, err := resolveLastSyncOffset("/buckets/x", time.Hour, func() (*filer_pb.Entry, error) { return nil, nil }, readFails); err == nil || !strings.Contains(err.Error(), "filer unavailable") {
+		t.Fatalf("got %v, want the offset read error", err)
+	}
+}
+
+// TestSaveResumeOffsetKeepsTheStartForTheRetry: a subscription that ends
+// before its first checkpoint still records where it started, so the retry's
+// -timeAgo, recomputed from a later now, cannot start after it.
+func TestSaveResumeOffsetKeepsTheStartForTheRetry(t *testing.T) {
+	filerAddress, dialOption := startKvFiler(t)
+	const dir = "/buckets/x"
+	start := time.Now().Add(-time.Hour)
+	processor := NewMetadataProcessor(func(*filer_pb.SubscribeMetadataResponse) error { return nil }, 1, start.UnixNano())
+	saveResumeOffset(dialOption, filerAddress, dir, processor)
+
+	got, err := resolveLastSyncOffset(dir, time.Hour, func() (*filer_pb.Entry, error) { return nil, nil }, func() (int64, error) {
+		return remote_storage.GetSyncOffset(dialOption, filerAddress, dir)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.After(start) {
+		t.Fatalf("the retry starts at %v, after the first subscription's start %v", got, start)
+	}
+
+	// the write fails and the retry reads no saved offset: the position
+	// returned for this process still holds the start
+	failingAddress, failingDialOption := startFiler(t, &failingKvFilerServer{})
+	resumeTsNs := saveResumeOffset(failingDialOption, failingAddress, dir, processor)
+	emptyAddress, emptyDialOption := startKvFiler(t)
+	got, err = collectLastSyncOffset(&stubFilerClient{}, emptyDialOption, emptyAddress, dir, time.Hour, resumeTsNs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.After(start) {
+		t.Fatalf("after a failed write the retry starts at %v, after the first subscription's start %v", got, start)
+	}
+}
+
+func TestRemoteUploadReaderSharesOneChunkCache(t *testing.T) {
+	entry := entryWith("blob.bin", nil, chunk("3,01", "e1"))
+	for i := 0; i < 3; i++ {
+		if _, closeFn, err := remoteUploadReader(&stubFilerClient{}, entry); err != nil {
+			t.Fatal(err)
+		} else if closeFn != nil {
+			_ = closeFn()
+		}
+	}
+	runtime.GC()
+	before := runtime.NumGoroutine()
+	for i := 0; i < 200; i++ {
+		_, closeFn, err := remoteUploadReader(&stubFilerClient{}, entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if closeFn != nil {
+			_ = closeFn()
+		}
+	}
+	runtime.GC()
+	time.Sleep(100 * time.Millisecond)
+	if after := runtime.NumGoroutine(); after-before > 20 {
+		t.Fatalf("200 upload readers left %d goroutines behind (%d -> %d); one chunk cache per reader leaks its worker", after-before, before, after)
+	}
+}
+
 // TestIsSuperseded decides what a failed upload means for its event (#11148).
 // A replay from an earlier offset re-emits creates for entries the filer has
 // since deleted or rewritten; their chunks are gone, so the upload can never
@@ -571,12 +808,12 @@ func TestIsSuperseded(t *testing.T) {
 		{name: "still as described", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"), chunk("3,02", "e2"))}, want: false},
 		{name: "still as described, since replicated", filer: &stubFilerClient{entry: entryWith(event.Name, stamped, chunk("3,01", "e1"), chunk("3,02", "e2"))}, want: false},
 		{name: "appended since", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"), chunk("3,02", "e2"), chunk("3,03", "e3"))}, want: true},
-		{name: "filer lookup failed", filer: &stubFilerClient{err: errors.New("rpc error: code = Unavailable")}, want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isSuperseded(tt.filer, dir, event); got != tt.want {
-				t.Errorf("isSuperseded = %v, want %v", got, tt.want)
+			got, err := isSuperseded(tt.filer, dir, event)
+			if err != nil || got != tt.want {
+				t.Errorf("isSuperseded = %v, %v; want %v, nil", got, err, tt.want)
 			}
 			if tt.filer.lookups != 1 {
 				t.Errorf("looked up the filer %d times, want 1", tt.filer.lookups)
@@ -584,19 +821,35 @@ func TestIsSuperseded(t *testing.T) {
 		})
 	}
 
+	t.Run("filer lookup failed", func(t *testing.T) {
+		lookupErr := errors.New("rpc error: code = Unavailable")
+		if got, err := isSuperseded(&stubFilerClient{err: lookupErr}, dir, event); got || !errors.Is(err, lookupErr) {
+			t.Errorf("isSuperseded = %v, %v; want false and the lookup error", got, err)
+		}
+	})
+
+	superseded := func(t *testing.T, filer *stubFilerClient, entry *filer_pb.Entry) bool {
+		t.Helper()
+		got, err := isSuperseded(filer, dir, entry)
+		if err != nil {
+			t.Fatalf("isSuperseded: %v", err)
+		}
+		return got
+	}
+
 	t.Run("written since: the event described an entry without data", func(t *testing.T) {
 		remoteOnly := entryWith("video.mp4", &filer_pb.RemoteEntry{StorageName: "b2", RemoteSize: 20971520, RemoteMtime: 1786096669})
-		if !isSuperseded(&stubFilerClient{entry: entryWith("video.mp4", remoteOnly.RemoteEntry, chunk("3,09", "e9"))}, dir, remoteOnly) {
+		if !superseded(t, &stubFilerClient{entry: entryWith("video.mp4", remoteOnly.RemoteEntry, chunk("3,09", "e9"))}, remoteOnly) {
 			t.Error("isSuperseded = false, want true: the filer wrote local data to a remote-only entry")
 		}
-		if isSuperseded(&stubFilerClient{entry: entryWith("video.mp4", remoteOnly.RemoteEntry)}, dir, remoteOnly) {
+		if superseded(t, &stubFilerClient{entry: entryWith("video.mp4", remoteOnly.RemoteEntry)}, remoteOnly) {
 			t.Error("isSuperseded = true, want false: the entry is still remote-only")
 		}
 		empty := &filer_pb.Entry{Name: "touch.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}}
-		if !isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "touch.txt", Content: []byte("now")}}, dir, empty) {
+		if !superseded(t, &stubFilerClient{entry: &filer_pb.Entry{Name: "touch.txt", Content: []byte("now")}}, empty) {
 			t.Error("isSuperseded = false, want true: the empty file was written to")
 		}
-		if isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "touch.txt"}}, dir, empty) {
+		if superseded(t, &stubFilerClient{entry: &filer_pb.Entry{Name: "touch.txt"}}, empty) {
 			t.Error("isSuperseded = true, want false: the file is still empty")
 		}
 	})
@@ -604,20 +857,20 @@ func TestIsSuperseded(t *testing.T) {
 	t.Run("mid-write snapshot with a hole, filled in since", func(t *testing.T) {
 		snapshot := entryWith("IMG_6526.mov", nil, chunkAt("222,01", "e1", 0), chunkAt("220,03", "e3", 2048))
 		filled := entryWith("IMG_6526.mov", nil, chunkAt("222,01", "e1", 0), chunkAt("216,02", "e2", 1024), chunkAt("220,03", "e3", 2048))
-		if !isSuperseded(&stubFilerClient{entry: filled}, dir, snapshot) {
+		if !superseded(t, &stubFilerClient{entry: filled}, snapshot) {
 			t.Error("isSuperseded = false, want true: the filer holds the finished write, the snapshot can never be read past its hole")
 		}
-		if isSuperseded(&stubFilerClient{entry: filled}, dir, filled) {
+		if superseded(t, &stubFilerClient{entry: filled}, filled) {
 			t.Error("isSuperseded = true, want false for the event that describes the finished write")
 		}
 	})
 
 	t.Run("inline content rewritten since", func(t *testing.T) {
 		event := &filer_pb.Entry{Name: "note.txt", Content: []byte("v1")}
-		if !isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v2")}}, dir, event) {
+		if !superseded(t, &stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v2")}}, event) {
 			t.Error("isSuperseded = false, want true for an entry whose inline content has changed")
 		}
-		if isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v1")}}, dir, event) {
+		if superseded(t, &stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v1")}}, event) {
 			t.Error("isSuperseded = true, want false for an entry whose inline content is unchanged")
 		}
 	})
@@ -884,6 +1137,7 @@ type recordingRemote struct {
 	// metadataUpdateResult is the RemoteEntry UpdateFileMetadata reports; nil
 	// means the update left the object untouched
 	metadataUpdateResult *filer_pb.RemoteEntry
+	bucketCreates        []string
 }
 
 func (r *recordingRemote) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (*filer_pb.RemoteEntry, error) {
@@ -930,6 +1184,11 @@ func (r *recordingRemote) ReadFile(loc *remote_pb.RemoteStorageLocation, offset 
 func (r *recordingRemote) DeleteFile(loc *remote_pb.RemoteStorageLocation) error {
 	r.deletes = append(r.deletes, loc)
 	return r.deleteErr
+}
+
+func (r *recordingRemote) CreateBucket(name string) error {
+	r.bucketCreates = append(r.bucketCreates, name)
+	return nil
 }
 
 func (r *recordingRemote) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry, newEntry *filer_pb.Entry) (*filer_pb.RemoteEntry, error) {
@@ -1360,6 +1619,28 @@ func TestDeleteEventAbsentRemoteObjectIsSuccess(t *testing.T) {
 	})
 }
 
+// TestUpdateLocalEntryLeavesTheEventEntryAlone: a transient stamp failure
+// retries the same event in place, so the event must still read as unsynced
+// and keep its rename source, or the retry skips the upload and the stamp.
+func TestUpdateLocalEntryLeavesTheEventEntryAlone(t *testing.T) {
+	const dir = "/buckets/b/vol"
+	event := entryWith("state.db", nil, chunk("3,01", "e1"))
+	event.Extended = map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte("src")}
+	filerClient := &stubFilerClient{updateErr: status.Error(codes.Unavailable, "filer is shutting down")}
+	if err := updateLocalEntry(filerClient, dir, event, &filer_pb.RemoteEntry{StorageName: "gcs", RemoteSize: 7}); err == nil {
+		t.Fatal("err = nil, want the transient failure")
+	}
+	if event.RemoteEntry != nil || len(event.Extended[filer.ExtRemoteRenameSourceKey]) == 0 {
+		t.Errorf("event entry = %v, want it untouched by the failed stamp", event)
+	}
+	if !shouldSendToRemote(event) {
+		t.Error("shouldSendToRemote = false after a failed stamp: the in-place retry would skip the upload")
+	}
+	if sent := filerClient.updated.GetEntry(); sent.GetRemoteEntry() == nil || len(sent.GetExtended()[filer.ExtRemoteRenameSourceKey]) > 0 {
+		t.Errorf("stamp request entry = %v, want the remote entry set and the rename source dropped", sent)
+	}
+}
+
 // TestUpdateLocalEntrySkipsDeletedEntry: the stamp that follows an upload lands
 // on an entry a later event already deleted. The filer answers "not found"; the
 // delete's own event follows in the log, so the stamp is skipped rather than
@@ -1645,7 +1926,7 @@ func TestCompleteRemoteOnlyRenameClearsThePendingSourceFirst(t *testing.T) {
 
 	t.Run("a marker still in place keeps the source", func(t *testing.T) {
 		// the stamp did not land: the filer still has the marker
-		filerClient := &stubFilerClient{entry: pending()}
+		filerClient := &stubFilerClient{entry: pending(), updateErr: status.Error(codes.FailedPrecondition, "entry changed")}
 		remote := &recordingRemote{objects: objects(), statETag: `"copy"`}
 		if err := completeRemoteOnlyRename(filerClient, remote, "/buckets/b/dst", pending(), renameSource{path: "/buckets/b/src/a.jpg", loc: oldDest}, dest, ""); err == nil {
 			t.Fatal("err = nil, want the event retried")
@@ -2206,6 +2487,74 @@ func TestMetadataUpdateKeepsTheStoredStampOnNilResult(t *testing.T) {
 	}
 }
 
+// TestTouchedEntryIsStampedOnce: a touch, or an open with O_TRUNC of an
+// empty file as lock files get, moves the mtime past RemoteMtime and leaves
+// the content alone. The metadata-only update stamps the entry with the same
+// RemoteEntry, and the stamp is an update event of its own, which
+// shouldSendToRemote still reads as dirty because the mtime is past
+// RemoteMtime. Each stamp was processed into the next one, forever. An mtime
+// ahead of the sync's clock stays past every stamp it takes.
+func TestTouchedEntryIsStampedOnce(t *testing.T) {
+	const uploaded = 1786096669
+	for _, tc := range []struct {
+		name  string
+		mtime int64
+	}{
+		{name: "touched", mtime: uploaded + 3600},
+		{name: "touched into the future", mtime: time.Now().Add(24 * time.Hour).Unix()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const mountedDir = "/buckets"
+			const dir = "/buckets/b"
+			mountLoc := &remote_pb.RemoteStorageLocation{Name: "s3", Bucket: "bucket", Path: "/"}
+			synced := &filer_pb.RemoteEntry{StorageName: "s3", RemoteETag: `"d41d8cd98f00b204e9800998ecf8427e"`, RemoteMtime: uploaded, LastLocalSyncTsNs: uploaded*1e9 + 500}
+			before := &filer_pb.Entry{Name: "app.lock", Attributes: &filer_pb.FuseAttributes{Mtime: uploaded}, RemoteEntry: synced, CommitTsNs: uploaded * 1e9}
+			touched := proto.Clone(before).(*filer_pb.Entry)
+			touched.Attributes.Mtime = tc.mtime
+			touched.CommitTsNs++
+
+			remote := &recordingRemote{}
+			filerClient := &stubFilerClient{}
+			event := &filer_pb.SubscribeMetadataResponse{
+				Directory:         dir,
+				EventNotification: &filer_pb.EventNotification{OldEntry: before, NewParentPath: dir, NewEntry: touched},
+			}
+			stamps := 0
+			for round := 0; round < 5; round++ {
+				filerClient.updated = nil
+				if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, event); err != nil {
+					t.Fatal(err)
+				}
+				if filerClient.updated == nil {
+					break
+				}
+				stamps++
+				stamped := proto.Clone(filerClient.updated.Entry).(*filer_pb.Entry)
+				// the filer gives every stored update a new commit timestamp
+				stamped.CommitTsNs++
+				if !shouldSendToRemote(stamped) {
+					t.Fatal("precondition: the stamped entry still reads dirty, its mtime is past RemoteMtime")
+				}
+				// the filer logs the stamp as the next update of the entry
+				event = &filer_pb.SubscribeMetadataResponse{
+					Directory: dir,
+					EventNotification: &filer_pb.EventNotification{
+						OldEntry:      proto.Clone(filerClient.updated.Condition.Clauses[0].ExpectedEntry).(*filer_pb.Entry),
+						NewParentPath: dir,
+						NewEntry:      stamped,
+					},
+				}
+			}
+			if stamps != 1 {
+				t.Errorf("stamped the entry %d times, want 1: the touch is stamped, the stamp's own event is not", stamps)
+			}
+			if len(remote.writes) != 0 {
+				t.Errorf("writes = %+v, want none: the content did not change", remote.writes)
+			}
+		})
+	}
+}
+
 // TestReshapeCrossMountRename covers an update event with a path outside
 // the mount. The subscription delivers a rename when either path is under
 // the mount, and an update of the /etc/remote directory entry itself through
@@ -2621,5 +2970,456 @@ func TestRemoteSyncSkipsSystemFolder(t *testing.T) {
 	}
 	if len(remote.deletes) != 0 {
 		t.Fatalf("expected 0 remote deletes for system path, got %d deletes", len(remote.deletes))
+	}
+}
+
+// TestSyncDeleteMarkerKeepsALockedVersion: every version uploads to the
+// object's key, so deleting that object for a delete marker can remove the
+// only remote copy of a version under legal hold or retention.
+func TestSyncDeleteMarkerKeepsALockedVersion(t *testing.T) {
+	const versionsDir = "/buckets/b/held.bin.versions"
+	dest := &remote_pb.RemoteStorageLocation{Name: "azure", Bucket: "b", Path: "/held.bin"}
+	marker := &filer_pb.Entry{
+		Name:       "v_marker",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669},
+		Extended:   map[string][]byte{s3_constants.ExtDeleteMarkerKey: []byte("true")},
+	}
+	future := []byte(fmt.Sprint(time.Now().Add(time.Hour).Unix()))
+	past := []byte(fmt.Sprint(time.Now().Add(-time.Hour).Unix()))
+	for _, tc := range []struct {
+		name       string
+		lock       map[string][]byte
+		wantDelete bool
+	}{
+		{"legal hold", map[string][]byte{s3_constants.ExtLegalHoldKey: []byte(s3_constants.LegalHoldOn)}, false},
+		{"retention", map[string][]byte{s3_constants.ExtObjectLockModeKey: []byte(s3_constants.RetentionModeGovernance), s3_constants.ExtRetentionUntilDateKey: future}, false},
+		{"released hold", map[string][]byte{s3_constants.ExtLegalHoldKey: []byte(s3_constants.LegalHoldOff)}, true},
+		{"expired retention", map[string][]byte{s3_constants.ExtObjectLockModeKey: []byte(s3_constants.RetentionModeCompliance), s3_constants.ExtRetentionUntilDateKey: past}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			filerClient := &stubFilerClient{entries: map[string]*filer_pb.Entry{
+				versionsDir + "/v_old":    {Name: "v_old", Attributes: &filer_pb.FuseAttributes{FileSize: 8192}, Extended: tc.lock},
+				versionsDir + "/v_new":    {Name: "v_new", Attributes: &filer_pb.FuseAttributes{FileSize: 16384}},
+				versionsDir + "/v_marker": marker,
+			}}
+			remote := &recordingRemote{}
+			message := &filer_pb.EventNotification{NewParentPath: versionsDir, NewEntry: marker}
+			if err := syncDeleteMarker(remote, filerClient, message, dest); err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if deleted := len(remote.deletes) == 1; deleted != tc.wantDelete || len(remote.deletes) > 1 {
+				t.Errorf("deletes = %+v, want deleted=%v", remote.deletes, tc.wantDelete)
+			}
+			if stamped := filerClient.updates == 1; stamped != tc.wantDelete || filerClient.updates > 1 {
+				t.Errorf("stamped %d times, want the marker stamped only once deleted (a kept one is retried)", filerClient.updates)
+			}
+		})
+	}
+
+	t.Run("listing failure", func(t *testing.T) {
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{err: status.Error(codes.Unavailable, "filer is shutting down")}
+		message := &filer_pb.EventNotification{NewParentPath: versionsDir, NewEntry: marker}
+		if err := syncDeleteMarker(remote, filerClient, message, dest); err == nil {
+			t.Fatal("err = nil, want the listing failure")
+		}
+		if len(remote.deletes) != 0 || filerClient.updates != 0 {
+			t.Errorf("deletes = %+v, stamps = %d; want neither before the lock check answers", remote.deletes, filerClient.updates)
+		}
+	})
+}
+
+// TestKeptDeleteMarkerRetriesWhenTheLockIsReleased: a delete marker kept for a
+// locked version is deleted once an update or delete of a version that held
+// the lock leaves no lock on the key.
+func TestKeptDeleteMarkerRetriesWhenTheLockIsReleased(t *testing.T) {
+	const (
+		mountedDir  = "/buckets/b"
+		versionsDir = "/buckets/b/held.bin.versions"
+	)
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "azure", Bucket: "b", Path: "/"}
+	held := map[string][]byte{s3_constants.ExtLegalHoldKey: []byte(s3_constants.LegalHoldOn)}
+	released := map[string][]byte{s3_constants.ExtLegalHoldKey: []byte(s3_constants.LegalHoldOff)}
+	expired := map[string][]byte{
+		s3_constants.ExtObjectLockModeKey:     []byte(s3_constants.RetentionModeGovernance),
+		s3_constants.ExtRetentionUntilDateKey: []byte(fmt.Sprint(time.Now().Add(-time.Hour).Unix())),
+	}
+	version := func(name string, extended map[string][]byte) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{FileSize: 8192}, Extended: extended}
+	}
+	marker := func(stamp *filer_pb.RemoteEntry) *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name:        "v_marker",
+			Attributes:  &filer_pb.FuseAttributes{Mtime: 1786096669},
+			Extended:    map[string][]byte{s3_constants.ExtDeleteMarkerKey: []byte("true")},
+			RemoteEntry: stamp,
+		}
+	}
+	latest := func(isMarker string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: "held.bin.versions", IsDirectory: true, Extended: map[string][]byte{
+			s3_constants.ExtLatestVersionFileNameKey:    []byte("v_marker"),
+			s3_constants.ExtLatestVersionIsDeleteMarker: []byte(isMarker),
+		}}
+	}
+	update := func(oldEntry, newEntry *filer_pb.Entry) *filer_pb.SubscribeMetadataResponse {
+		return &filer_pb.SubscribeMetadataResponse{Directory: versionsDir, EventNotification: &filer_pb.EventNotification{
+			OldEntry: oldEntry, NewEntry: newEntry, NewParentPath: versionsDir,
+		}}
+	}
+	remove := func(oldEntry *filer_pb.Entry) *filer_pb.SubscribeMetadataResponse {
+		return &filer_pb.SubscribeMetadataResponse{Directory: versionsDir, EventNotification: &filer_pb.EventNotification{OldEntry: oldEntry}}
+	}
+
+	for _, tc := range []struct {
+		name       string
+		entries    map[string]*filer_pb.Entry
+		event      *filer_pb.SubscribeMetadataResponse
+		wantDelete bool
+	}{
+		{
+			name: "hold released",
+			entries: map[string]*filer_pb.Entry{
+				mountedDir + "/held.bin.versions": latest("true"),
+				versionsDir + "/v_old":            version("v_old", released),
+				versionsDir + "/v_marker":         marker(nil),
+			},
+			event:      update(version("v_old", held), version("v_old", released)),
+			wantDelete: true,
+		},
+		{
+			name: "expired version deleted",
+			entries: map[string]*filer_pb.Entry{
+				mountedDir + "/held.bin.versions": latest("true"),
+				versionsDir + "/v_marker":         marker(nil),
+			},
+			event:      remove(version("v_old", expired)),
+			wantDelete: true,
+		},
+		{
+			name: "another version still held",
+			entries: map[string]*filer_pb.Entry{
+				mountedDir + "/held.bin.versions": latest("true"),
+				versionsDir + "/v_old":            version("v_old", released),
+				versionsDir + "/v_other":          version("v_other", held),
+				versionsDir + "/v_marker":         marker(nil),
+			},
+			event: update(version("v_old", held), version("v_old", released)),
+		},
+		{
+			name: "marker already synced",
+			entries: map[string]*filer_pb.Entry{
+				mountedDir + "/held.bin.versions": latest("true"),
+				versionsDir + "/v_old":            version("v_old", released),
+				versionsDir + "/v_marker":         marker(&filer_pb.RemoteEntry{StorageName: "azure"}),
+			},
+			event: update(version("v_old", held), version("v_old", released)),
+		},
+		{
+			name: "a newer version is latest",
+			entries: map[string]*filer_pb.Entry{
+				mountedDir + "/held.bin.versions": latest("false"),
+				versionsDir + "/v_old":            version("v_old", released),
+				versionsDir + "/v_marker":         marker(nil),
+			},
+			event: update(version("v_old", held), version("v_old", released)),
+		},
+		{
+			name: "unlocked version updated",
+			entries: map[string]*filer_pb.Entry{
+				mountedDir + "/held.bin.versions": latest("true"),
+				versionsDir + "/v_old":            version("v_old", nil),
+				versionsDir + "/v_marker":         marker(nil),
+			},
+			event: update(version("v_old", nil), version("v_old", map[string][]byte{s3_constants.ExtNoncurrentSinceNsKey: []byte("1")})),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			filerClient := &stubFilerClient{entries: tc.entries}
+			remote := &recordingRemote{}
+			var err error
+			if tc.event.EventNotification.NewEntry != nil {
+				err = processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, tc.event)
+			} else {
+				err = processDeleteEvent(filerClient, remote, mountedDir, mountLoc, tc.event)
+			}
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if tc.wantDelete {
+				if len(remote.deletes) != 1 || remote.deletes[0].Path != "/held.bin" {
+					t.Errorf("deletes = %+v, want /held.bin", remote.deletes)
+				}
+				if filerClient.updates != 1 || filerClient.updated.GetEntry().GetName() != "v_marker" {
+					t.Errorf("stamps = %d (%v), want the marker stamped", filerClient.updates, filerClient.updated)
+				}
+			} else if len(remote.deletes) != 0 || filerClient.updates != 0 {
+				t.Errorf("deletes = %+v, stamps = %d; want neither", remote.deletes, filerClient.updates)
+			}
+		})
+	}
+}
+
+func mountTableEvent(t *testing.T, tsNs int64, old, new map[string]*remote_pb.RemoteStorageLocation) *filer_pb.SubscribeMetadataResponse {
+	t.Helper()
+	tableEntry := func(mappings map[string]*remote_pb.RemoteStorageLocation) *filer_pb.Entry {
+		if mappings == nil {
+			return nil
+		}
+		content, err := proto.Marshal(&remote_pb.RemoteStorageMapping{Mappings: mappings})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &filer_pb.Entry{Name: filer.REMOTE_STORAGE_MOUNT_FILE, Content: content}
+	}
+	message := &filer_pb.EventNotification{OldEntry: tableEntry(old), NewEntry: tableEntry(new)}
+	if message.NewEntry != nil {
+		message.NewParentPath = filer.DirectoryEtcRemote
+	}
+	return &filer_pb.SubscribeMetadataResponse{Directory: filer.DirectoryEtcRemote, TsNs: tsNs, EventNotification: message}
+}
+
+func renamedTable(resp *filer_pb.SubscribeMetadataResponse, newParent, newName string) *filer_pb.SubscribeMetadataResponse {
+	resp.EventNotification.NewParentPath = newParent
+	resp.EventNotification.NewEntry.Name = newName
+	return resp
+}
+
+func TestMountTableEnds(t *testing.T) {
+	mountedDir := "/buckets/b"
+	loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "b", Path: "/"}
+	elsewhere := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "other", Path: "/"}
+	other := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "c", Path: "/"}
+	otherRemote := &remote_pb.RemoteStorageLocation{Name: "r2", Bucket: "b", Path: "/"}
+	mapped := map[string]*remote_pb.RemoteStorageLocation{mountedDir: loc}
+	mappedWithOther := map[string]*remote_pb.RemoteStorageLocation{mountedDir: loc, "/buckets/c": other}
+
+	tests := []struct {
+		name      string
+		resp      *filer_pb.SubscribeMetadataResponse
+		wantEnded bool
+		wantMoved *remote_pb.RemoteStorageLocation
+	}{
+		{"another mount added", mountTableEvent(t, 1, mapped, mappedWithOther), false, nil},
+		{"unmounted", mountTableEvent(t, 1, mappedWithOther, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}), true, nil},
+		{"mounted elsewhere", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}), true, elsewhere},
+		{"table deleted", mountTableEvent(t, 1, mapped, nil), true, nil},
+		{"mounted on another remote", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{mountedDir: otherRemote}), true, otherRemote},
+		{"remounted here from another remote", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountedDir: otherRemote}, mapped), false, nil},
+		{"replayed version from before the mount", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}, map[string]*remote_pb.RemoteStorageLocation{}), false, nil},
+		{"replayed creation of the table", mountTableEvent(t, 1, nil, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}), false, nil},
+		{"replayed deletion of the table", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}, nil), false, nil},
+		{"the mount itself", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}, mappedWithOther), false, nil},
+		{"replayed mount elsewhere", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{}, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}), true, elsewhere},
+		{"replayed unmount from elsewhere: its purge follows", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}, map[string]*remote_pb.RemoteStorageLocation{}), true, nil},
+		{"remounted here from elsewhere", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}, mapped), false, nil},
+		{"table renamed away", renamedTable(mountTableEvent(t, 1, mapped, mapped), filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE+".bak"), true, nil},
+		{"table moved out of the directory", renamedTable(mountTableEvent(t, 1, mapped, mapped), "/etc", filer.REMOTE_STORAGE_MOUNT_FILE), true, nil},
+		{"a table-named file in a subdirectory", renamedTable(mountTableEvent(t, 1, nil, map[string]*remote_pb.RemoteStorageLocation{}), filer.DirectoryEtcRemote+"/old", filer.REMOTE_STORAGE_MOUNT_FILE), false, nil},
+		{"remote conf updated", &filer_pb.SubscribeMetadataResponse{Directory: filer.DirectoryEtcRemote, EventNotification: &filer_pb.EventNotification{
+			NewParentPath: filer.DirectoryEtcRemote, NewEntry: &filer_pb.Entry{Name: "r" + filer.REMOTE_STORAGE_CONF_SUFFIX}}}, false, nil},
+		{"file under the mount", &filer_pb.SubscribeMetadataResponse{Directory: mountedDir, EventNotification: &filer_pb.EventNotification{
+			NewParentPath: mountedDir, NewEntry: &filer_pb.Entry{Name: filer.REMOTE_STORAGE_MOUNT_FILE}}}, false, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ended, moved, err := mountTableEnds(mountedDir, mountedDir, loc, tt.resp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ended != tt.wantEnded || !proto.Equal(moved, tt.wantMoved) {
+				t.Errorf("mountTableEnds = %v, %v; want %v, %v", ended, moved, tt.wantEnded, tt.wantMoved)
+			}
+		})
+	}
+
+	t.Run("unreadable table", func(t *testing.T) {
+		resp := mountTableEvent(t, 1, mapped, mapped)
+		resp.EventNotification.NewEntry.Content = []byte{0xff, 0xff, 0xff}
+		if _, _, err := mountTableEnds(mountedDir, mountedDir, loc, resp); err == nil {
+			t.Error("want an error for a table that does not unmarshal")
+		}
+	})
+
+	t.Run("a replaced version it cannot read counts as covering", func(t *testing.T) {
+		unreadable := mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{})
+		unreadable.EventNotification.OldEntry.Content = []byte{0xff, 0xff, 0xff}
+		renamedOver := mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{})
+		renamedOver.EventNotification.OldEntry.Name = filer.REMOTE_STORAGE_MOUNT_FILE + ".new"
+		for _, resp := range []*filer_pb.SubscribeMetadataResponse{unreadable, renamedOver} {
+			if ended, _, err := mountTableEnds(mountedDir, mountedDir, loc, resp); err != nil || !ended {
+				t.Errorf("mountTableEnds(%s) = %v, %v; want the mount ended", resp.EventNotification.OldEntry.Name, ended, err)
+			}
+		}
+	})
+}
+
+func TestMountTableEndsBelowAMount(t *testing.T) {
+	dir, mountKey := "/buckets/b/sub", "/buckets/b"
+	loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "b", Path: "/"}
+	nested := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "nested", Path: "/"}
+	other := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "c", Path: "/"}
+	mapped := map[string]*remote_pb.RemoteStorageLocation{mountKey: loc}
+
+	tests := []struct {
+		name      string
+		resp      *filer_pb.SubscribeMetadataResponse
+		wantEnded bool
+		wantMoved *remote_pb.RemoteStorageLocation
+	}{
+		{"another mount added", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{mountKey: loc, "/buckets/c": other}), false, nil},
+		{"the parent unmounted", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{}), true, nil},
+		{"the directory mounted itself", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{mountKey: loc, dir: nested}), true, nested},
+		{"replayed nested unmount from before", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountKey: loc, dir: nested}, mapped), false, nil},
+		{"replayed version from before the mount", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{}, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}), false, nil},
+		{"replayed unmount of an earlier parent mount", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountKey: other}, map[string]*remote_pb.RemoteStorageLocation{}), true, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ended, moved, err := mountTableEnds(dir, mountKey, loc, tt.resp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ended != tt.wantEnded || !proto.Equal(moved, tt.wantMoved) {
+				t.Errorf("mountTableEnds = %v, %v; want %v, %v", ended, moved, tt.wantEnded, tt.wantMoved)
+			}
+		})
+	}
+}
+
+func TestDirRemoteLocationBelowAMount(t *testing.T) {
+	tests := []struct {
+		name, mountKey, dir, mountPath, want string
+	}{
+		{"the mount itself", "/buckets/b", "/buckets/b", "/", "/x.txt"},
+		{"the mount with a trailing slash", "/buckets/b", "/buckets/b/", "/", "/x.txt"},
+		{"a directory below the mount", "/buckets/b", "/buckets/b/sub", "/", "/sub/x.txt"},
+		{"a directory below a mount at a remote prefix", "/buckets/b", "/buckets/b/sub/deeper", "/prefix", "/prefix/sub/deeper/x.txt"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mountLoc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "rb", Path: tt.mountPath}
+			dirLoc := dirRemoteLocation(tt.mountKey, tt.dir, mountLoc)
+			got := toRemoteStorageLocation(util.FullPath(tt.dir), util.FullPath(tt.dir).Child("x.txt"), dirLoc)
+			if got.Name != "r" || got.Bucket != "rb" || got.Path != tt.want {
+				t.Errorf("%s/x.txt maps to %s/%s%s; want r/rb%s", tt.dir, got.Name, got.Bucket, got.Path, tt.want)
+			}
+		})
+	}
+}
+
+func TestStartAfterMountOffset(t *testing.T) {
+	start := time.Unix(100, 5)
+	later, earlier := time.Unix(200, 7), time.Unix(50, 3)
+	tests := []struct {
+		name        string
+		dir         string
+		timeAgo     time.Duration
+		resumeTsNs  int64
+		mountOffset time.Time
+		want        time.Time
+		wantRead    bool
+	}{
+		{"below the mount, unmounted since", "/buckets/b/sub", 0, 0, later, later, true},
+		{"below the mount, mount offset older", "/buckets/b/sub", 0, 0, earlier, start, true},
+		{"below the mount, no mount offset", "/buckets/b/sub", 0, 0, time.Time{}, start, true},
+		{"the mount itself", "/buckets/b", 0, 0, later, start, false},
+		{"the mount with a trailing slash", "/buckets/b/", 0, 0, later, start, false},
+		{"a -timeAgo replay", "/buckets/b/sub", time.Hour, 0, later, start, false},
+		{"a retry in this process", "/buckets/b/sub", 0, start.UnixNano(), later, start, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			read := false
+			got, err := startAfterMountOffset(start, "/buckets/b", tt.dir, tt.timeAgo, tt.resumeTsNs, func() (int64, error) {
+				read = true
+				if tt.mountOffset.IsZero() {
+					return 0, nil
+				}
+				return tt.mountOffset.UnixNano(), nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !got.Equal(tt.want) || read != tt.wantRead {
+				t.Errorf("startAfterMountOffset = %v (read %v); want %v (read %v)", got, read, tt.want, tt.wantRead)
+			}
+		})
+	}
+
+	if _, err := startAfterMountOffset(start, "/buckets/b", "/buckets/b/sub", 0, 0, func() (int64, error) {
+		return 0, errors.New("filer unavailable")
+	}); err == nil || !strings.Contains(err.Error(), "filer unavailable") {
+		t.Errorf("an unread mount offset must fail the start, got %v", err)
+	}
+}
+
+func TestAdmitUntilMountEndsDrainsBeforeTheExit(t *testing.T) {
+	mountedDir := "/buckets/b"
+	loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "b", Path: "/"}
+	elsewhere := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "other", Path: "/"}
+	mapped := map[string]*remote_pb.RemoteStorageLocation{mountedDir: loc}
+
+	for _, tt := range []struct {
+		name      string
+		end       *filer_pb.SubscribeMetadataResponse
+		wantMoved *remote_pb.RemoteStorageLocation
+	}{
+		{"unmount", mountTableEvent(t, 2, mapped, map[string]*remote_pb.RemoteStorageLocation{}), nil},
+		{"move", mountTableEvent(t, 2, mapped, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}), elsewhere},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			release := make(chan struct{})
+			ran := make(chan string, 4)
+			processor := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+				<-release
+				ran <- resp.EventNotification.NewEntry.Name
+				return nil
+			}, 128, 0)
+			type exitCall struct {
+				to       *remote_pb.RemoteStorageLocation
+				jobsDone int
+			}
+			exits := make(chan exitCall, 1)
+			defer func(exit func(string, *remote_pb.RemoteStorageLocation, *remote_pb.RemoteStorageLocation)) {
+				exitAtMountEnd = exit
+			}(exitAtMountEnd)
+			exitAtMountEnd = func(_ string, _, to *remote_pb.RemoteStorageLocation) { exits <- exitCall{to, len(ran)} }
+
+			admit := admitUntilMountEnds(processor, mountedDir, mountedDir, loc, exitProcessAtMountEnd(processor, mountedDir, loc))
+			if err := admit(&filer_pb.SubscribeMetadataResponse{Directory: mountedDir, TsNs: 1, EventNotification: &filer_pb.EventNotification{
+				NewParentPath: mountedDir, NewEntry: &filer_pb.Entry{Name: "a.txt"}}}); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- admit(tt.end) }()
+			select {
+			case <-exits:
+				t.Fatal("exited while an admitted job was still running")
+			case <-time.After(100 * time.Millisecond):
+			}
+			close(release)
+			select {
+			case exit := <-exits:
+				if exit.jobsDone != 1 {
+					t.Errorf("exited with %d of 1 admitted jobs finished", exit.jobsDone)
+				}
+				if !proto.Equal(exit.to, tt.wantMoved) {
+					t.Errorf("exit with %v, want %v", exit.to, tt.wantMoved)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("no exit after the admitted job finished")
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			close(ran)
+			var names []string
+			for name := range ran {
+				names = append(names, name)
+			}
+			if !slices.Equal(names, []string{"a.txt"}) {
+				t.Errorf("jobs run = %v, want only the write admitted before the mount table", names)
+			}
+		})
 	}
 }

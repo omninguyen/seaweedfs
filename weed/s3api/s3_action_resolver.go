@@ -238,7 +238,7 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 
 	// Versioning operations - distinguish between versionId (specific version) and versions (list versions)
 	// versionId: Used to access/delete a specific version of an object (e.g., GET /bucket/key?versionId=xyz)
-	if query.Has("versionId") {
+	if query.Get("versionId") != "" {
 		if hasObject {
 			switch method {
 			case http.MethodGet, http.MethodHead:
@@ -427,6 +427,12 @@ func mapBaseActionToS3Format(baseAction string) string {
 		return s3_constants.S3_ACTION_PUT_BUCKET_POLICY
 	case s3_constants.ACTION_DELETE_BUCKET_POLICY:
 		return s3_constants.S3_ACTION_DELETE_BUCKET_POLICY
+	case s3_constants.ACTION_PUT_BUCKET_CORS:
+		return s3_constants.S3_ACTION_PUT_BUCKET_CORS
+	case s3_constants.ACTION_DELETE_BUCKET_CORS:
+		return s3_constants.S3_ACTION_DELETE_BUCKET_CORS
+	case s3_constants.ACTION_PUT_BUCKET_VERSIONING:
+		return s3_constants.S3_ACTION_PUT_BUCKET_VERSIONING
 	case s3_constants.ACTION_PUT_BUCKET_QUOTA:
 		return s3_constants.S3_ACTION_PUT_BUCKET_QUOTA
 	case s3_constants.ACTION_GET_BUCKET_QUOTA:

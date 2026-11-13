@@ -4,58 +4,80 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
-use weed_lance_worker::catalog::{NamespaceClient, SigningKey};
-use weed_lance_worker::dataset::FallbackOptions;
+use weed_lance_worker::cluster::Cluster;
 use weed_vector_server::pb::vector::vector_service_server::VectorServiceServer;
 use weed_vector_server::read_cache::ReadCache;
 use weed_vector_server::security::Security;
 use weed_vector_server::service::VectorServer;
 use weed_vector_server::tls::{self, ServerTls};
+use weed_vector_server::{
+    master_client,
+    metrics::{self, Metrics},
+    observed::ObservedService,
+};
 
 /// The VectorService the S3 gateway fans vector calls out to.
 #[derive(Parser)]
 struct Args {
-    /// Lance Namespace base URL: the S3 gateway's Lance port (-s3.port.lance).
-    #[arg(
-        long,
-        env = "WEED_VECTOR_NAMESPACE",
-        default_value = "http://localhost:9101"
-    )]
-    namespace: String,
     /// gRPC listen address.
     #[arg(long, env = "WEED_VECTOR_LISTEN", default_value = "127.0.0.1:8090")]
     listen: String,
-    /// object_store option fallback for deployments that vend no credentials:
-    /// key=value, repeatable.
-    #[arg(long = "storage-option", alias = "storage.option", value_parser = parse_option)]
-    storage_options: Vec<(String, String)>,
-    /// Comma-separated master addresses to register this server with; the
-    /// gateway discovers it via ListClusterNodes(client_type=vector).
+    /// Address to register when it differs from the listen address.
+    #[arg(long, env = "WEED_VECTOR_ADVERTISE")]
+    advertise: Option<String>,
+    /// Comma-separated master addresses. The engine registers with them, so
+    /// the gateway finds it, and asks them for the filers it keeps tables
+    /// through.
     #[arg(long, alias = "master", env = "WEED_VECTOR_MASTERS")]
-    masters: Option<String>,
+    masters: String,
+    /// The filer group whose filers the engine keeps tables through.
+    #[arg(
+        long,
+        alias = "filer.group",
+        env = "WEED_VECTOR_FILER_GROUP",
+        default_value = ""
+    )]
+    filer_group: String,
     /// Memory for caching reads of write-once table files, in MiB; 0 disables.
     #[arg(long, env = "WEED_VECTOR_READ_CACHE_MB", default_value_t = 512)]
     read_cache_mb: u64,
-    /// The `jwt.filer_signing.key` of the cluster. The Lance namespace vends
-    /// credentials that write index data only to a caller holding it.
-    #[arg(long, env = "WEED_FILER_SIGNING_KEY")]
-    filer_signing_key: Option<String>,
-    /// The cluster's security.toml, for gRPC TLS: this server's identity is
-    /// [grpc.vector], the masters are dialed with [grpc.client]. By default
-    /// the file weed processes find in -config_dir, ., ~/.seaweedfs and
-    /// /etc/seaweedfs.
+    /// Memory for indexes loaded by queries, kept for the next query, in MiB.
+    #[arg(long, env = "WEED_VECTOR_INDEX_CACHE_MB", default_value_t = 1024)]
+    index_cache_mb: usize,
+    /// Memory for table metadata (manifests, file footers) kept across
+    /// queries, in MiB.
+    #[arg(long, env = "WEED_VECTOR_METADATA_CACHE_MB", default_value_t = 256)]
+    metadata_cache_mb: usize,
+    /// Partitions each query probes in a table's vector index. Default: a
+    /// tenth of the index's partitions, at least 8; more under a filter.
+    #[arg(long, env = "WEED_VECTOR_NPROBES")]
+    nprobes: Option<std::num::NonZeroUsize>,
+    /// The cluster's security.toml: [grpc.vector] for this server,
+    /// [grpc.client] for the masters and filers, https.client for volume
+    /// servers under HTTPS, jwt.signing.read.key for signed volume reads,
+    /// s3.sse.kek or s3.sse.key for SSE-S3 buckets. By default the file weed
+    /// processes find in -config_dir, ., ~/.seaweedfs and /etc/seaweedfs.
     #[arg(long, env = "WEED_VECTOR_SECURITY_TOML")]
     security_toml: Option<PathBuf>,
+    #[arg(
+        long,
+        alias = "metricsPort",
+        env = "WEED_VECTOR_METRICS_PORT",
+        default_value_t = 0
+    )]
+    metrics_port: u16,
+    #[arg(
+        long,
+        alias = "metricsIp",
+        env = "WEED_VECTOR_METRICS_IP",
+        default_value = "127.0.0.1"
+    )]
+    metrics_ip: String,
+
     /// The directory weed's -config_dir names, searched for security.toml
     /// first.
     #[arg(long, alias = "config_dir", env = "WEED_VECTOR_CONFIG_DIR")]
     config_dir: Option<PathBuf>,
-}
-
-fn parse_option(s: &str) -> Result<(String, String), String> {
-    s.split_once('=')
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .ok_or_else(|| "expected key=value".to_string())
 }
 
 // weed tools take Go-style single-dash long flags; normalize_args converts
@@ -85,7 +107,13 @@ fn normalize_args(args: Vec<String>) -> Vec<String> {
 
 /// A wildcard listen address is not reachable for peers; derive the outbound
 /// IP toward the first master instead — the address the master sees anyway.
-fn advertised_addr(listen: &str, masters: &[String]) -> String {
+fn advertised_addr(listen: &str, masters: &[String], advertise: Option<&str>) -> String {
+    if let Some(address) = advertise
+        .map(str::trim)
+        .filter(|address| !address.is_empty())
+    {
+        return address.to_string();
+    }
     let Some((host, _)) = listen.rsplit_once(':') else {
         return listen.to_string();
     };
@@ -124,10 +152,6 @@ async fn main() -> Result<()> {
     if let Some(path) = security.path() {
         tracing::info!("security settings from {}", path.display());
     }
-    let master_tls = match &args.masters {
-        Some(_) => security.grpc_client_tls("grpc.client", "grpc.master")?,
-        None => None,
-    };
     let server_tls = security
         .grpc_server_tls("grpc.vector")?
         .map(ServerTls::load)
@@ -137,29 +161,36 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&args.listen)
         .await
         .with_context(|| format!("listen on {}", args.listen))?;
-    if let Some(masters) = &args.masters {
-        let masters: Vec<String> = masters.split(',').map(|s| s.trim().to_string()).collect();
-        for master in &masters {
-            weed_vector_server::master_client::grpc_addr(master)?;
-        }
-        let advertise = advertised_addr(&args.listen, &masters);
-        tokio::spawn(weed_vector_server::master_client::keep_connected(
-            masters,
-            advertise,
-            master_tls.clone(),
-        ));
+    let cluster = Cluster::new(&args.masters, &args.filer_group, &security)?;
+    let reads = cluster.storage(&security).await?;
+    let (health, health_service) = tonic_health::server::health_reporter();
+    let metrics = Metrics::new()?.with_health(health);
+    metrics.set_connected(false).await;
+    let cache = (args.read_cache_mb > 0)
+        .then(|| ReadCache::new(args.read_cache_mb << 20).with_metrics(metrics.clone()));
+    let mut service = VectorServer::new()
+        .with_nprobes(args.nprobes.map(std::num::NonZeroUsize::get))
+        .with_lance_caches(args.index_cache_mb << 20, args.metadata_cache_mb << 20)
+        .with_storage(reads);
+    if let Some(cache) = &cache {
+        service = service.with_read_cache(cache.clone());
     }
-    let fallback: FallbackOptions = args.storage_options.into_iter().collect();
-    let signing_key = SigningKey::new(args.filer_signing_key);
-    let client = NamespaceClient::new(args.namespace.clone())
-        .with_fallback(&fallback)
-        .with_signing_key(signing_key.as_ref());
-    let mut service = VectorServer::new(client, fallback);
-    if args.read_cache_mb > 0 {
-        service = service.with_read_cache(ReadCache::new(args.read_cache_mb << 20));
+    if args.metrics_port > 0 {
+        let ip = args
+            .metrics_ip
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<std::net::IpAddr>()?;
+        let listener =
+            tokio::net::TcpListener::bind(std::net::SocketAddr::new(ip, args.metrics_port)).await?;
+        let metrics = metrics.clone();
+        tokio::spawn(async move {
+            if let Err(error) = metrics::serve_listener(metrics, listener, cache).await {
+                tracing::error!(%error, "vector metrics server stopped");
+            }
+        });
     }
     tracing::info!(
-        namespace = %args.namespace,
         listen = %args.listen,
         "weed-vector; serving gRPC {}, dialing masters {}",
         match &server_tls {
@@ -169,15 +200,29 @@ async fn main() -> Result<()> {
             Some(_) => "over TLS with allowed client certificates required",
             None => "in plaintext",
         },
-        if master_tls.is_some() { "over TLS" } else { "in plaintext" },
+        if cluster.master_tls.is_some() { "over TLS" } else { "in plaintext" },
     );
+    // Registered only now, with storage connected and the listener bound,
+    // so the gateway never finds an engine that cannot serve yet.
+    let advertise = advertised_addr(&args.listen, &cluster.masters, args.advertise.as_deref());
+    tokio::spawn(master_client::keep_connected(
+        cluster.masters.clone(),
+        advertise,
+        args.filer_group.clone(),
+        cluster.master_tls.clone(),
+        metrics.clone(),
+    ));
     let router = Server::builder()
+        .add_service(health_service)
         // Match the gateway's 1 GiB cap — put batches over the tonic 4 MiB
         // default otherwise get rejected before they reach the handler.
         .add_service(
-            VectorServiceServer::new(service)
-                .max_decoding_message_size(1 << 30)
-                .max_encoding_message_size(1 << 30),
+            VectorServiceServer::new(ObservedService {
+                inner: service,
+                metrics,
+            })
+            .max_decoding_message_size(1 << 30)
+            .max_encoding_message_size(1 << 30),
         );
     match server_tls {
         Some(tls) => {
@@ -191,4 +236,52 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_advertise_uses_the_listen_address() {
+        for value in [None, Some(""), Some("  ")] {
+            assert_eq!(
+                advertised_addr("127.0.0.1:8090", &[], value),
+                "127.0.0.1:8090"
+            );
+        }
+        assert_eq!(
+            advertised_addr("127.0.0.1:8090", &[], Some("vector.example:8090")),
+            "vector.example:8090"
+        );
+    }
+
+    #[test]
+    fn nprobes_must_be_positive() {
+        let parse = |nprobes: &str| {
+            Args::try_parse_from(["weed-vector", "--masters", "m:9333", "--nprobes", nprobes])
+        };
+        assert!(parse("0").is_err());
+        let args = parse("12").unwrap();
+        assert_eq!(args.nprobes.map(std::num::NonZeroUsize::get), Some(12));
+    }
+
+    #[test]
+    fn the_catalog_flags_are_gone() {
+        let parse = |extra: &[&str]| {
+            let mut argv = vec!["weed-vector", "-master", "m:9333"];
+            argv.extend_from_slice(extra);
+            Args::try_parse_from(normalize_args(argv.into_iter().map(String::from).collect()))
+        };
+        assert_eq!(parse(&[]).unwrap().masters, "m:9333");
+        // The gateway resolves every table it sends; the engine has no
+        // catalog to name or authenticate to.
+        assert!(parse(&["--namespace", "http://localhost:9101"]).is_err());
+        assert!(parse(&["-filer-signing-key", "k"]).is_err());
+    }
+
+    #[test]
+    fn the_masters_are_required() {
+        assert!(Args::try_parse_from(["weed-vector"]).is_err());
+    }
 }

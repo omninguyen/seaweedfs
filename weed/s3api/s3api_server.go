@@ -64,6 +64,7 @@ type S3ApiServerOption struct {
 	IamConfig                 string // Advanced IAM configuration file path
 	ConcurrentUploadLimit     int64
 	ConcurrentFileUploadLimit int64
+	InflightUploadDataTimeout time.Duration
 	EnableIam                 bool   // Enable embedded IAM API on the same port
 	IamReadOnly               bool   // Disable IAM write operations on this server
 	Cipher                    bool   // encrypt data on volume servers
@@ -398,8 +399,9 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// lazy bucket load (and with it the mirror backfill): a grant carried
 	// only by a not-yet-mirrored policy would otherwise deny forever, and
 	// the denied request never reaches the handlers that load the bucket.
-	iam.primeBucketForIAM = func(bucket string) {
-		s3ApiServer.getBucketConfig(bucket)
+	iam.primeBucketForIAM = func(bucket string) s3err.ErrorCode {
+		_, code := s3ApiServer.getBucketConfig(bucket)
+		return code
 	}
 
 	// Initialize advanced IAM system if config is provided or explicitly enabled
@@ -686,6 +688,9 @@ func (s3a *S3ApiServer) recheckPolicyWithObjectEntry(r *http.Request, bucket, ob
 		identity, _ := GetIdentityFromContext(r).(*Identity)
 		return refineDenialForBucketName(r, identity, s3a.authorizeAnonymousObjectRead(r, bucket, object, objectEntry))
 	}
+	if s3a.isVersionFileKey(object, objectEntry) {
+		return s3err.ErrAccessDenied
+	}
 	identityRaw := GetIdentityFromContext(r)
 	var identity *Identity
 	if identityRaw != nil {
@@ -729,10 +734,10 @@ func (s3a *S3ApiServer) recheckCopySourcePolicy(r *http.Request, bucket, object,
 // recheckTagConditionedPolicyWithLookup repeats policy evaluation with the
 // object's entry in hand so s3:ExistingObjectTag conditions apply to
 // operations that did not otherwise fetch the entry. It only does the extra
-// lookup when the bucket has a policy; entry misses return ErrNone because
-// the handler reports its own NoSuchKey.
+// lookup when the bucket has a policy or the key may name a version file;
+// entry misses return ErrNone because the handler reports its own NoSuchKey.
 func (s3a *S3ApiServer) recheckTagConditionedPolicyWithLookup(r *http.Request, bucket, object, versionId, action, handlerName string) s3err.ErrorCode {
-	if s3a.policyEngine == nil || !s3a.policyEngine.HasPolicyForBucket(bucket) {
+	if (s3a.policyEngine == nil || !s3a.policyEngine.HasPolicyForBucket(bucket)) && !s3a.hasVersionFileShape(object) {
 		return s3err.ErrNone
 	}
 	entry, err := s3a.resolveObjectEntry(bucket, object, versionId)
@@ -1099,9 +1104,9 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// GetBucketCors
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketCorsHandler, ACTION_READ)), "GET")).Queries("cors", "")
 		// PutBucketCors
-		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketCorsHandler, ACTION_WRITE)), "PUT")).Queries("cors", "")
+		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketCorsHandler, ACTION_PUT_BUCKET_CORS)), "PUT")).Queries("cors", "")
 		// DeleteBucketCors
-		bucket.Methods(http.MethodDelete).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteBucketCorsHandler, ACTION_WRITE)), "DELETE")).Queries("cors", "")
+		bucket.Methods(http.MethodDelete).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteBucketCorsHandler, ACTION_DELETE_BUCKET_CORS)), "DELETE")).Queries("cors", "")
 
 		// GetBucketLifecycleConfiguration
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketLifecycleConfigurationHandler, ACTION_READ)), "GET")).Queries("lifecycle", "")
@@ -1134,7 +1139,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 		// GetBucketVersioning
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketVersioningHandler, ACTION_READ)), "GET")).Queries("versioning", "")
-		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketVersioningHandler, ACTION_WRITE)), "PUT")).Queries("versioning", "")
+		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketVersioningHandler, ACTION_PUT_BUCKET_VERSIONING)), "PUT")).Queries("versioning", "")
 
 		// GetObjectLockConfiguration / PutObjectLockConfiguration (bucket-level operations)
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectLockConfigurationHandler, ACTION_GET_BUCKET_OBJECT_LOCK_CONFIG)), "GET")).Queries("object-lock", "")

@@ -337,7 +337,9 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 				if versionId == "null" {
 					deleteCode, deleteHandled = s3a.routedDeleteNullVersion(owner, bucket, object, worm, bypass, false)
 				} else {
-					deleteCode, deleteHandled = s3a.routedDeleteSpecificVersion(owner, bucket, object, versionId, worm, bypass, false), true
+					// A version id never changes kind, so a marker read here is
+					// the one deleted; markers carry no WORM guard.
+					deleteCode, deleteHandled = s3a.routedDeleteSpecificVersion(owner, bucket, object, versionId, worm && !deleteResult.deleteMarker, bypass, false), true
 				}
 			}
 		}
@@ -438,7 +440,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 	deleteXMLBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		s3err.WriteErrorResponse(w, r, requestBodyErrorCode(err, s3err.ErrInternalError))
 		return
 	}
 

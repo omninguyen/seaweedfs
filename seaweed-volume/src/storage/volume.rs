@@ -24,6 +24,7 @@ use crate::storage::disk_location::is_read_only_mount;
 use crate::storage::idx;
 use crate::storage::io::read_exact_at;
 use crate::storage::io_error::{IoErrorTracker, StreakMark};
+use crate::storage::needle::crc::CRC;
 use crate::storage::needle::needle::{self, Needle, NeedleError, get_actual_size};
 use crate::storage::needle_map::sorted_file::SortedFileNeedleMap;
 use crate::storage::needle_map::{CompactNeedleMap, NeedleMap, NeedleMapKind, RedbNeedleMap};
@@ -845,6 +846,7 @@ pub(crate) struct NeedleReadPlan {
     data_file_access_control: Arc<DataFileAccessControl>,
     io_errors: Arc<IoErrorTracker>,
     io_unavailable: Arc<IoUnavailable>,
+    load_generation: u64,
 }
 
 impl NeedleReadPlan {
@@ -924,6 +926,8 @@ impl NeedleReadPlan {
             io_errors: self.io_errors,
             needle_id: self.needle_id,
             checksum: n.checksum.0,
+            append_at_ns: n.append_at_ns,
+            load_generation: self.load_generation,
         }
     }
 }
@@ -1205,6 +1209,228 @@ pub struct NeedleStreamInfo {
     /// Checksum stored in the needle tail, verified once the last chunk has
     /// been read — before that frame is emitted.
     pub checksum: u32,
+    pub(crate) append_at_ns: u64,
+    pub(crate) load_generation: u64,
+}
+
+/// A range carries no checksum of its own, so a ranged read checks the whole
+/// needle's CRC the first time any range of it is read, recording the CRC of
+/// each block on the way. `VERIFIED_NEEDLES` keeps those block CRCs, and later
+/// ranges check just the blocks they cover, so damage that appears after the
+/// first check is still caught. Entries are per volume load, so a remounted
+/// copy or a compaction is checked again, and concurrent first reads of a
+/// needle share one check.
+static VERIFIED_NEEDLES: LazyLock<Mutex<lru::LruCache<VerifiedNeedle, Arc<[u32]>>>> =
+    LazyLock::new(|| {
+        Mutex::new(lru::LruCache::new(
+            std::num::NonZeroUsize::new(64 * 1024).unwrap(),
+        ))
+    });
+static VERIFYING_NEEDLES: LazyLock<Mutex<HashMap<VerifiedNeedle, Arc<VerifyingNeedle>>>> =
+    LazyLock::new(Default::default);
+static VOLUME_LOADS: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct VerifiedNeedle {
+    load_generation: u64,
+    id: NeedleId,
+    append_at_ns: u64,
+    checksum: u32,
+}
+
+const RANGE_CHECK_BLOCKS: u64 = 64;
+const MIN_RANGE_CHECK_BLOCK_SIZE: u64 = 64 * 1024;
+const MAX_RANGE_CHECK_BLOCK_SIZE: u64 = 1024 * 1024;
+
+pub(crate) fn compacting_error(id: VolumeId) -> VolumeError {
+    VolumeError::Io(io::Error::other(format!("volume {} is compacting", id)))
+}
+
+/// Keeps a needle to 64 blocks, each 64 KiB to 1 MiB, as Go's
+/// rangeCheckBlockSize.
+pub(crate) fn range_check_block_size(data_size: u64) -> u64 {
+    let mut block_size = MIN_RANGE_CHECK_BLOCK_SIZE;
+    while block_size < MAX_RANGE_CHECK_BLOCK_SIZE && data_size > RANGE_CHECK_BLOCKS * block_size {
+        block_size *= 2;
+    }
+    block_size
+}
+
+#[derive(Default)]
+struct VerifyingNeedle {
+    outcome: Mutex<Option<Result<Arc<[u32]>, (io::ErrorKind, String)>>>,
+    done: Condvar,
+}
+
+/// Publishes the check's outcome to the readers waiting on it, also when the
+/// check unwinds.
+struct VerifyingNeedleGuard {
+    key: VerifiedNeedle,
+    call: Arc<VerifyingNeedle>,
+}
+
+impl Drop for VerifyingNeedleGuard {
+    fn drop(&mut self) {
+        let mut outcome = self.call.outcome.lock().unwrap_or_else(|e| e.into_inner());
+        outcome.get_or_insert_with(|| {
+            Err((
+                io::ErrorKind::Other,
+                "needle checksum check did not finish".into(),
+            ))
+        });
+        drop(outcome);
+        self.call.done.notify_all();
+        VERIFYING_NEEDLES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.key);
+    }
+}
+
+impl NeedleStreamInfo {
+    /// Whether `data`, the whole payload, matches the checksum in the tail.
+    pub(crate) fn checksum_matches(&self, data: &[u8]) -> bool {
+        let crc = CRC::new(data);
+        self.checksum == crc.0 || self.checksum == crc.legacy_value()
+    }
+
+    /// Check the whole needle's CRC before any byte of a range is sent, so a
+    /// damaged replica fails the read and the reader tries another copy, and
+    /// return the CRC of each block for `read_checked_range`.
+    pub(crate) fn verify_checksum(&self, chunk_size: usize) -> io::Result<Arc<[u32]>> {
+        let key = VerifiedNeedle {
+            load_generation: self.load_generation,
+            id: self.needle_id,
+            append_at_ns: self.append_at_ns,
+            checksum: self.checksum,
+        };
+        if let Some(crcs) = VERIFIED_NEEDLES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+        {
+            return Ok(crcs.clone());
+        }
+        let (call, leader) = {
+            let mut calls = VERIFYING_NEEDLES.lock().unwrap_or_else(|e| e.into_inner());
+            match calls.get(&key) {
+                Some(call) => (call.clone(), false),
+                None => {
+                    let call = Arc::new(VerifyingNeedle::default());
+                    calls.insert(key, call.clone());
+                    (call, true)
+                }
+            }
+        };
+        if !leader {
+            let mut outcome = call.outcome.lock().unwrap_or_else(|e| e.into_inner());
+            while outcome.is_none() {
+                outcome = call.done.wait(outcome).unwrap_or_else(|e| e.into_inner());
+            }
+            return outcome
+                .clone()
+                .unwrap()
+                .map_err(|(kind, msg)| io::Error::new(kind, msg));
+        }
+        let guard = VerifyingNeedleGuard { key, call };
+        let result = self.read_checksum(chunk_size);
+        if let Ok(crcs) = &result {
+            VERIFIED_NEEDLES
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .put(key, crcs.clone());
+        }
+        *guard.call.outcome.lock().unwrap_or_else(|e| e.into_inner()) = Some(
+            result
+                .as_ref()
+                .map(Arc::clone)
+                .map_err(|e| (e.kind(), e.to_string())),
+        );
+        result
+    }
+
+    /// Read the whole payload in chunks and compare its CRC, recording the CRC
+    /// of each block. A read failure counts toward the io error streak; a pass
+    /// leaves the streak to the range read that follows.
+    fn read_checksum(&self, chunk_size: usize) -> io::Result<Arc<[u32]>> {
+        let total = self.data_size as usize;
+        let block_size = range_check_block_size(self.data_size as u64) as usize;
+        let mut buf = vec![0u8; chunk_size.clamp(1, total.max(1))];
+        let mut crc = CRC(0);
+        let mut block_crc = CRC(0);
+        let mut crcs = Vec::with_capacity(total.div_ceil(block_size));
+        let mut pos = 0;
+        while pos < total {
+            let len = buf
+                .len()
+                .min(total - pos)
+                .min(block_size - pos % block_size);
+            if let Err(e) = self
+                .source
+                .read_exact_at(&mut buf[..len], self.data_file_offset + pos as u64)
+            {
+                self.io_errors.check_read_write_error(Some(&e));
+                return Err(e);
+            }
+            crc = crc.update(&buf[..len]);
+            block_crc = block_crc.update(&buf[..len]);
+            pos += len;
+            if pos % block_size == 0 || pos == total {
+                crcs.push(block_crc.0);
+                block_crc = CRC(0);
+            }
+        }
+        if self.checksum != crc.0 && self.checksum != crc.legacy_value() {
+            crate::metrics::HANDLER_COUNTER
+                .with_label_values(&[crate::metrics::ERROR_CRC])
+                .inc();
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "needle data checksum {} expected {} for needle {}",
+                    crc.0, self.checksum, self.needle_id
+                ),
+            ));
+        }
+        Ok(crcs.into())
+    }
+
+    /// Read whole blocks around `[start, start + length)`, check each against
+    /// the CRC `verify_checksum` recorded, and return the range's bytes, so
+    /// damage that appears after the needle passed its check is not served.
+    pub(crate) fn read_checked_range(
+        &self,
+        crcs: &[u32],
+        start: u64,
+        length: u64,
+    ) -> io::Result<Vec<u8>> {
+        let block_size = range_check_block_size(self.data_size as u64);
+        let span_start = start / block_size * block_size;
+        let span_end = (start + length).div_ceil(block_size) * block_size;
+        let span_end = span_end.min(self.data_size as u64);
+        let mut buf = vec![0u8; (span_end - span_start) as usize];
+        self.source
+            .read_exact_at(&mut buf, self.data_file_offset + span_start)?;
+        for (i, block) in buf.chunks(block_size as usize).enumerate() {
+            let index = (span_start / block_size) as usize + i;
+            if crcs.get(index) != Some(&CRC::new(block).0) {
+                crate::metrics::HANDLER_COUNTER
+                    .with_label_values(&[crate::metrics::ERROR_CRC])
+                    .inc();
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "checksum mismatch in block {} of needle {}",
+                        index, self.needle_id
+                    ),
+                ));
+            }
+        }
+        let from = (start - span_start) as usize;
+        buf.truncate(from + length as usize);
+        buf.drain(..from);
+        Ok(buf)
+    }
 }
 
 #[derive(Clone)]
@@ -1404,6 +1630,8 @@ pub struct Volume {
     /// `data_file_sync_lock` -> `data_file_access_control` -> `io`.
     data_file_sync_lock: std::sync::Mutex<()>,
 
+    pending_writes: Arc<PendingWrites>,
+
     /// Go's superBlockAccessLock.
     super_block: RwLock<SuperBlock>,
 
@@ -1440,6 +1668,9 @@ pub struct Volume {
     /// for volume health monitoring.
     io_errors: Arc<IoErrorTracker>,
 
+    /// Changes on every load, including a compaction commit.
+    load_generation: AtomicU64,
+
     /// Protobuf VolumeInfo for tiered storage (.vif file), Go's
     /// volumeInfoRWLock domain.
     ///
@@ -1452,6 +1683,36 @@ pub struct Volume {
 
 const NO_WRITE_OR_DELETE: u8 = 1;
 const NO_WRITE_CAN_DELETE: u8 = 2;
+
+#[derive(Default)]
+struct PendingWrites(Mutex<HashMap<NeedleId, Vec<Arc<CancelFlag>>>>);
+
+struct CancelFlag {
+    cookie: Cookie,
+    cancelled: AtomicBool,
+}
+
+/// A write that has entered the volume but not returned yet. A delete of its
+/// needle in that window cancels it: the write may still be queued behind the
+/// volume locks, and landing after the delete would revive the needle on this
+/// copy alone. Dropping it untracks the write.
+pub struct PendingWrite {
+    writes: Arc<PendingWrites>,
+    id: NeedleId,
+    flag: Arc<CancelFlag>,
+}
+
+impl Drop for PendingWrite {
+    fn drop(&mut self) {
+        let mut by_id = self.writes.0.lock().unwrap();
+        if let Some(writes) = by_id.get_mut(&self.id) {
+            writes.retain(|w| !Arc::ptr_eq(w, &self.flag));
+            if writes.is_empty() {
+                by_id.remove(&self.id);
+            }
+        }
+    }
+}
 
 /// What a volume is created with beyond its id, directories and index kind:
 /// the tail of Go's `NewVolume` argument list. The default is an empty
@@ -1527,6 +1788,7 @@ impl Volume {
             needle_map_kind,
             data_file_access_control: Arc::new(DataFileAccessControl::default()),
             data_file_sync_lock: std::sync::Mutex::new(()),
+            pending_writes: Arc::default(),
             super_block: RwLock::new(SuperBlock {
                 replica_placement: replica_placement.unwrap_or_default(),
                 ttl: ttl.unwrap_or(crate::storage::needle::ttl::TTL::EMPTY),
@@ -1541,6 +1803,7 @@ impl Volume {
             closed: AtomicBool::new(false),
             compaction_byte_per_second: AtomicI64::new(0),
             io_errors: Arc::default(),
+            load_generation: AtomicU64::new(0),
             volume_info: RwLock::new(PbVolumeInfo::default()),
         };
 
@@ -1584,6 +1847,7 @@ impl Volume {
             needle_map_kind: NeedleMapKind::InMemory,
             data_file_access_control: Arc::new(DataFileAccessControl::default()),
             data_file_sync_lock: std::sync::Mutex::new(()),
+            pending_writes: Arc::default(),
             super_block: RwLock::new(SuperBlock::default()),
             no_write: AtomicU8::new(0),
             io_unavailable: Arc::default(),
@@ -1594,6 +1858,7 @@ impl Volume {
             closed: AtomicBool::new(false),
             compaction_byte_per_second: AtomicI64::new(0),
             io_errors: Arc::default(),
+            load_generation: AtomicU64::new(0),
             volume_info: RwLock::new(PbVolumeInfo::default()),
         }
     }
@@ -1652,10 +1917,7 @@ impl Volume {
     }
 
     pub(crate) fn compacting_error(&self) -> VolumeError {
-        VolumeError::Io(io::Error::other(format!(
-            "volume {} is compacting",
-            self.id
-        )))
+        compacting_error(self.id)
     }
 
     // ---- File naming (matching Go) ----
@@ -1718,6 +1980,10 @@ impl Volume {
         preallocate: u64,
         version: Version,
     ) -> Result<(), VolumeError> {
+        self.load_generation.store(
+            VOLUME_LOADS.fetch_add(1, Ordering::Relaxed) + 1,
+            Ordering::Relaxed,
+        );
         let dat_path = self.file_name(".dat");
         let mut already_has_super_block = false;
 
@@ -2232,9 +2498,15 @@ impl Volume {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn load_remote_dat_file(&self) -> Result<(), VolumeError> {
         let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
+        self.load_remote_dat_file_held()
+    }
+
+    /// `load_remote_dat_file` for callers already holding the write lease.
+    pub(crate) fn load_remote_dat_file_held(&self) -> Result<(), VolumeError> {
         let mut io = self.io.write().unwrap();
         self.load_remote_dat_file_io(&mut io)
     }
@@ -2724,6 +2996,7 @@ impl Volume {
             data_file_access_control: self.data_file_access_control.clone(),
             io_errors: self.io_errors.clone(),
             io_unavailable: self.io_unavailable.clone(),
+            load_generation: self.load_generation.load(Ordering::Relaxed),
         })
     }
 
@@ -2777,13 +3050,24 @@ impl Volume {
         &self,
         n: &mut Needle,
     ) -> Result<Result<(u64, Size, bool), VolumeError>, VolumeError> {
+        self.write_pending_needle_unsynced(n, None)
+    }
+
+    /// write_needle_unsynced_or_refused for a write a delete can cancel.
+    pub fn write_pending_needle_unsynced(
+        &self,
+        n: &mut Needle,
+        pending: Option<&PendingWrite>,
+    ) -> Result<Result<(u64, Size, bool), VolumeError>, VolumeError> {
         let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         let mut io = self.io.write().unwrap();
         if let Err(refused) = self.check_writable() {
             return Ok(Err(refused));
         }
-        self.do_write_request(&mut io, n, true, false).map(Ok)
+        let written = self.do_write_request(&mut io, n, true, false)?;
+        self.drop_cancelled_write(&mut io, pending, n, &written)?;
+        Ok(Ok(written))
     }
 
     /// Write a batch of needles the way Go's processBatch does: one .dat
@@ -2798,6 +3082,16 @@ impl Volume {
         &self,
         writes: &mut [(Needle, bool)],
     ) -> Vec<Result<(u64, Size, bool), VolumeError>> {
+        self.write_pending_needles(writes, &[])
+    }
+
+    /// write_needles_grouped for writes a delete can cancel, `pending[i]`
+    /// tracking `writes[i]`.
+    pub fn write_pending_needles(
+        &self,
+        writes: &mut [(Needle, bool)],
+        pending: &[Option<PendingWrite>],
+    ) -> Vec<Result<(u64, Size, bool), VolumeError>> {
         // The sync lock serializes a .dat mutation with the flush that makes
         // it durable: a failed sync's rollback can never clobber an append
         // that slipped in behind it, and a compaction swap or unlink cannot
@@ -2811,16 +3105,21 @@ impl Volume {
             let mut ids = HashSet::new();
             let len = rest.iter().take_while(|(n, _)| ids.insert(n.id)).count();
             let (run, tail) = std::mem::take(&mut rest).split_at_mut(len);
+            let tracked = pending.get(results.len()..).unwrap_or_default();
             if run.iter().any(|(_, fsync)| *fsync) {
-                results.extend(self.write_synced_run(run));
+                results.extend(self.write_synced_run(run, tracked));
             } else {
                 let _guard = self.data_file_access_control.write_lock();
                 let mut io = self.io.write().unwrap();
-                for (n, _) in run.iter_mut() {
-                    results.push(
-                        self.check_writable()
-                            .and_then(|()| self.do_write_request(&mut io, n, true, false)),
-                    );
+                for (i, (n, _)) in run.iter_mut().enumerate() {
+                    let written = self
+                        .check_writable()
+                        .and_then(|()| self.do_write_request(&mut io, n, true, false));
+                    results.push(written.and_then(|written| {
+                        let pending = tracked.get(i).and_then(Option::as_ref);
+                        self.drop_cancelled_write(&mut io, pending, n, &written)
+                            .map(|()| written)
+                    }));
                 }
             }
             rest = tail;
@@ -2831,6 +3130,7 @@ impl Volume {
     fn write_synced_run(
         &self,
         run: &mut [(Needle, bool)],
+        pending: &[Option<PendingWrite>],
     ) -> Vec<Result<(u64, Size, bool), VolumeError>> {
         // Per entry: Some(offset) once appended, None when it dedups.
         let mut staged = Vec::with_capacity(run.len());
@@ -2874,6 +3174,7 @@ impl Volume {
             }
         }
 
+        let mut took_back = false;
         {
             let _guard = self.data_file_access_control.write_lock();
             let mut io = self.io.write().unwrap();
@@ -2890,24 +3191,37 @@ impl Volume {
             // writes, so the entries after it are refused the way a lone
             // write would be.
             let mut refused = false;
-            for ((n, fsync), r) in run.iter().zip(staged.iter_mut()) {
+            for (i, ((n, fsync), r)) in run.iter().zip(staged.iter_mut()).enumerate() {
                 if refused {
                     *r = Err(self
                         .check_writable()
                         .err()
                         .unwrap_or(VolumeError::ReadOnly(self.id)));
-                } else if let Ok(Some(offset)) = *r
-                    && let Err(e) = self.publish_write(&mut io, n, offset, *fsync)
-                {
-                    *r = Err(e);
-                    refused = *fsync;
+                } else if let Ok(Some(offset)) = *r {
+                    if let Err(e) = self.publish_write(&mut io, n, offset, *fsync) {
+                        *r = Err(e);
+                        refused = *fsync;
+                    } else if let Err(e) = self.drop_cancelled_write(
+                        &mut io,
+                        pending.get(i).and_then(Option::as_ref),
+                        n,
+                        &(offset, n.size, false),
+                    ) {
+                        took_back |= matches!(e, VolumeError::Deleted);
+                        *r = Err(e);
+                    }
                 }
             }
         }
 
         if sync {
             let io = self.io.read().unwrap();
-            if let Err(e) = self.flush_idx(&io) {
+            let flushed = if took_back {
+                self.flush_taken_back(&io)
+            } else {
+                Ok(())
+            };
+            if let Err(e) = flushed.and_then(|()| self.flush_idx(&io)) {
                 return staged
                     .into_iter()
                     .map(|r| r.and_then(|_| Err(run_error(&e))))
@@ -3026,6 +3340,17 @@ impl Volume {
             return Err(VolumeError::Io(e));
         }
         Ok(())
+    }
+
+    /// Flush the tombstones drop_cancelled_write appended after the .dat sync,
+    /// so their .idx rows never outlive them. Like flush_idx, a failure cannot
+    /// be undone and stops the volume taking writes.
+    fn flush_taken_back(&self, io: &VolumeIo) -> Result<(), VolumeError> {
+        self.flush_dat(io).map_err(|e| {
+            self.check_read_write_error(Some(&e));
+            self.set_no_write_flag(NO_WRITE_OR_DELETE, true);
+            VolumeError::Io(e)
+        })
     }
 
     /// Take an unflushed append back off the .dat after its sync failed.
@@ -3410,10 +3735,79 @@ impl Volume {
         Ok((offset, n.size, actual_size))
     }
 
+    pub fn track_pending_write(&self, n: &Needle) -> PendingWrite {
+        let flag = Arc::new(CancelFlag {
+            cookie: n.cookie,
+            cancelled: AtomicBool::new(false),
+        });
+        self.pending_writes
+            .0
+            .lock()
+            .unwrap()
+            .entry(n.id)
+            .or_default()
+            .push(flag.clone());
+        PendingWrite {
+            writes: self.pending_writes.clone(),
+            id: n.id,
+            flag,
+        }
+    }
+
+    /// Whether the write was tracked on this volume rather than on one that
+    /// has since been unmounted under the same id.
+    pub fn tracks_pending_write(&self, pending: &PendingWrite) -> bool {
+        Arc::ptr_eq(&pending.writes, &self.pending_writes)
+    }
+
+    /// Cancels the writes of the needle that are in flight. A caller that found
+    /// the needle missing must look it up again afterwards: a write that
+    /// finished in between is no longer pending.
+    pub fn cancel_pending_writes(&self, id: NeedleId, cookie: Cookie) {
+        if let Some(writes) = self.pending_writes.0.lock().unwrap().get(&id) {
+            for w in writes.iter().filter(|w| w.cookie == cookie) {
+                w.cancelled.store(true, Ordering::Release);
+            }
+        }
+    }
+
+    /// Tombstones a cancelled write right after it is published, under the
+    /// same lock hold, so no reader, later write or compaction sees it live
+    /// in between.
+    fn drop_cancelled_write(
+        &self,
+        io: &mut VolumeIo,
+        pending: Option<&PendingWrite>,
+        n: &Needle,
+        written: &(u64, Size, bool),
+    ) -> Result<(), VolumeError> {
+        let (offset, _, unchanged) = *written;
+        if unchanged || !pending.is_some_and(|p| p.flag.cancelled.load(Ordering::Acquire)) {
+            return Ok(());
+        }
+        let live = match io.nm.as_ref() {
+            Some(nm) => nm.get(n.id)?.is_some_and(|nv| {
+                !nv.size.is_deleted() && nv.offset == Offset::from_actual_offset(offset as i64)
+            }),
+            None => false,
+        };
+        if !live {
+            return Ok(());
+        }
+        let mut tombstone = Needle {
+            id: n.id,
+            cookie: n.cookie,
+            ..Needle::default()
+        };
+        self.do_delete_request(io, &mut tombstone)?;
+        Err(VolumeError::Deleted)
+    }
+
     // ---- Delete ----
 
     /// Delete a needle from the volume.
     pub fn delete_needle(&self, n: &mut Needle) -> Result<Size, VolumeError> {
+        self.cancel_pending_writes(n.id, n.cookie);
         let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         let mut io = self.io.write().unwrap();
@@ -5456,7 +5850,7 @@ impl Volume {
     {
         match self.begin_compact_by_index()? {
             Some(job) => job.run(progress_fn),
-            None => Ok(()), // already compacting
+            None => Err(self.compacting_error()),
         }
     }
 
@@ -5561,7 +5955,7 @@ impl Volume {
             return Err(VolumeError::NotFound);
         }
         let Some(_claim) = CompactionClaim::try_claim(&self.is_compacting) else {
-            return Ok(()); // already compacting, silently skip (matches Go)
+            return Err(self.compacting_error());
         };
         // The reload would read the remote object through the compacted .idx.
         if self.has_remote_file() {
@@ -5576,6 +5970,8 @@ impl Volume {
     }
 
     fn do_commit_compact(&self) -> Result<(), VolumeError> {
+        // A duplicate commit must fail before it closes the live files.
+        self.check_compact_files()?;
         if let Err(e) = self.makeup_diff() {
             warn!("makeup_diff failed: {}", e);
             // Match Go: clean up .cpd/.cpx on makeup_diff failure
@@ -5651,8 +6047,13 @@ impl Volume {
     /// requires BOTH .cpd/.cpx to be present, so a stale or duplicate commit
     /// returns an error without deleting the live .dat/.idx.
     fn apply_compact_swap(&self) -> Result<(), VolumeError> {
-        // Normal commit: both temp files must be present, or a stale/duplicate
-        // commit could clobber the live .dat/.idx.
+        self.check_compact_files()?;
+        self.finish_compact_swap()
+    }
+
+    /// Both temp files of a normal commit must be present, or a stale or
+    /// duplicate commit could clobber the live .dat/.idx.
+    fn check_compact_files(&self) -> Result<(), VolumeError> {
         if !Path::new(&self.file_name(".cpd")).exists()
             || !Path::new(&self.file_name(".cpx")).exists()
         {
@@ -5661,7 +6062,7 @@ impl Volume {
                 "compact files (.cpd/.cpx) not found",
             )));
         }
-        self.finish_compact_swap()
+        Ok(())
     }
 
     /// Renames whichever compaction temp file is still present (.cpd->.dat,
@@ -5761,10 +6162,11 @@ impl Volume {
 
     /// Clean up leftover compaction files (.cpd, .cpx).
     pub fn cleanup_compact(&self) -> Result<(), VolumeError> {
-        // An in-flight copy is still writing .cpd/.cpx.
-        if self.is_compacting() {
+        // An in-flight copy is still writing .cpd/.cpx; claim the volume so
+        // none starts while the files are removed.
+        let Some(_claim) = CompactionClaim::try_claim(&self.is_compacting) else {
             return Err(self.compacting_error());
-        }
+        };
         // Refuse to unlink .cpd/.cpx while a .cpc marker exists: those temp files
         // are the only inputs reconcile can roll forward to, so removing them
         // mid-commit would strand a decided swap.
@@ -6156,6 +6558,22 @@ impl Volume {
     #[cfg(test)]
     pub(crate) fn io_read_for_test(&self) -> std::sync::RwLockReadGuard<'_, VolumeIo> {
         self.io.read().unwrap()
+    }
+
+    /// Holds the lock a write waits on behind another write's fsync.
+    #[cfg(test)]
+    pub(crate) fn sync_lock_for_test(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.data_file_sync_lock.lock().unwrap()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_writes_for_test(&self, id: NeedleId) -> usize {
+        self.pending_writes
+            .0
+            .lock()
+            .unwrap()
+            .get(&id)
+            .map_or(0, Vec::len)
     }
 
     #[cfg(test)]
@@ -8482,6 +8900,171 @@ mod tests {
         };
         let err = v.read_needle(&mut read_n).unwrap_err();
         assert!(matches!(err, VolumeError::Deleted));
+    }
+
+    fn pending_needle(id: u64, data: &[u8]) -> Needle {
+        Needle {
+            id: NeedleId(id),
+            cookie: Cookie(0xcc),
+            data: data.to_vec(),
+            data_size: data.len() as u32,
+            ..Needle::default()
+        }
+    }
+
+    fn write_pending(
+        v: &Volume,
+        n: Needle,
+        fsync: bool,
+        pending: PendingWrite,
+    ) -> Result<(u64, Size, bool), VolumeError> {
+        v.write_pending_needles(&mut [(n, fsync)], &[Some(pending)])
+            .pop()
+            .unwrap()
+    }
+
+    /// A delete that finds nothing can still have the write it undoes in
+    /// flight. That write must not land live afterwards.
+    #[test]
+    fn test_delete_of_missing_needle_cancels_pending_write() {
+        for fsync in [false, true] {
+            let tmp = TempDir::new().unwrap();
+            let dir = tmp.path().to_str().unwrap();
+            let v = make_test_volume(dir);
+
+            let n = pending_needle(1, b"late write");
+            let pending = v.track_pending_write(&n);
+            v.delete_needle(&mut pending_needle(1, b"")).unwrap();
+            let err = write_pending(&v, n, fsync, pending).unwrap_err();
+            assert!(matches!(err, VolumeError::Deleted));
+
+            let err = v.read_needle(&mut pending_needle(1, b"")).unwrap_err();
+            assert!(matches!(err, VolumeError::Deleted));
+            assert!(v.pending_writes.0.lock().unwrap().is_empty());
+
+            v.close();
+            let v = Volume::new(
+                dir,
+                dir,
+                VolumeId(1),
+                NeedleMapKind::InMemory,
+                &VolumeSpec::default(),
+            )
+            .unwrap();
+            assert!(v.read_needle(&mut pending_needle(1, b"")).is_err());
+        }
+    }
+
+    /// The unsynced write path takes a cancelled write back the same way.
+    #[test]
+    fn test_unsynced_write_cancelled_by_delete() {
+        let tmp = TempDir::new().unwrap();
+        let v = make_test_volume(tmp.path().to_str().unwrap());
+
+        let mut n = pending_needle(1, b"late write");
+        let pending = v.track_pending_write(&n);
+        v.cancel_pending_writes(n.id, n.cookie);
+        let err = v
+            .write_pending_needle_unsynced(&mut n, Some(&pending))
+            .unwrap_err();
+        assert!(matches!(err, VolumeError::Deleted));
+        let err = v.read_needle(&mut pending_needle(1, b"")).unwrap_err();
+        assert!(matches!(err, VolumeError::Deleted));
+    }
+
+    /// A delete that finds a copy also cancels a retry of the same write that
+    /// is still in flight, so the retry does not bring the needle back.
+    #[test]
+    fn test_delete_cancels_pending_rewrite() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+
+        v.write_needle(&mut pending_needle(1, b"first"), true, false)
+            .unwrap();
+        let rewrite = pending_needle(1, b"retry");
+        let pending = v.track_pending_write(&rewrite);
+        v.delete_needle(&mut pending_needle(1, b"")).unwrap();
+        let err = write_pending(&v, rewrite, false, pending).unwrap_err();
+        assert!(matches!(err, VolumeError::Deleted));
+        let err = v.read_needle(&mut pending_needle(1, b"")).unwrap_err();
+        assert!(matches!(err, VolumeError::Deleted));
+    }
+
+    /// Only writes already in flight and carrying the delete's cookie are
+    /// cancelled.
+    #[test]
+    fn test_pending_write_cancel_leaves_later_writes() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+
+        v.delete_needle(&mut pending_needle(1, b"")).unwrap();
+        let n = pending_needle(1, b"after the delete");
+        let pending = v.track_pending_write(&n);
+        write_pending(&v, n, false, pending).unwrap();
+        let mut got = pending_needle(1, b"");
+        v.read_needle(&mut got).unwrap();
+        assert_eq!(got.data, b"after the delete");
+
+        let n = pending_needle(2, b"other cookie");
+        let pending = v.track_pending_write(&n);
+        v.cancel_pending_writes(n.id, Cookie(n.cookie.0 + 1));
+        write_pending(&v, n, false, pending).unwrap();
+        let mut got = pending_needle(2, b"");
+        v.read_needle(&mut got).unwrap();
+        assert_eq!(got.data, b"other cookie");
+    }
+
+    /// The cancelled write is taken back before the next write of the needle
+    /// runs, so an identical write sent after the delete appends its own copy
+    /// instead of matching the record about to be deleted.
+    #[test]
+    fn test_write_after_cancelled_write_stays_live() {
+        for fsync in [false, true] {
+            let tmp = TempDir::new().unwrap();
+            let v = make_test_volume(tmp.path().to_str().unwrap());
+
+            let first = pending_needle(1, b"same bytes");
+            let first_pending = v.track_pending_write(&first);
+            v.cancel_pending_writes(first.id, first.cookie);
+            let retry = pending_needle(1, b"same bytes");
+            let retry_pending = v.track_pending_write(&retry);
+            let mut results = v.write_pending_needles(
+                &mut [(first, fsync), (retry, fsync)],
+                &[Some(first_pending), Some(retry_pending)],
+            );
+            let retried = results.pop().unwrap().unwrap();
+            assert!(
+                !retried.2,
+                "fsync={fsync}: the retry matched the cancelled write"
+            );
+            assert!(matches!(results.pop().unwrap(), Err(VolumeError::Deleted)));
+
+            let mut got = pending_needle(1, b"");
+            v.read_needle(&mut got).unwrap();
+            assert_eq!(got.data, b"same bytes");
+        }
+    }
+
+    /// A durable write taken back appends its tombstone after the .dat sync;
+    /// the tombstone is flushed before the .idx row that points at it.
+    #[test]
+    fn test_taken_back_tombstone_is_synced() {
+        let tmp = TempDir::new().unwrap();
+        let v = make_test_volume(tmp.path().to_str().unwrap());
+
+        let n = pending_needle(1, b"late write");
+        let pending = v.track_pending_write(&n);
+        v.cancel_pending_writes(n.id, n.cookie);
+        let err = write_pending(&v, n, true, pending).unwrap_err();
+        assert!(matches!(err, VolumeError::Deleted));
+        assert_eq!(v.sync_counts_for_test(), (2, 1));
+
+        let n = pending_needle(2, b"kept");
+        let pending = v.track_pending_write(&n);
+        write_pending(&v, n, true, pending).unwrap();
+        assert_eq!(v.sync_counts_for_test(), (3, 2));
     }
 
     // Guard the Rust integrity-check tombstone path against the Go regression
@@ -12360,5 +12943,36 @@ mod tests {
             dat_len_before,
             "live .dat unchanged"
         );
+    }
+
+    /// A commit that finds no .cpd/.cpx (another vacuum already committed
+    /// them) must leave the volume loaded and writable.
+    #[test]
+    fn test_commit_compact_without_temp_files_keeps_volume_loaded() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+        let needle = |i: u64| Needle {
+            id: NeedleId(i),
+            cookie: Cookie(i as u32),
+            data: format!("data-{}", i).into_bytes(),
+            data_size: format!("data-{}", i).len() as u32,
+            ..Needle::default()
+        };
+        for i in 1..=3u64 {
+            v.write_needle(&mut needle(i), true, false).unwrap();
+        }
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+
+        assert!(v.commit_compact().is_err());
+        assert!(!Path::new(&v.file_name(".cpc")).exists());
+        v.write_needle(&mut needle(4), true, false).unwrap();
+        let mut n1 = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        v.read_needle(&mut n1).unwrap();
+        assert_eq!(n1.data, b"data-1");
     }
 }

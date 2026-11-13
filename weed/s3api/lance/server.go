@@ -61,6 +61,7 @@ type CredentialVendor interface {
 type Server struct {
 	filerClient         FilerClient
 	tablesManager       *s3tables.Manager
+	internal            *s3tables.Manager
 	authenticator       S3Authenticator
 	credentialValidator CredentialValidator
 	credentialVendor    CredentialVendor
@@ -77,9 +78,12 @@ func NewServer(filerClient FilerClient, authenticator S3Authenticator) *Server {
 	if authenticator != nil {
 		manager.SetDefaultAllow(authenticator.DefaultAllow())
 	}
+	internal := s3tables.NewManager()
+	internal.SetTrusted(true)
 	return &Server{
 		filerClient:   filerClient,
 		tablesManager: manager,
+		internal:      internal,
 		authenticator: authenticator,
 	}
 }
@@ -188,11 +192,18 @@ func (s *Server) authEnabled() bool {
 
 // Auth authenticates the caller and puts the identity in the request context.
 // Lance clients authenticate the catalog with a Bearer token or an x-api-key
-// header; the S3 authenticator stays for callers that can SigV4-sign.
+// header; the S3 authenticator stays for callers that can SigV4-sign. A
+// cluster process (the vector engine, the maintenance worker) presents the
+// cluster token alone, which is its credential: it holds the cluster's filer
+// signing key, and the catalog is read on its behalf by the trusted manager.
 func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.hasClusterToken(r) {
 			r = r.WithContext(withTrustedCaller(r.Context()))
+			if r.Header.Get("Authorization") == "" && r.Header.Get("x-api-key") == "" {
+				handler(w, r)
+				return
+			}
 		}
 		// A request carrying a Bearer token is a Lance REST client. An invalid
 		// or expired token gets 401 immediately; falling through to the S3

@@ -8,17 +8,19 @@ use lance::Dataset;
 use lance::dataset::ProjectionRequest;
 use lance::dataset::WriteParams;
 use lance::dataset::{MergeInsertBuilder, WhenMatched, WhenNotMatched};
-use lance::io::ObjectStoreParams;
-use lance::io::StorageOptionsAccessor;
 use lance::io::WrappingObjectStore;
+use lance::session::Session;
 use lance::table::format::Fragment;
-use lance_linalg::distance::DistanceType;
 use prost_types::{ListValue, Struct, Value, value::Kind};
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tonic::{Request, Response, Status};
-use weed_lance_worker::catalog::NamespaceClient;
-use weed_lance_worker::dataset::{self, FallbackOptions};
+use weed_lance_worker::catalog::TableDescription;
+use weed_lance_worker::dataset;
+use weed_lance_worker::direct_read::{DirectReads, Wrappers};
+use weed_lance_worker::jobs::vector_index::is_vector_table;
+use weed_vector_core::index;
+use weed_vector_core::maintenance::SharedLeases;
 use weed_vector_core::query::{self, Query};
 use weed_vector_core::table::VectorTable;
 
@@ -35,17 +37,14 @@ fn invalid(err: impl Into<anyhow::Error>) -> Status {
 
 fn open_status(err: anyhow::Error) -> Status {
     let missing = err.chain().any(|cause| {
-        cause
-            .downcast_ref::<reqwest::Error>()
-            .is_some_and(|e| e.status() == Some(reqwest::StatusCode::NOT_FOUND))
-            || cause.downcast_ref::<lance::Error>().is_some_and(|e| {
-                matches!(
-                    e,
-                    lance::Error::DatasetNotFound { .. }
-                        | lance::Error::NotFound { .. }
-                        | lance::Error::VersionNotFound { .. }
-                )
-            })
+        cause.downcast_ref::<lance::Error>().is_some_and(|e| {
+            matches!(
+                e,
+                lance::Error::DatasetNotFound { .. }
+                    | lance::Error::NotFound { .. }
+                    | lance::Error::VersionNotFound { .. }
+            )
+        })
     });
     if missing {
         Status::not_found(format!("{:#}", err))
@@ -58,8 +57,9 @@ const KEY_COLUMN: &str = "key";
 const METADATA_COLUMN: &str = "metadata";
 const VECTOR_COLUMN: &str = "vector";
 const ROW_ID_COLUMN: &str = "_rowid";
-
-fn schema_for(
+const DEFAULT_INDEX_CACHE_BYTES: usize = 1 << 30;
+const DEFAULT_METADATA_CACHE_BYTES: usize = 256 << 20;
+pub(crate) fn schema_for(
     dimension: usize,
     metric: pb::DistanceMetric,
     non_filterable: &[String],
@@ -97,6 +97,44 @@ fn schema_for(
         vector_field,
         metadata_field,
     ]))
+}
+
+fn matches_index_schema(
+    dataset: &Dataset,
+    dimension: usize,
+    metric: pb::DistanceMetric,
+    non_filterable: &[String],
+) -> bool {
+    let Ok(layout) = VectorTable::resolve(dataset, Some(VECTOR_COLUMN), Some(KEY_COLUMN)) else {
+        return false;
+    };
+    let schema = Schema::from(dataset.schema());
+    let Ok(vector) = schema.field_with_name(VECTOR_COLUMN) else {
+        return false;
+    };
+    let Ok(metadata) = schema.field_with_name(METADATA_COLUMN) else {
+        return false;
+    };
+    let stored_keys = metadata
+        .metadata()
+        .get("non_filterable_metadata_keys")
+        .map(|keys| serde_json::from_str::<Vec<String>>(keys))
+        .transpose();
+    let Ok(stored_keys) = stored_keys else {
+        return false;
+    };
+    let mut stored_keys = stored_keys.unwrap_or_default();
+    let mut requested_keys = non_filterable.to_vec();
+    stored_keys.sort();
+    requested_keys.sort();
+    layout.dimension == dimension
+        && vector.metadata().get("distance_metric").map(String::as_str)
+            == Some(metric.as_str_name())
+        && stored_keys == requested_keys
+        && metadata
+            .metadata()
+            .get("ARROW:extension:name")
+            .is_some_and(|name| name == "lance.json")
 }
 
 fn batch_of(vectors: &[pb::Vector], dimension: usize, schema: Arc<Schema>) -> Result<RecordBatch> {
@@ -370,38 +408,294 @@ fn rows_as_vectors(
     out
 }
 
+/// Refuses a table of an SSE-S3 bucket when the engine's storage has no key
+/// to read or write it with, rather than failing inside Lance.
+fn sse_s3_ready(sse_s3: bool, key_configured: Option<bool>) -> Result<(), Status> {
+    if sse_s3 && key_configured == Some(false) {
+        return Err(Status::failed_precondition(
+            "the bucket encrypts with SSE-S3, which needs s3.sse.kek or s3.sse.key for the \
+             engine as for the S3 gateway",
+        ));
+    }
+    Ok(())
+}
+
+/// The description a gateway sent with the table. Only a vector index at its
+/// colocated path is taken, since the engine is that path's writer already;
+/// any other location would point the engine at storage the catalog does not
+/// know.
+fn resolved(table: &pb::Table, schemes: &[&str]) -> Option<TableDescription> {
+    // Each id part is one path component; `..` would resolve the colocated
+    // path elsewhere on the filer.
+    if !table
+        .id
+        .iter()
+        .all(|part| !part.is_empty() && part != "." && part != ".." && !part.contains('/'))
+    {
+        return None;
+    }
+    let colocated = dataset::table_location(&table.id)?;
+    let path = colocated.strip_prefix("s3://")?;
+    let location = table.location.trim_end_matches('/');
+    let trusted = is_vector_table(&table.id)
+        && schemes
+            .iter()
+            .any(|scheme| location == format!("{scheme}://{path}"));
+    trusted.then(|| TableDescription {
+        location: location.to_string(),
+        storage_options: dataset::unsigned_options(),
+        managed_versioning: false,
+    })
+}
+
+/// Marks the table an index was created as, in its schema metadata, which
+/// every later version keeps.
+const TABLE_ID_KEY: &str = "weed_vector_table_id";
+
+/// The table a dataset was created as; empty for one created before tables
+/// were marked.
+pub(crate) fn table_id(dataset: &Dataset) -> &str {
+    dataset
+        .schema()
+        .metadata
+        .get(TABLE_ID_KEY)
+        .map_or("", String::as_str)
+}
+
+/// The session reads share, and the table each location held when this
+/// session first read it. Lance keys some of its caches by location and
+/// version alone, and an index dropped and created again at its location
+/// numbers its versions from 1 again, so a session that sees a location hold
+/// another table starts over.
+pub(crate) struct Reads {
+    pub(crate) session: Arc<Session>,
+    generation: u64,
+    tables: HashMap<String, String>,
+}
+
+/// Opened tables kept for the next read of them.
+const MAX_HANDLES: u64 = 1024;
+
+fn handle_key(table: &pb::Table) -> (String, bool) {
+    (table.location.clone(), table.sse_s3)
+}
+
+/// Locations a session remembers before it starts over.
+const MAX_READ_TABLES: usize = 100_000;
+
+impl Reads {
+    fn new(index_bytes: usize, metadata_bytes: usize) -> Self {
+        Self {
+            session: Arc::new(Session::new(
+                index_bytes,
+                metadata_bytes,
+                Default::default(),
+            )),
+            generation: 0,
+            tables: HashMap::new(),
+        }
+    }
+
+    /// Whether a dataset of `table_id` at `location`, opened in this session,
+    /// may be read. Otherwise the session was replaced and the caller opens
+    /// the table again.
+    fn admit(&mut self, location: &str, table_id: &str, (index, metadata): (usize, usize)) -> bool {
+        match self.tables.get(location) {
+            Some(seen) if seen == table_id => return true,
+            None if self.tables.len() < MAX_READ_TABLES => {
+                self.tables
+                    .insert(location.to_string(), table_id.to_string());
+                return true;
+            }
+            _ => {}
+        }
+        let generation = self.generation + 1;
+        *self = Self::new(index, metadata);
+        self.generation = generation;
+        false
+    }
+}
+
 pub struct VectorServer {
-    client: NamespaceClient,
-    fallback: FallbackOptions,
-    read_cache: Option<Arc<dyn WrappingObjectStore>>,
+    storage: Option<DirectReads>,
+    read_cache: Option<ReadCache>,
+    /// Lance's index and metadata caches, shared by every request that only
+    /// reads. Writes open in a session of their own.
+    pub(crate) reads: Mutex<Reads>,
+    /// A table opened by an earlier read, by location and encryption, with
+    /// the generation of the session it was opened in.
+    pub(crate) handles: moka::sync::Cache<(String, bool), (u64, Dataset)>,
+    lance_cache_bytes: (usize, usize),
+    leases: SharedLeases,
+    nprobes: Option<usize>,
+    /// URI schemes a table's location may have.
+    schemes: &'static [&'static str],
+}
+
+impl Default for VectorServer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl VectorServer {
-    pub fn new(client: NamespaceClient, fallback: FallbackOptions) -> Self {
+    pub fn new() -> Self {
         Self {
-            client,
-            fallback,
+            storage: None,
             read_cache: None,
+            reads: Mutex::new(Reads::new(
+                DEFAULT_INDEX_CACHE_BYTES,
+                DEFAULT_METADATA_CACHE_BYTES,
+            )),
+            lance_cache_bytes: (DEFAULT_INDEX_CACHE_BYTES, DEFAULT_METADATA_CACHE_BYTES),
+            handles: moka::sync::Cache::new(MAX_HANDLES),
+            leases: SharedLeases::default(),
+            nprobes: None,
+            schemes: &["s3"],
         }
+    }
+
+    /// Tables on an in-process store, for tests.
+    #[cfg(test)]
+    pub(crate) fn with_schemes(mut self, schemes: &'static [&'static str]) -> Self {
+        self.schemes = schemes;
+        self
+    }
+
+    /// Partitions every query probes, instead of the index's own default.
+    pub fn with_nprobes(mut self, nprobes: Option<usize>) -> Self {
+        self.nprobes = nprobes;
+        self
+    }
+
+    /// Keep tables on the filers and volume servers, not through the gateway.
+    /// Unset only for tests on an in-process store.
+    pub fn with_storage(mut self, storage: DirectReads) -> Self {
+        self.storage = Some(storage);
+        self
+    }
+
+    /// Bytes of loaded indexes and of table metadata kept across reads.
+    pub fn with_lance_caches(mut self, index_bytes: usize, metadata_bytes: usize) -> Self {
+        self.reads = Mutex::new(Reads::new(index_bytes, metadata_bytes));
+        self.lance_cache_bytes = (index_bytes, metadata_bytes);
+        self
     }
 
     /// Serve repeated reads of write-once table files from `cache`.
     pub fn with_read_cache(mut self, cache: ReadCache) -> Self {
-        self.read_cache = Some(Arc::new(cache));
+        self.read_cache = Some(cache);
         self
     }
 
-    async fn open(&self, table: &pb::Table) -> Result<Dataset> {
-        let opened = dataset::open_with(
-            &self.client,
-            &table.id,
-            &self.fallback,
-            self.read_cache.clone(),
-        )
-        .await?;
-        let mut dataset = opened.dataset;
+    /// The table as the gateway resolved it. A request that names no
+    /// location, another location than the index's own, or storage options
+    /// the engine's credentials must not be used with is refused.
+    fn describe(&self, table: &pb::Table) -> Result<TableDescription, Status> {
+        if table.location.is_empty() {
+            return Err(Status::invalid_argument("the table names no location"));
+        }
+        let description = resolved(table, self.schemes).ok_or_else(|| {
+            Status::permission_denied(format!(
+                "{} is not the location of index {}",
+                table.location,
+                table.id.join("/")
+            ))
+        })?;
+        sse_s3_ready(
+            table.sse_s3,
+            self.storage.as_ref().map(|s| s.sse_s3_configured()),
+        )?;
+        Ok(description)
+    }
+
+    /// The store Lance opens a table with: direct storage innermost, the read
+    /// cache outside it so a hit never reaches storage.
+    fn wrapper(&self, table: &pb::Table) -> Option<Arc<dyn WrappingObjectStore>> {
+        let mut wrappers: Vec<Arc<dyn WrappingObjectStore>> = Vec::new();
+        if let Some(storage) = &self.storage {
+            wrappers.push(Arc::new(storage.encrypting(table.sse_s3)));
+        }
+        if let Some(cache) = &self.read_cache {
+            wrappers.push(Arc::new(cache.clone()));
+        }
+        (!wrappers.is_empty()).then(|| Arc::new(Wrappers(wrappers)) as Arc<dyn WrappingObjectStore>)
+    }
+
+    async fn open(&self, table: &pb::Table) -> Result<Dataset, Status> {
+        self.open_in(table, None).await
+    }
+
+    /// [`Self::open`] in the shared session, for a request that only reads.
+    async fn open_to_read(&self, table: &pb::Table) -> Result<Dataset, Status> {
+        loop {
+            let (session, generation) = {
+                let reads = self.reads.lock().unwrap();
+                (reads.session.clone(), reads.generation)
+            };
+            let dataset = match self.handle(table, generation).await? {
+                Some(dataset) => dataset,
+                None => {
+                    let dataset = self.open_in(table, Some(session)).await?;
+                    // Under the lock, so no handle of a replaced session
+                    // lands after the replacement cleared them.
+                    let reads = self.reads.lock().unwrap();
+                    if table.version == 0 && reads.generation == generation {
+                        self.handles
+                            .insert(handle_key(table), (generation, dataset.clone()));
+                    }
+                    dataset
+                }
+            };
+            let mut reads = self.reads.lock().unwrap();
+            if reads.generation != generation {
+                continue;
+            }
+            if reads.admit(&table.location, table_id(&dataset), self.lance_cache_bytes) {
+                return Ok(dataset);
+            }
+            // The handles hold the replaced session and its caches.
+            self.handles.invalidate_all();
+        }
+    }
+
+    /// The table from the handle an earlier read of it left in this session,
+    /// moved to the version asked for: the latest costs a listing of its
+    /// versions, not a new store and manifest read.
+    async fn handle(&self, table: &pb::Table, generation: u64) -> Result<Option<Dataset>, Status> {
+        self.describe(table)?;
+        let key = handle_key(table);
+        let Some((at, mut dataset)) = self.handles.get(&key) else {
+            return Ok(None);
+        };
+        if at != generation {
+            return Ok(None);
+        }
+        let moved = match table.version {
+            0 => dataset.checkout_latest().await.map(|()| dataset),
+            version => dataset.checkout_version(version).await,
+        };
+        moved.map(Some).map_err(|err| {
+            self.handles.invalidate(&key);
+            open_status(err.into())
+        })
+    }
+
+    async fn open_in(
+        &self,
+        table: &pb::Table,
+        session: Option<Arc<Session>>,
+    ) -> Result<Dataset, Status> {
+        let description = self.describe(table)?;
+        let wrapper = self.wrapper(table);
+        let mut dataset = dataset::open_at(&description, wrapper, session)
+            .await
+            .map_err(open_status)?;
         if table.version != 0 {
-            dataset = dataset.checkout_version(table.version).await?;
+            dataset = dataset
+                .checkout_version(table.version)
+                .await
+                .map_err(|err| open_status(err.into()))?;
         }
         Ok(dataset)
     }
@@ -425,30 +719,47 @@ impl VectorService for VectorServer {
             return Err(Status::invalid_argument("dimension must be 1..=4096"));
         }
         // The gateway has already created the table through the catalog.
-        let description = self
-            .client
-            .describe_table(&table.id)
-            .await
-            .map_err(internal)?;
-        let options = dataset::table_options(&description, &self.fallback);
+        let description = self.describe(&table)?;
         let schema = schema_for(dimension, metric, &req.non_filterable_metadata_keys);
+        let schema = Arc::new(Schema::new_with_metadata(
+            schema.fields().clone(),
+            HashMap::from([(
+                TABLE_ID_KEY.to_string(),
+                uuid::Uuid::new_v4().simple().to_string(),
+            )]),
+        ));
         let empty = RecordBatch::new_empty(schema.clone());
         let reader = arrow_array::RecordBatchIterator::new(vec![Ok(empty)].into_iter(), schema);
         let dataset = Dataset::write(
             reader,
             &description.location,
             Some(WriteParams {
-                store_params: Some(ObjectStoreParams {
-                    storage_options_accessor: Some(Arc::new(
-                        StorageOptionsAccessor::with_static_options(options),
-                    )),
-                    ..Default::default()
-                }),
+                store_params: Some(dataset::store_params(self.wrapper(&table))),
                 ..Default::default()
             }),
         )
-        .await
-        .map_err(internal)?;
+        .await;
+        let dataset = match dataset {
+            Ok(dataset) => dataset,
+            Err(error) => match self.open(&table).await {
+                Ok(existing)
+                    if matches_index_schema(
+                        &existing,
+                        dimension,
+                        metric,
+                        &req.non_filterable_metadata_keys,
+                    ) =>
+                {
+                    existing
+                }
+                Ok(_) => {
+                    return Err(Status::already_exists(
+                        "index exists with a different schema",
+                    ));
+                }
+                Err(_) => return Err(internal(error)),
+            },
+        };
         Ok(Response::new(pb::CreateIndexResponse {
             version: dataset.version().version,
         }))
@@ -462,15 +773,24 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        dataset::drop(&self.client, &table.id, &self.fallback)
-            .await
-            .map_err(|err| {
-                if err.is::<dataset::DropRefused>() {
-                    Status::failed_precondition(format!("{err:#}"))
-                } else {
-                    internal(err)
-                }
-            })?;
+        // describe() already refused any location but the index's own.
+        let description = self.describe(&table)?;
+        match &self.storage {
+            Some(storage) => storage
+                .remove_table(&description.location)
+                .await
+                .map_err(internal)?,
+            None => {
+                let (store, path) = lance::io::ObjectStore::from_uri_and_params(
+                    Arc::new(lance::io::ObjectStoreRegistry::default()),
+                    &description.location,
+                    &dataset::store_params(self.wrapper(&table)),
+                )
+                .await
+                .map_err(internal)?;
+                store.remove_dir_all(path).await.map_err(internal)?;
+            }
+        }
         Ok(Response::new(pb::DropIndexResponse {}))
     }
 
@@ -482,7 +802,7 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open(&table).await.map_err(open_status)?;
+        let dataset = self.open(&table).await?;
         if req.vectors.is_empty() {
             return Ok(Response::new(pb::PutVectorsResponse {
                 version: dataset.version().version,
@@ -524,12 +844,10 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open(&table).await.map_err(open_status)?;
+        let dataset = self.open_to_read(&table).await?;
         // Lease the resolved version so maintenance cannot reclaim its files
         // while this query runs against it.
-        let _lease = weed_vector_core::maintenance::try_pin(&dataset)
-            .await
-            .map_err(internal)?;
+        let _lease = self.leases.try_pin(&dataset).await.map_err(internal)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
         let columns = projection(req.return_data, req.return_metadata);
         let batches = query::get(&dataset, &resolved, &req.keys, Some(&columns))
@@ -548,7 +866,7 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let mut dataset = self.open(&table).await.map_err(open_status)?;
+        let mut dataset = self.open(&table).await?;
         if !req.keys.is_empty() {
             dataset
                 .delete(&key_list(&req.keys))
@@ -574,7 +892,7 @@ impl VectorService for VectorServer {
                 "segment_index must be below segment_count, which is at most {MAX_SEGMENTS}"
             )));
         }
-        let dataset = self.open(&table).await.map_err(open_status)?;
+        let dataset = self.open_to_read(&table).await?;
         let offset: u64 = if req.next_token.is_empty() {
             0
         } else {
@@ -594,9 +912,7 @@ impl VectorService for VectorServer {
             // Data and metadata come from a second read of this version, so
             // lease it as get_vectors does.
             let _lease = if columns.len() > 1 {
-                weed_vector_core::maintenance::try_pin(&dataset)
-                    .await
-                    .map_err(internal)?
+                self.leases.try_pin(&dataset).await.map_err(internal)?
             } else {
                 None
             };
@@ -641,12 +957,10 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open(&table).await.map_err(open_status)?;
+        let dataset = self.open_to_read(&table).await?;
         // Lease the resolved version so maintenance cannot reclaim its files
         // while this query runs against it.
-        let _lease = weed_vector_core::maintenance::try_pin(&dataset)
-            .await
-            .map_err(internal)?;
+        let _lease = self.leases.try_pin(&dataset).await.map_err(internal)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
         if req.query_vector.len() != resolved.dimension {
             return Err(Status::invalid_argument(format!(
@@ -658,16 +972,7 @@ impl VectorService for VectorServer {
         if req.top_k == 0 {
             return Err(Status::invalid_argument("top_k must be positive"));
         }
-        // The index's configured metric lives in the vector field's metadata.
-        let distance = match dataset
-            .schema()
-            .field(VECTOR_COLUMN)
-            .and_then(|f| f.metadata.get("distance_metric").map(String::as_str))
-        {
-            Some("COSINE") => DistanceType::Cosine,
-            Some("DOT_PRODUCT") => DistanceType::Dot,
-            _ => DistanceType::L2,
-        };
+        let distance = index::distance_metric(&dataset, VECTOR_COLUMN);
         let query = Query {
             vector: req.query_vector,
             k: req.top_k as usize,
@@ -678,7 +983,7 @@ impl VectorService for VectorServer {
             },
             postfilter: req.postfilter,
             distance,
-            nprobes: None,
+            nprobes: self.nprobes,
             index_segments: None,
             fragments: None,
         };
@@ -942,45 +1247,99 @@ mod tests {
         assert_eq!(next, None);
     }
 
-    /// A catalog that answers one describe with `location`.
-    async fn catalog_describing(location: &str) -> String {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let body = serde_json::json!({ "location": location }).to_string();
-        tokio::spawn(async move {
-            let (mut conn, _) = listener.accept().await.unwrap();
-            let mut request = [0u8; 8192];
-            let _ = conn.read(&mut request).await;
-            let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            conn.write_all(response.as_bytes()).await.unwrap();
-            let _ = conn.shutdown().await;
-            let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
-        });
-        url
-    }
-
+    /// A location that is not the index's own is refused before anything is
+    /// opened or removed.
     #[tokio::test]
     async fn drop_index_refuses_a_location_outside_the_table() {
-        for location in ["s3://bkt/vector", "s3://bkt/vector/prod"] {
-            let server = VectorServer::new(
-                NamespaceClient::new(catalog_describing(location).await),
-                FallbackOptions::new(),
-            );
+        let server = VectorServer::new();
+        for location in [
+            "s3://bkt/vector",
+            "s3://bkt/vector/prod",
+            "s3://other/vector/x",
+        ] {
             let request = pb::DropIndexRequest {
                 table: Some(pb::Table {
                     id: vec!["bkt".into(), "vector".into(), "x".into()],
-                    version: 0,
+                    location: location.into(),
+                    ..Default::default()
                 }),
             };
             let err = server
                 .drop_index(Request::new(request))
                 .await
                 .expect_err(location);
-            assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{location}");
+            assert_eq!(err.code(), tonic::Code::PermissionDenied, "{location}");
+        }
+    }
+
+    /// A table of an SSE-S3 bucket is refused before Lance opens it when the
+    /// storage holds no key.
+    #[test]
+    fn an_sse_s3_table_needs_the_key() {
+        assert!(sse_s3_ready(false, Some(false)).is_ok());
+        assert!(sse_s3_ready(true, Some(true)).is_ok());
+        assert!(
+            sse_s3_ready(true, None).is_ok(),
+            "in-process stores need no key"
+        );
+        let err = sse_s3_ready(true, Some(false)).unwrap_err();
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(err.message().contains("s3.sse.kek or s3.sse.key"));
+    }
+
+    /// Only a vector index at its colocated path is taken from the request.
+    #[test]
+    fn resolved_takes_only_a_colocated_vector_index() {
+        let table = |id: &[&str], location: &str| pb::Table {
+            id: id.iter().map(|s| s.to_string()).collect(),
+            location: location.into(),
+            ..Default::default()
+        };
+        let s3 = &["s3"];
+        let index = ["bkt", "vector", "x"];
+        for location in ["s3://bkt/vector/x", "s3://bkt/vector/x/"] {
+            let description = resolved(&table(&index, location), s3).expect(location);
+            assert_eq!(description.location, "s3://bkt/vector/x");
+            assert_eq!(
+                description
+                    .storage_options
+                    .get("aws_skip_signature")
+                    .map(String::as_str),
+                Some("true")
+            );
+        }
+        assert!(resolved(&table(&index, ""), s3).is_none());
+        assert!(resolved(&table(&index, "s3://other/vector/x"), s3).is_none());
+        assert!(resolved(&table(&index, "s3://bkt/vector/y"), s3).is_none());
+        assert!(resolved(&table(&index, "file://bkt/vector/x"), s3).is_none());
+        assert!(resolved(&table(&index, "memory://bkt/vector/x"), &["s3", "memory"]).is_some());
+        assert!(resolved(&table(&["bkt", "ns", "x"], "s3://bkt/ns/x"), s3).is_none());
+        assert!(resolved(&table(&["bkt", "vector", ".."], "s3://bkt/vector/.."), s3).is_none());
+        assert!(resolved(&table(&["bkt", "vector", "a/b"], "s3://bkt/vector/a/b"), s3).is_none());
+        assert!(resolved(&table(&["bkt", "x"], "s3://bkt/x"), s3).is_none());
+    }
+
+    /// A request names the table's location or is refused.
+    #[tokio::test]
+    async fn a_table_without_its_location_is_refused() {
+        let server = VectorServer::new();
+        for (location, code) in [
+            ("", tonic::Code::InvalidArgument),
+            ("s3://other/vector/x", tonic::Code::PermissionDenied),
+        ] {
+            let err = server
+                .get_vectors(Request::new(pb::GetVectorsRequest {
+                    table: Some(pb::Table {
+                        id: vec!["bkt".into(), "vector".into(), "x".into()],
+                        location: location.into(),
+                        ..Default::default()
+                    }),
+                    keys: vec!["k001".into()],
+                    ..Default::default()
+                }))
+                .await
+                .expect_err(location);
+            assert_eq!(err.code(), code, "{location}");
         }
     }
 }

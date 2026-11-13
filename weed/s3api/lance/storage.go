@@ -17,11 +17,30 @@ import (
 
 const defaultPageSize = 1000
 
+// manager is the S3 Tables manager a request runs through: a cluster process,
+// authenticated by the cluster token alone, has no identity of its own and is
+// trusted; every other caller is checked against its grants.
+func (s *Server) manager(r *http.Request) *s3tables.Manager {
+	if s3_constants.GetIdentityNameFromContext(r) == "" && isTrustedCaller(r.Context()) {
+		return s.internal
+	}
+	return s.tablesManager
+}
+
 // execute runs one S3 Tables operation as the request's authenticated caller.
 func (s *Server) execute(r *http.Request, operation string, req, resp interface{}) error {
 	identityName := s3_constants.GetIdentityNameFromContext(r)
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return s.tablesManager.Execute(r.Context(), s3tables.NewManagerClient(client), operation, req, resp, identityName)
+		return s.manager(r).Execute(r.Context(), s3tables.NewManagerClient(client), operation, req, resp, identityName)
+	})
+}
+
+// executeInternal runs one S3 Tables operation through the trusted manager —
+// the caller's catalog grants must not gate an internal resolution that the
+// caller's own vector permission already authorized.
+func (s *Server) executeInternal(r *http.Request, operation string, req, resp interface{}) error {
+	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.internal.Execute(r.Context(), s3tables.NewManagerClient(client), operation, req, resp, "")
 	})
 }
 
@@ -160,6 +179,11 @@ func (s *Server) storageOptions(r *http.Request, bucket, location string, vend b
 	}
 
 	principal := s3_constants.GetIdentityNameFromContext(r)
+	// A cluster process reaches the table's files on the filers and volume
+	// servers itself; it has no principal and needs no S3 credentials.
+	if principal == "" && isTrustedCaller(r.Context()) {
+		return options, nil
+	}
 	credentials, err := s.credentialVendor.VendTableCredentials(r.Context(), principal, bucket, locationPrefix(location), canWrite == nil || !canWrite())
 	if err != nil {
 		return nil, err
@@ -198,6 +222,20 @@ func (s *Server) mayUpdateTable(r *http.Request, bucket string, ns []string, nam
 		glog.V(1).Infof("lance: UpdateTable check for %s/%s failed, vending read-only: %v", bucket, name, err)
 	}
 	return err == nil
+}
+
+// authorizeUpdateTable checks the grant a change to the table's catalog state
+// needs; a cluster process goes through the trusted manager.
+func (s *Server) authorizeUpdateTable(r *http.Request, bucket string, ns []string, name string) error {
+	req := &s3tables.UpdateTableRequest{
+		TableBucketARN: bucketARN(bucket),
+		Namespace:      ns,
+		Name:           name,
+	}
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.manager(r).AuthorizeUpdateTable(r.Context(), s3tables.NewManagerClient(client), req, identityName)
+	})
 }
 
 // mayWriteNamespace keeps the vector namespace of a vector bucket out of reach

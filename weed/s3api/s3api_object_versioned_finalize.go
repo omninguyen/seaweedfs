@@ -66,13 +66,23 @@ func (s3a *S3ApiServer) latestPointerRecompute(bucket, object string, useInverte
 
 // routedVersionedFinalize flips the .versions pointer to the newest version and
 // demotes the prior latest, atomically under the object's per-path lock on the
-// owner filer, via a single RECOMPUTE_LATEST. The version file is already
-// written; the owner re-derives the pointer by scanning the directory.
-func (s3a *S3ApiServer) routedVersionedFinalize(owner pb.ServerAddress, bucket, object string, useInvertedFormat bool) s3err.ErrorCode {
+// owner filer, via a single RECOMPUTE_LATEST. versionEntry, when set, is PUT
+// into .versions in the same transaction, so the recompute's scan sees it even
+// when the gateway's own filer is not the owner; otherwise the version file is
+// already written on the owner.
+func (s3a *S3ApiServer) routedVersionedFinalize(owner pb.ServerAddress, bucket, object string, useInvertedFormat bool, versionEntry *filer_pb.Entry) s3err.ErrorCode {
+	mutations := []*filer_pb.ObjectMutation{s3a.latestPointerRecompute(bucket, object, useInvertedFormat, "", true)}
+	if versionEntry != nil {
+		mutations = append([]*filer_pb.ObjectMutation{{
+			Type:      filer_pb.ObjectMutation_PUT,
+			Directory: s3a.toFilerPath(bucket, object+s3_constants.VersionsFolder),
+			Entry:     versionEntry,
+		}}, mutations...)
+	}
 	req := &filer_pb.ObjectTransactionRequest{
 		LockKey:   s3a.toFilerPath(bucket, object),
 		RouteKey:  s3a.objectRouteKey(bucket, object),
-		Mutations: []*filer_pb.ObjectMutation{s3a.latestPointerRecompute(bucket, object, useInvertedFormat, "", true)},
+		Mutations: mutations,
 	}
 	resp, err := s3a.objectTxnOnFiler(owner, req)
 	switch {
@@ -266,12 +276,18 @@ func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, 
 // on the routed path RECOMPUTE_LATEST rides in the version file's PUT transaction,
 // committing atomically under the object's per-path lock; off the ring
 // updateLatestVersionInDirectory does it under the object write lock.
-func (s3a *S3ApiServer) versionedFinalize(bucket, object, versionId, versionFileName string, useInvertedFormat bool) *putFinalize {
+func (s3a *S3ApiServer) versionedFinalize(bucket, object string, versionId *string, useInvertedFormat bool) *putFinalize {
 	return &putFinalize{
 		lockKey:   s3a.toFilerPath(bucket, object),
 		mutations: []*filer_pb.ObjectMutation{s3a.latestPointerRecompute(bucket, object, useInvertedFormat, "", true)},
+		newVersion: func(entry *filer_pb.Entry) string {
+			*versionId = generateVersionId(useInvertedFormat)
+			entry.Name = s3a.getVersionFileName(*versionId)
+			entry.Extended[s3_constants.ExtVersionIdKey] = []byte(*versionId)
+			return s3a.toFilerPath(bucket, object+s3_constants.VersionsFolder+"/"+entry.Name)
+		},
 		afterCreate: func(versionEntry *filer_pb.Entry) s3err.ErrorCode {
-			if err := s3a.updateLatestVersionInDirectory(bucket, object, versionId, versionFileName, versionEntry); err != nil {
+			if err := s3a.updateLatestVersionInDirectory(bucket, object, *versionId, s3a.getVersionFileName(*versionId), versionEntry); err != nil {
 				glog.Errorf("putVersionedObject: failed to update latest version in directory: %v", err)
 				return s3err.ErrInternalError
 			}

@@ -1016,6 +1016,9 @@ func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_ser
 		vs.recoverMissingEcIndexes(req.VolumeId)
 	}
 
+	// A failed shard stops the batch, but the shards mounted before it still
+	// get the sidecar reload below.
+	var mountErr error
 	for _, shardId := range req.ShardIds {
 		err := vs.store.MountEcShards(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId), req.SourceDiskType)
 
@@ -1026,7 +1029,8 @@ func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_ser
 		}
 
 		if err != nil {
-			return nil, fmt.Errorf("mount %d.%d: %v", req.VolumeId, shardId, err)
+			mountErr = fmt.Errorf("mount %d.%d: %v", req.VolumeId, shardId, err)
+			break
 		}
 	}
 
@@ -1049,6 +1053,9 @@ func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_ser
 	ecMetadataDirs := vs.store.EcMetadataDirs()
 	for _, v := range vs.store.FindAllEcVolumes(needle.VolumeId(req.VolumeId)) {
 		v.ReloadBitrotSidecar(ecMetadataDirs...)
+	}
+	if mountErr != nil {
+		return nil, mountErr
 	}
 
 	return &volume_server_pb.VolumeEcShardsMountResponse{}, nil
@@ -1095,10 +1102,16 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 	if req.EncodeTsNs != 0 && req.EncodeTsNs != ecVolume.EncodeTsNs {
 		return fmt.Errorf("ec shard %d.%d belongs to a different encode run", req.VolumeId, req.ShardId)
 	}
+	if _, _, quarantined := ecVolume.GetIoErrorState(); quarantined {
+		return fmt.Errorf("ec shard %d.%d is on a disk quarantined after IO errors", req.VolumeId, req.ShardId)
+	}
 
 	if req.FileKey != 0 {
-		_, size, _ := ecVolume.FindNeedleFromEcx(types.Uint64ToNeedleId(req.FileKey))
-		if size.IsDeleted() {
+		_, size, err := ecVolume.FindNeedleFromEcx(types.Uint64ToNeedleId(req.FileKey))
+		if err != nil && !errors.Is(err, erasure_coding.NotFoundError) {
+			return fmt.Errorf("ec shard %d.%d locate needle %d: %w", req.VolumeId, req.ShardId, req.FileKey, err)
+		}
+		if err == nil && size.IsDeleted() {
 			return stream.Send(&volume_server_pb.VolumeEcShardReadResponse{
 				IsDeleted:  true,
 				EncodeTsNs: ecVolume.EncodeTsNs,
@@ -1300,6 +1313,25 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 	}
 	if !hasLive {
 		return nil, status.Errorf(codes.FailedPrecondition, "ec volume %d %s", req.VolumeId, erasure_coding.EcNoLiveEntriesSubstring)
+	}
+
+	// A rebuild's backfill writes the sidecar without reloading the mounted
+	// runtimes, so resolve it again the way a shard mount does. Any runtime
+	// left finds it on every disk; with none left (an unmount raced the
+	// decode) the protection would read as Off.
+	ecVolumes := vs.store.FindAllEcVolumes(needle.VolumeId(req.VolumeId))
+	if len(ecVolumes) == 0 {
+		return nil, fmt.Errorf("ec volume %d was unmounted during the decode", req.VolumeId)
+	}
+	ecMetadataDirs := vs.store.EcMetadataDirs()
+	for _, ecVolume := range ecVolumes {
+		if err := ecVolume.ReloadBitrotSidecar(ecMetadataDirs...); err != nil {
+			return nil, fmt.Errorf("ec volume %d: %w", req.VolumeId, err)
+		}
+	}
+	prot, bitrotStatus := erasure_coding.SelectBitrotProtection(ecVolumes)
+	if err := erasure_coding.VerifyEcVolumeDataShards(prot, bitrotStatus, shardFileNames); err != nil {
+		return nil, fmt.Errorf("ec volume %d: %w", req.VolumeId, err)
 	}
 
 	// calculate .dat file size. Pass shard 0's resolved path: on a multi-disk
