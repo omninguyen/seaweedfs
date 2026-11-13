@@ -2274,5 +2274,257 @@
    "The local stream negates client_id (req.ClientId = -req.ClientId) so a client's local and aggregated subscriptions do not collide in the registry.",
    "Filtering is by path only; a subscriber that wants a narrow set of events still costs the filer a skeleton scan of every logged event."
   ]
+ },
+ "weed/filer/filer.go": {
+  "character": "The Filer core: construction and peer bootstrap, the entry create / update / find paths with parent-directory creation and lazy TTL expiry, and the empty-parent cleanup",
+  "what": "NewFiler wires the master client, deletion queue and its durable ledger, filer conf, remote storage, the DLM, the persisted-log cache, remote-deletion tombstones, the entry lock table and the local metadata log buffer (flushed every minute; metadata-log chunks optionally sent to their own collection). MaybeBootstrapFromOnePeer copies the oldest peer's whole tree through StreamBfs; AggregateFromPeers sets the DLM ring (thereafter fed by the master's LockRingUpdates), creates the empty-folder cleaner on the same ring and the MetaAggregator, subscribing to itself first and then to each peer. ListExistingPeerUpdates prefers the leader's list, polling it briefly when empty. SetStore wraps the store and loads or creates the store signature. CreateEntry refuses '/', over-long names and dot segments, clears directory TTLs, then either inserts a new entry (stable inode, commit stamp) and creates missing parents afterwards (ensureParentDirectoryEntry: validates a bucket name under /buckets, promotes a file in the way to a prefix-object directory keeping its data), or, unless O_EXCL, updates the existing one (a prefix object landing on a directory keeps the directory's mode, owner and xattr- keys); it then publishes the event and deletes chunks the new entry no longer uses. UpdateEntry keeps crtime and inode, refuses a file/directory type change with sentinels, and clears a remote entry's sync stamp when local content changed. FindEntry serves '/' from a constant, expires TTL'd files on read, and falls back to a lazy remote fetch. doListDirectoryEntries expires TTL'd files while listing (after the listing, to avoid store deadlocks), then may remove now-empty parents (DeleteEmptyParentDirectories, never at or above bucket level). EnsureDirectoryEntry and DirectoryAttributes let the empty-folder cleaner restore a directory it removed without widening its mode. Shutdown drains the log buffer, the aggregator and the deletion ledger before closing the store.",
+  "why": "Consequence: every S3 object, version file, bucket and mount file is an entry written through CreateEntry, so its parent creation, prefix-object promotion and chunk cleanup decide whether nested keys coexist and whether data is freed correctly. Design: the entry is inserted before its parents, because a parent checked first can be removed by the empty-folder cleaner before the entry lands and nothing would look again; a failed parent creation leaves the entry in place unannounced rather than delete by path what a concurrent create may own. TTL expiry is lazy, on read and list, so no sweeper has to scan the namespace.",
+  "when": "Every metadata mutation and lookup on the filer; startup and peer membership changes.",
+  "ux": "S3 keys like a and a/b can both exist; expired objects disappear on access; empty folders under buckets vanish when their last expiring file goes.",
+  "if_broken": "Nested keys overwrite or hide each other, parents are missing, chunks are freed under live entries, or expired data lingers.",
+  "gotchas": [
+   "Expiry on read or list deletes from the store without a metadata event for plain-TTL entries (Store.DeleteOneEntry): peers and subscribers such as mount caches only learn when they expire it themselves.",
+   "DeleteEmptyParentDirectories removes directories through doDeleteEntryMetaAndData, which publishes events only for files, so those directory deletes are never announced either; it also ignores a bucket's allow-empty-folders setting.",
+   "ensureParentDirectoryEntry validates bucket names only when the second path component is literally 'buckets', not DirBucketsPath, and checks the lenient VerifyS3BucketName.",
+   "A read through FindEntry can delete an entry (expiry), including under the shared lock fencedFindEntry holds.",
+   "CreateEntry on '/' is a silent no-op."
+  ]
+ },
+ "weed/filer/filer_delete_entry.go": {
+  "character": "Entry and subtree deletion: children first, remote objects and tombstones, chunk and hard-link cleanup, and bucket collection drops",
+  "what": "DeleteEntryMetaAndData finds the entry (honouring an if-not-modified-after cutoff), and for a directory deletes its children first (doBatchDeleteFolderMetaAndData: lists 1024 at a time, refuses a non-recursive delete of a non-empty folder with ErrNonEmptyFolder, recurses into subdirectories, deletes each file's remote object unless the delete is metadata-only, publishes a delete event per file, collects chunks, then sweeps the store with DeleteFolderChildren and publishes the directory's event). Deleting a bucket may skip the listing when the store can drop a whole bucket, and drops the bucket's collection through the master when nothing else can route into it (bucketCollection checks the filer group name, storage rules, the metadata-log collections and sibling buckets), within 15 s that outlive the caller. Chunks are deleted after the metadata, except for a hard link with other links left. Recursive deletes tombstone the directory and each child for remote lazy reads before deleting. WithKeepRemoteObject makes a delete metadata-only (marked in the event so remote sync daemons leave the object too); deleting an empty folder under a remote mount is made metadata-only automatically, since its remote prefix may still hold unread objects. DeleteEntryError and IsNonEmptyFolderError restore the non-empty sentinel from response text.",
+  "why": "Consequence: S3 DeleteObject, DeleteBucket, lifecycle and mount rm all end here; deleting chunks before metadata would leave entries pointing at freed needles, and dropping a collection another path still writes to destroys that data. Design: metadata first, chunks after; collection drop only when provably exclusive, with listing failures keeping it.",
+  "when": "DeleteEntry RPC and HTTP deletes, ObjectTransaction DELETE mutations, rename target replacement, bucket deletion.",
+  "ux": "Deleting a bucket frees its volumes quickly when it owns its collection; rm -r in mounts works on large trees.",
+  "if_broken": "Deleted objects' data is never reclaimed, data is reclaimed while still referenced, or a bucket delete removes volumes shared with other buckets.",
+  "gotchas": [
+   "doDeleteEntryMetaAndData publishes no event for a directory; only doBatchDeleteFolderMetaAndData does. A caller that deletes a directory through it alone (DeleteEmptyParentDirectories, the lazy remote path) leaves subscribers unaware.",
+   "With ignoreRecursiveError a failed remote delete is logged and the walk continues, so metadata can be gone while the remote object remains.",
+   "The non-empty check looks only at the first page of the first listing; children that race in afterwards are not swept by a non-recursive delete."
+  ]
+ },
+ "weed/filer/filer_rename.go": {
+  "character": "Rename preconditions shared by both rename RPCs",
+  "what": "CanRename refuses moving a directory into itself or a descendant, renaming a bucket directory, and any move whose source and target lie in different buckets (or between a bucket and a non-bucket path). DetectBucket returns the bucket a path is under, or ''.",
+  "why": "Consequence: each bucket maps to its own collection, so a cross-bucket rename would leave an entry in one bucket pointing at chunks in another bucket's collection, which a later bucket delete would drop. Design: refuse rather than copy data.",
+  "when": "AtomicRenameEntry and StreamRenameEntry, before taking locks.",
+  "ux": "mv across buckets in a mount fails; S3 has no cross-bucket rename anyway.",
+  "if_broken": "Objects whose chunks vanish when another bucket is deleted, or a bucket renamed out from under its collection.",
+  "gotchas": [
+   "The checks run before the rename takes its path locks; the entry can change between CanRename and the move."
+  ]
+ },
+ "weed/filer/filer_search.go": {
+  "character": "Directory listing with a name prefix, glob include/exclude patterns and expired-entry skipping",
+  "what": "ListDirectoryEntries reads limit+1 entries to report hasMore; CountDirectoryEntries counts up to a limit. StreamListDirectoryEntries trims a trailing slash, turns the literal head of a glob into a store prefix, and re-lists to make up for entries filtered out by the pattern (filepath.Match on the rest) or the exclude pattern, and doListValidEntries re-lists to make up for expired entries skipped, so a caller still gets up to limit live, matching entries.",
+  "why": "Design: stores only list by name prefix, so pattern filtering happens here, and the make-up loops keep the page size honest without the store knowing about TTLs or globs.",
+  "when": "Every directory listing: the ListEntries RPC, the filer HTTP directory view (?namePattern=, ?namePatternExclude=), renames and deletes walking a tree.",
+  "ux": "Filer UI and API listings with patterns.",
+  "if_broken": "Short pages that clients take for the end of a directory, or listings that loop.",
+  "gotchas": [
+   "A namePattern without '*' or '?' is ignored: splitPattern returns an empty prefix and an empty rest, so the listing is unfiltered.",
+   "A prefix and a namePattern are documented as mutually exclusive; a pattern's literal head replaces the prefix."
+  ]
+ },
+ "weed/filer/read_write.go": {
+  "character": "Helpers that read and write small files kept inside the filer, through a filer client",
+  "what": "ReadEntry looks an entry up and writes its inline content, or streams its chunks from volume servers, into a buffer. ReadInsideFiler returns an entry's inline content only. SaveInsideFiler creates the entry with inline content, or updates it, stamping size, mtime and the content MD5 on every write, and skips the write when content and MD5 already match.",
+  "why": "Consequence: configuration lives in small filer files (/etc/iam, /etc/s3, filer.conf, circuit breaker, remote mounts), read and written by many components. Design: the MD5 is restamped on every write so the entry's ETag describes what is stored, since conditional writers key IF_ETAG_MATCH off it.",
+  "when": "The S3 gateway's config loads (ReadInsideFiler for IAM, circuit breaker, bucket policies), shell commands saving configs, filer conf loading.",
+  "ux": "None directly.",
+  "if_broken": "Config changes do not persist, or a conditional writer accepts a stale ETag and overwrites a newer config.",
+  "gotchas": [
+   "SaveInsideFiler is a lookup then an unconditional create or update: two concurrent writers race and the last write wins.",
+   "ReadInsideFiler returns only inline content; an entry whose content was written as chunks reads as empty."
+  ]
+ },
+ "weed/filer/zip_extract.go": {
+  "character": "Safety limits for extracting a zip archive uploaded to the filer",
+  "what": "SpoolZipReader buffers an uploaded archive for random access: in memory up to 32 MiB, else in a temp file, never more than the caller's limit (default 5 GiB), failing with ErrZipTooLarge one byte past it. CheckZipLimits caps members at 100,000 and the declared uncompressed total at 1 TiB. SanitizeZipMemberName maps a member to a relative filer path, refusing symlinks, devices, pipes, sockets, absolute paths, empty, '.', '..' or NUL segments and anything filepath.IsLocal rejects.",
+  "why": "Consequence: an uploaded archive is attacker-controlled; without these limits it could fill the filer's disk, fan out to millions of entries or write outside the target directory. Design: errors are typed so handlers answer 4xx for oversized input.",
+  "when": "The filer HTTP extract path (POST/PUT with extraction requested, filer_server_handlers_extract.go), including the S3 gateway's zip-extract upload.",
+  "ux": "Uploading a zip with extraction creates its files under the target directory.",
+  "if_broken": "Path traversal out of the target directory, or disk and memory exhaustion from one upload.",
+  "gotchas": [
+   "The 1 TiB cap is checked against sizes the archive declares; actual expansion is bounded by archive/zip's own size checks while reading."
+  ]
+ },
+ "weed/filer/copy_params.go": {
+  "character": "Names of the query parameters and headers of the filer's server-side copy endpoint",
+  "what": "Constants for the copy request (cp.from, overwrite, dataOnly, a request id, and the expected source and destination inode, mtime and size) and the response headers that confirm the copy committed and echo its request id.",
+  "why": "Design: one definition shared by the filer handler and its client so the names cannot drift; the expected-attribute parameters let the client make the copy conditional on both files being what it last saw.",
+  "when": "weed mount's copy_file_range (weedfs_file_copy_range.go) and the filer's copy handler (filer_server_handlers_copy.go).",
+  "ux": "Server-side copies in mounts (cp --reflink-style copy_file_range) avoid moving data through the client.",
+  "if_broken": "Copies fail or overwrite a file that changed since the client looked.",
+  "gotchas": []
+ },
+ "weed/filer/filer_buckets.go": {
+  "character": "The one test for whether an entry is an S3 bucket directory",
+  "what": "IsBucket is true for a directory directly under DirBucketsPath whose name does not start with '.'.",
+  "why": "Design: buckets are just top-level directories under the buckets path; dot-names there (.system and similar) are internal.",
+  "when": "Deletes (collection drop, metrics cleanup), CanRename, bucket listing.",
+  "ux": "None directly.",
+  "if_broken": "Deleting a bucket keeps its collection, or deleting an internal directory drops a collection.",
+  "gotchas": []
+ },
+ "weed/filer/filer_hardlink.go": {
+  "character": "The hard-link id format",
+  "what": "NewHardLinkId returns 16 random bytes followed by the marker byte 0x01; HardLinkId is that 17-byte value.",
+  "why": "Design: entries that are links share one id, under which the store keeps the shared inode record; the marker distinguishes these keys in the store's key space.",
+  "when": "Mounts creating hard links; the store's hard-link indirection (filerstore_hardlink.go).",
+  "ux": "ln in a mount.",
+  "if_broken": "Links stop sharing data, or link records collide with other KV keys.",
+  "gotchas": []
+ },
+ "weed/filer/filer_inode.go": {
+  "character": "Stable inode assignment for new entries",
+  "what": "ensureEntryInode leaves a set inode alone; otherwise it fills a missing crtime and derives the inode the way weed mount does: from the hard-link id for links (so all links share one inode), else from the path and creation time.",
+  "why": "Consequence: the mount and the filer must agree on inode numbers without a reverse index. Design: derive rather than allocate.",
+  "when": "CreateEntry and parent-directory creation for every new entry; UpdateEntry when an old entry had none.",
+  "ux": "Stable inode numbers in mounts.",
+  "if_broken": "Inodes change under applications, or hard links report different inodes.",
+  "gotchas": [
+   "Two entries created at the same path within the same second get the same inode."
+  ]
+ },
+ "weed/filer/entry.go": {
+  "character": "The filer's in-memory Entry type and its conversions to and from filer_pb.Entry, plus the S3-lifecycle expiry marks",
+  "what": "Entry is a full path with Attr (mtime, crtime, ctime, atime, mode, uid/gid, mime, TTL, user and group names, symlink target, md5, file size, rdev, inode), the extended map, chunks, hard-link id and counter, inline content, remote entry, quota, WORM enforcement time and the commit timestamp of the mutation that produced it. Size is the largest of the chunk extent, the stored file size and the content length. ShallowClone copies the struct; ToProtoEntry / FromPbEntry convert, filling FileSize from the chunks. ApplyStorageTtl stamps the storage rule's TTL (never on remote entries) and, for S3 objects that are not versioned, marks SeaweedFSExpiresS3 so expiry counts from mtime rather than crtime; GetS3ExpireTime computes it.",
+  "why": "Consequence: every layer between the RPCs and the stores passes this type, so a field missing from a conversion is silently dropped on the next write. Design: S3 lifecycle TTLs must restart on overwrite (mtime), while plain filer TTLs count from creation; versioned entries are excluded because the S3 expiry path skips them, and stamping one would drop its expiry entirely.",
+  "when": "Everywhere in the filer.",
+  "ux": "S3 objects with a lifecycle TTL expire relative to their last write.",
+  "if_broken": "Fields lost between store and wire (quota, WORM time, commit stamps), or objects expiring from the wrong time.",
+  "gotchas": [
+   "ShallowClone shares the Extended map and the Chunks slice with the original; callers that change either must clone them first, as the RPC handlers do."
+  ]
+ },
+ "weed/filer/entry_codec.go": {
+  "character": "Store encoding of an entry, attribute conversion, and the entry-equality test",
+  "what": "EncodeAttributesAndChunks and DecodeAttributesAndChunks marshal an entry through pooled filer_pb.Entry messages (the encoded bytes are copied out before the message goes back to the pool). EntryAttributeToPb, EntryAttributeToExistingPb and PbToEntryAttribute convert attributes, keeping nanoseconds for mtime, ctime and atime (a missing ctime or atime decodes as mtime). EqualEntry compares attributes, chunks, extended attributes, md5, hard-link data, content, remote entry and quota.",
+  "why": "Design: every store saves the same protobuf blob under its own key scheme, so the codec is shared; pooling cuts allocations on hot listing paths.",
+  "when": "Every store read and write; EqualEntry in UpdateEntry (to skip no-op updates) and in the remote-cache commit.",
+  "ux": "None directly.",
+  "if_broken": "Entries that fail to decode, or no-op updates that are written and announced anyway (or real updates that are skipped).",
+  "gotchas": [
+   "EqualEntry ignores WORMEnforcedAtTsNs and CommitTsNs, so an UpdateEntry RPC that changes only the WORM enforcement time is treated as no change and not written.",
+   "Crtime is stored in whole seconds; its nanoseconds are lost on every round trip."
+  ]
+ },
+ "weed/filer/entry_codec_attributes.go": {
+  "character": "Attributes-only decoding of a stored entry for listings that do not need chunks",
+  "what": "DecodeListedEntry decodes in full, or, when the context asks for chunks to be omitted, DecodeAttributesOnly: it walks the protobuf fields, skips every chunks field while still computing the largest chunk end (offset + size) and validating the skipped chunk's nested messages and UTF-8 strings, unmarshals the rest, and raises FileSize to the chunk extent.",
+  "why": "Consequence: decoding large chunk lists dominated mount readdir cost. Design: skip them but keep the size right for stores whose blobs never had FileSize folded in, and still reject a malformed blob that a full decode would reject.",
+  "when": "Stores' listing paths when filer_pb.WithChunksOmitted is set (mount readdir).",
+  "ux": "Faster directory listings in mounts.",
+  "if_broken": "Listed files show size 0 or a corrupt entry slips through a listing.",
+  "gotchas": []
+ },
+ "weed/filer/configuration.go": {
+  "character": "Filer store selection from filer.toml",
+  "what": "LoadConfiguration requires exactly one enabled default store among the registered Stores (exits listing the supported ones if none, fatal if two), initializes a fresh instance and sets it, then initializes each '<store>.<id>.enabled' section as a path-specific store mounted at its required location.",
+  "why": "Design: one default store plus optional per-path stores lets a subtree (for example a hot bucket) live in a different database.",
+  "when": "Filer startup.",
+  "ux": "Operators choose LevelDB, SQL, Redis, Cassandra and others in filer.toml.",
+  "if_broken": "The filer does not start, or a path's metadata lands in the wrong store.",
+  "gotchas": [
+   "Path-specific stores are outside the default store's transactions (FilerStoreWrapper begins transactions on the default store only), so a rename across the boundary is not atomic."
+  ]
+ },
+ "weed/filer/filer_conf.go": {
+  "character": "Path-prefix storage rules (filer.conf): load, match, merge and edit",
+  "what": "FilerConf keeps PathConf rules in a ptrie keyed by location prefix, loaded from /etc/seaweedfs/filer.conf (inline content or chunks; versions before 2 drop explicit false fsync and worm flags so they inherit). MatchStorageRule merges every rule whose prefix matches the path, outer to inner: strings and counts are overridden by the inner rule, read_only and disable_chunk_deletion are ORed, fsync and worm are tri-state. ApplyBucketQuotaReadOnly flips a bucket's read-only flag around its quota; ClearBucketReadOnly rewrites filer.conf with SaveInsideFiler; ClearBucketLifecycleDayTTLs drops legacy day-TTL rules a lifecycle once created (or clears the TTL on an operator's rule) and saves conditionally (If-Match on the content MD5, else if-unmodified-since). Also directory constants (/etc/, /etc/seaweedfs, /etc/remote, /etc/iam).",
+  "why": "Consequence: these rules choose collection, replication, TTL, disk type, fsync, placement, read-only and WORM for every write, and the S3 gateway's bucket quota enforcement works by toggling read-only here. Design: prefix rules compose, so a bucket-level rule refines a cluster-wide one.",
+  "when": "Every write's storage option (detectStorageOption), the S3 gateway's quota and lifecycle code, weed shell fs.configure.",
+  "ux": "Per-bucket collections, TTLs, replication and quotas.",
+  "if_broken": "Data lands in the wrong collection or replication, quotas never block writes, or a bucket stays read-only after it drops below quota.",
+  "gotchas": [
+   "Matching is a plain string prefix: a rule for /buckets/a without a trailing slash also applies to /buckets/ab.",
+   "read_only is ORed down the chain, so an inner rule cannot make a path writable under a read-only outer rule.",
+   "doLoadConf stops at the first rule SetLocationConf rejects and returns nil, silently ignoring the rest.",
+   "ClearBucketReadOnly writes back with the unconditional SaveInsideFiler, while ClearBucketLifecycleDayTTLs uses a conditional write; a concurrent fs.configure edit can be lost to the former."
+  ]
+ },
+ "weed/filer/filerstore.go": {
+  "character": "The FilerStore interface every metadata backend implements, and its optional capabilities",
+  "what": "FilerStore: insert, update, find, delete, delete folder children, list (with and without a name prefix), transactions, KV get/put/delete, shutdown. Optional interfaces: EntryScanner (one consistent snapshot of a subtree), BucketAware (per-bucket tables: creation and deletion hooks, dropping a whole bucket), Debuggable. Sentinels for unsupported prefix listing, unsupported scans, unimplemented KV and KV misses.",
+  "why": "Design: a minimal interface lets many databases back the namespace; capabilities are discovered by type assertion so a store opts into what it can do well.",
+  "when": "Implemented by every store under weed/filer/*; called only through FilerStoreWrapper.",
+  "ux": "None directly.",
+  "if_broken": "A store that half-implements a contract (for example a prefix listing that ignores the prefix) breaks S3 listings.",
+  "gotchas": [
+   "A store that answers ErrUnsupportedListDirectoryPrefixed is served by the wrapper's client-side prefix filter, which scans the directory from the start name."
+  ]
+ },
+ "weed/filer/filerstore_hardlink.go": {
+  "character": "Hard-link indirection: the shared inode record kept in the store's KV under the hard-link id",
+  "what": "On insert and update of a file with a hard-link id, the wrapper writes the entry's attributes and chunks into KV under that id (setHardLink) and, if the path previously held a different link, decrements the old one. maybeReadHardLink replaces a listed or found entry's attributes and chunks with the shared record. DeleteHardLink decrements the record's counter and deletes it at zero.",
+  "why": "Consequence: all names of a hard link must see one file. Design: the per-path entry holds only the id; the data lives once in KV.",
+  "when": "Every store operation on an entry with a hard-link id (mounts).",
+  "ux": "ln in mounts.",
+  "if_broken": "Links diverge, or chunks are freed while another link still points at them.",
+  "gotchas": [
+   "The counter decrement is an unlocked read-modify-write on KV; two concurrent unlinks of the same file can both read the same count, leaving the record (and its chunks) behind or deleting it early."
+  ]
+ },
+ "weed/filer/filerstore_translate_path.go": {
+  "character": "Adapter that makes a path-specific store see paths relative to its mount point",
+  "what": "FilerStorePathTranslator strips the store's root from every path before calling the inner store and restores the full path on returned entries, for every FilerStore method; KV calls pass through.",
+  "why": "Design: a path-specific store can be the same implementation as the default store and need not know where it is mounted.",
+  "when": "Wraps each store added by AddPathSpecificStore.",
+  "ux": "None directly.",
+  "if_broken": "Entries in a path-specific store come back with wrong paths, or land outside its root.",
+  "gotchas": [
+   "Wrapping a translator in another translator returns the inner one unchanged, ignoring the new root."
+  ]
+ },
+ "weed/filer/filerstore_wrapper.go": {
+  "character": "The VirtualFilerStore every filer call goes through: routing to path-specific stores, hard links, chunk-id compaction, metrics and context detachment",
+  "what": "FilerStoreWrapper routes each path to the default store or the path-specific store whose prefix matches, counts and times every operation, and on write moves chunk ids into the compact Fid form, maps the default mime to empty, strips ExtKeepRemoteObjectKey and maintains hard links; on read it restores ids and resolves hard links. Store calls run on a context detached from cancellation once started (a cancelled caller is refused only before the call). Prefix listing falls back to a client-side filter for stores without it. ScanEntries is offered only without path-specific stores. Transactions and KV always go to the default store. DeleteEntry and DeleteOneEntry decrement hard-link records unless the context marks a rename.",
+  "why": "Consequence: a store write abandoned halfway because a client hung up could leave metadata inconsistent with what was already done around it (chunk deletes, events). Design: decide before the write, then finish it.",
+  "when": "Every filer store access.",
+  "ux": "None directly.",
+  "if_broken": "Path-specific stores receive the wrong paths, hard links break, or chunk ids are lost in storage.",
+  "gotchas": [
+   "Writes mutate the caller's entry in place: chunk FileId strings are moved into Fid (FileId cleared) and Extended loses ExtKeepRemoteObjectKey; a caller that reuses the entry afterwards sees the compacted chunks.",
+   "A hard-link record that cannot be read is logged and ignored by FindEntry, which returns the per-path entry without its shared data.",
+   "A FindEntry error on a whole-bucket-table store is turned into NotFound by matching the text 'Table' and \"doesn't exist\"."
+  ]
+ },
+ "weed/filer/placement_overlay.go": {
+  "character": "An optional hook that overrides disk type, replication and data center per collection",
+  "what": "RegisterPlacementOverlay installs a factory; NewFiler builds the overlay from it if one is registered. ResolvePlacement asks it for a collection and reports whether it steered.",
+  "why": "Design: a seam for placement policy that is not expressed in filer.conf, without the filer core depending on it.",
+  "when": "The filer HTTP write path (filer_server_handlers_write.go) when choosing where to assign a chunk.",
+  "ux": "None unless an overlay is registered.",
+  "if_broken": "Writes ignore a configured placement policy.",
+  "gotchas": [
+   "Nothing in this repository calls RegisterPlacementOverlay, so ResolvePlacement always reports no override here."
+  ]
+ },
+ "weed/filer/s3iam_conf.go": {
+  "character": "JSON helpers for the S3 and IAM configuration protos kept in the filer",
+  "what": "ParseS3ConfigurationFromBytes unmarshals protojson leniently (unknown fields discarded, partial messages allowed); ProtoToText writes indented JSON with unpopulated fields; CheckDuplicateAccessKey refuses an access key configured on two different identities.",
+  "why": "Design: the identity, circuit-breaker and other configs are stored as JSON protos in /etc so operators can edit them; lenient parsing lets older binaries read configs written by newer ones.",
+  "when": "The S3 gateway loading /etc/iam and /etc/s3 files, the circuit breaker, shell commands that edit them.",
+  "ux": "Hand-edited JSON configs load.",
+  "if_broken": "Configs fail to load, or two users share an access key.",
+  "gotchas": [
+   "Unknown fields are discarded silently, so a misspelled field name in a hand-edited config is ignored rather than reported.",
+   "CheckDuplicateAccessKey checks identities only, not service accounts."
+  ]
+ },
+ "weed/filer/abstract_sql/": {
+  "character": "The shared implementation behind the MySQL, Postgres and SQLite filer stores, with optional one-table-per-bucket layout",
+  "what": "AbstractSqlStore implements FilerStore on database/sql through a SqlGenerator each dialect supplies. Rows are keyed by (hash of directory, name, directory) with the encoded entry as the value (gzipped when it has more than 50 chunks on insert). With SupportBucketTable, paths under /buckets/<bucket>/ live in a table named after the bucket, created on first use and dropped when the bucket's children are deleted, so deleting a bucket is one DROP TABLE. Transactions are a *sql.Tx carried in the context under 'tx' (read committed). KV rows live in the default table, keyed by the first 8 bytes of the key and its base64 rest, optionally on a separate small connection pool (a quarter of max connections, at most 8). ScanEntries reads a subtree in one repeatable-read read-only transaction, across bucket tables when scanning / or /buckets, refusing when the store has a single connection. Retryable errors are retried outside transactions.",
+  "why": "Consequence: SQL stores are what multi-filer clusters share, so their key layout decides listing order and bucket-delete cost. Design: per-bucket tables make bucket deletion O(1) and keep one bucket's rows out of another's index; KV gets its own pool so a burst of metadata queries cannot starve lock and offset writes.",
+  "when": "Filers configured with mysql, mysql2, postgres, postgres2 or sqlite.",
+  "ux": "Fast bucket deletes with the per-bucket-table variants.",
+  "if_broken": "Entries vanish into the wrong table, bucket deletes leave rows, or the connection pool deadlocks.",
+  "gotchas": [
+   "The bucket routing hardcodes /buckets/ instead of the filer's DirBucketsPath, and accepts bucket names by the lenient VerifyS3BucketName (non-ASCII names become table names).",
+   "Insert falls back to update only when the error text contains 'duplicate entry' (MySQL wording); KvPut falls back to update on any insert error.",
+   "UpdateEntry does not gzip large chunk lists the way InsertEntry does, and an UPDATE that matches no row reports success.",
+   "A transaction left open (see the StreamRenameEntry issue) keeps its pooled connection until the filer restarts, since the wrapper begins it on a context that is never cancelled."
+  ]
  }
 }
