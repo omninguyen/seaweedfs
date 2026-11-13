@@ -2526,5 +2526,185 @@
    "UpdateEntry does not gzip large chunk lists the way InsertEntry does, and an UPDATE that matches no row reports success.",
    "A transaction left open (see the StreamRenameEntry issue) keeps its pooled connection until the filer restarts, since the wrapper begins it on a context that is never cancelled."
   ]
+ },
+ "weed/filer/filechunks.go": {
+  "character": "Chunk-list arithmetic: sizes, ETags, garbage detection, chunk differences and the chunk views a read needs",
+  "what": "TotalSize is the furthest chunk end; FileSize takes the larger of that and the stored size (and the remote size when the remote is newer). ETag returns the stored MD5, else ETagChunks: a single chunk's MD5, or the multipart form md5(concat(chunk md5s))-N. CompactFileChunks resolves manifests, computes visible intervals and splits chunks into those still visible and garbage fully overwritten by newer ones; MinusChunks resolves both lists (data and manifest chunks) and returns what the old list has that the new one does not, which is what the filer deletes on an update. ViewFromChunks / ViewFromVisibleIntervals cut the visible intervals into ChunkViews (file id, offset in chunk, view size and offset, cipher key, gzip flag) for a byte range; MergeIntoVisibles and MergeIntoChunkViews add one chunk to existing lists.",
+  "why": "Consequence: SeaweedFS files are lists of possibly overlapping chunks where the newest write wins; every read and every chunk deletion depends on computing which bytes of which chunk are visible. Design: the newest ModifiedTsNs wins per byte range, so overwrites need no rewrite of older chunks, and a chunk becomes garbage only when nothing of it is visible.",
+  "when": "Every read path (S3 GET through the gateway's own reader uses these too), CreateEntry/UpdateEntry chunk cleanup, rename overwrite cleanup.",
+  "ux": "Correct bytes after overwrites and partial writes from mounts.",
+  "if_broken": "Reads return old data or wrong offsets, or still-visible chunks are deleted.",
+  "gotchas": [
+   "ETagChunks gives a multi-chunk object a multipart-style ETag ('-N') even when it was written in one PUT; the S3 gateway avoids this by storing its own ETag and MD5."
+  ]
+ },
+ "weed/filer/filechunks_read.go": {
+  "character": "The sweep that turns overlapping chunks into non-overlapping visible intervals",
+  "what": "readResolvedChunks makes a start and an end point per chunk inside the range, sorts them by offset then timestamp, and sweeps with a queue ordered by timestamp: at each point the newest active chunk owns the bytes since the previous point. The result is an IntervalList of VisibleIntervals, each naming the chunk, its offset in the chunk, size, cipher key and gzip flag.",
+  "why": "Design: one O(n log n) sweep instead of repeated interval insertion; it is the basis of CompactFileChunks and every read.",
+  "when": "NonOverlappingVisibleIntervals and FileChunkSection.",
+  "ux": "None directly.",
+  "if_broken": "Overlapping writes read back the wrong version of a byte range.",
+  "gotchas": [
+   "Chunks are told apart by ModifiedTsNs: two overlapping chunks with the same timestamp make the end-point removal ambiguous (it removes the first queued point with that timestamp).",
+   "The sort comparator converts int64 differences to int, which truncates on 32-bit builds.",
+   "A manifest chunk reaching it only prints a warning to stdout; callers must resolve manifests first."
+  ]
+ },
+ "weed/filer/interval_list.go": {
+  "character": "A doubly linked list of non-overlapping intervals with newest-wins insertion",
+  "what": "IntervalList keeps intervals between sentinel head and tail. AppendInterval adds at the end (callers append in order). InsertInterval places an interval and, where it overlaps existing ones, keeps whichever has the newer timestamp, splitting and cloning values (SetStartStop adjusts each value's own offsets). Overlay replaces a range unconditionally. Len counts intervals.",
+  "why": "Design: generic over the value (VisibleInterval, ChunkView) so visible intervals and chunk views share the split logic; incremental insertion lets a mount add a freshly written chunk without recomputing the whole file.",
+  "when": "Visible-interval and chunk-view lists in reads and in FileChunkSection.addChunk.",
+  "ux": "None directly.",
+  "if_broken": "Interval lists with gaps or overlaps, hence wrong reads.",
+  "gotchas": [
+   "Overlay shares the split pieces' values with the original instead of cloning and re-offsetting them; nothing outside tests calls it.",
+   "Front() and traversal do not take the list's lock; readers such as ChunkReadAt hold Lock.RLock themselves."
+  ]
+ },
+ "weed/filer/filechunk_manifest.go": {
+  "character": "Chunk manifests: folding long chunk lists into manifest chunks, resolving them back, and the retrying whole-chunk fetch",
+  "what": "ResolveChunkManifest expands manifest chunks overlapping a byte range into their data chunks (and returns the manifest chunks themselves), fetching manifests in parallel with 4 workers plus overflow goroutines, cancelling the batch on the first failure and recursing into nested manifests. resolveOneChunkManifest fetches and unmarshals one manifest, optionally through a ChunkManifestCache. fetchWholeChunk and retriedStreamFetchChunkData read a chunk from its locations, reachable ones first, resuming at the byte already written, with backoff (1 s growing by half up to util.RetryWaitTime) and a retry on fresh locations when every URL fails. MaybeManifestize first folds 256 or more chunks under 1 MiB into manifests of 256 (foldSmallChunks), then folds every full batch of ManifestBatch data chunks into one manifest chunk (mergeIntoManifest: saves the serialized list as a chunk spanning min..max offset); on failure it deletes the manifests it saved and returns the input list.",
+  "why": "Consequence: an entry's whole chunk list is one store value, and stores cap value size; a large or long-appended file would stop being writable. Design: one level of folding, small chunks first because many tiny chunks (appends) bloat the list fastest; the input list is still a correct entry if folding fails.",
+  "when": "CreateEntry/UpdateEntry chunk cleanup, AppendToEntry, the filer's autochunk and zip-extract writes, WebDAV, the gateway's chunk manifest path, shell fs.distribute.chunks; resolution on every read.",
+  "ux": "Very large files and append-heavy logs remain writable.",
+  "if_broken": "Large files fail to save, or manifests resolve to the wrong chunk set (data loss on the next cleanup).",
+  "gotchas": [
+   "Every chunk read appends readDeleted=true, so a needle already deleted on the volume server is still served while its space is not reclaimed.",
+   "On a failed resolution ResolveChunkManifest returns the data chunks resolved before the failing slot together with the error; callers must not use them as the full list.",
+   "mergeIntoManifest moves the data chunks' FileId strings into Fid (BeforeEntrySerialization) in place."
+  ]
+ },
+ "weed/filer/filechunk_manifest_cache.go": {
+  "character": "A small LRU of fetched manifest bytes with request coalescing",
+  "what": "ChunkManifestCache keeps manifest blobs keyed by file id, cipher key and compression flag, bounded by entry count and bytes (mounts use 256 entries / 64 MiB), returns copies, and coalesces concurrent fetches of one manifest through singleflight while letting each caller give up on its own context.",
+  "why": "Consequence: a mount reopening the same large file re-fetched every manifest each time. Design: manifests are immutable needles, so caching by file id is safe.",
+  "when": "ChunkGroup.SetChunks in weed mount.",
+  "ux": "Faster opens of large files in mounts.",
+  "if_broken": "Repeated manifest fetches, or stale manifests if a file id were ever reused.",
+  "gotchas": []
+ },
+ "weed/filer/filechunk_section.go": {
+  "character": "A 64 MiB slice of a file's chunks with its own visible intervals, chunk views and reader",
+  "what": "FileChunkSection holds the chunks overlapping one 64 MiB section. addChunk merges a newly written chunk into the section's visible intervals and chunk views incrementally and drops chunks it fully hides. setupForRead builds visible intervals and chunk views lazily on first read and a ChunkReadAt over them; readDataAt reads through it. DataStartOffset and NextStopOffset answer SEEK_DATA / SEEK_HOLE within the section.",
+  "why": "Consequence: recomputing visibility over a whole large file on every write or read was too slow for mounts. Design: sections bound the work to the region touched.",
+  "when": "weed mount's file handles through ChunkGroup.",
+  "ux": "Mount reads and writes on large files stay fast; lseek SEEK_DATA/SEEK_HOLE work.",
+  "if_broken": "Mount reads return stale bytes after writes, or seek reports wrong holes.",
+  "gotchas": [
+   "removeGarbageChunks matches chunks by their FileId string, which is only populated after GetFileIdString ran on them."
+  ]
+ },
+ "weed/filer/filechunk_group.go": {
+  "character": "A file's chunks organized as sections, with parallel reads and hole search, for weed mount",
+  "what": "NewChunkGroup builds a reader cache (2 x concurrent readers, at least 32 downloaders) and sets the chunks: SetChunks resolves top-level manifest chunks (through the manifest cache) and distributes data chunks to 64 MiB sections. AddChunk adds a written chunk to every section it touches. ReadDataAt reads a range sequentially or, across several sections, in parallel (up to the concurrent-reader limit, 16 by default, capped at 128), zero-filling sections with no chunks; a manifest resolution failure is returned on every read. SearchChunks implements SEEK_DATA and SEEK_HOLE.",
+  "why": "Design: per-section state lets concurrent reads of different regions proceed without one lock over the whole file, and lets writes update only the sections they touch.",
+  "when": "Every open file in weed mount.",
+  "ux": "Throughput of large sequential and parallel reads in mounts.",
+  "if_broken": "Mount reads stall, return zeros for data, or fail after one transient manifest error.",
+  "gotchas": [
+   "SetChunks resolves one level of manifests with context.Background(); a manifest found inside a manifest would be treated as a data chunk.",
+   "A failed manifest resolution is remembered (resolveErr) until the next successful SetChunks, so every read fails meanwhile."
+  ]
+ },
+ "weed/filer/reader_at.go": {
+  "character": "ChunkReadAt: io.ReaderAt over chunk views, with parallel chunk reads, zero-filled holes and prefetch; and LookupFn, a cached volume lookup over a filer client",
+  "what": "doReadAt maps a read to tasks per chunk view and gaps to zero-fill, reads the tasks sequentially (one task, or a random access pattern) or in parallel (at least 4), and on a sequential pattern asks the reader cache to prefetch the next chunk views. Small reads of range-fetchable chunks (unencrypted, uncompressed) go straight to the chunk cache or a ranged fetch; others read the whole chunk through the shared ReaderCache, caching it when it fits the chunk cache's part limit. EOF is returned when the read reaches the file size. LookupFn resolves a file id's volume through the filer's LookupVolume, caches up to 10,000 volumes, orders same-data-center and locally stored (not remote-tiered) replicas first and shuffles within each group.",
+  "why": "Design: whole-chunk reads with caching suit sequential workloads, ranged reads suit random ones; ReaderPattern decides. Holes read as zeros, matching POSIX sparse files.",
+  "when": "Mount reads (via FileChunkSection), filer HTTP and other readers built with NewChunkReaderAtFromClient; LookupFn in clients that only have a filer connection (sftp, replication sources, ChunkStreamReader).",
+  "ux": "Read latency and throughput in mounts and gateways.",
+  "if_broken": "Short or corrupted reads, or reads that keep hitting a volume server that moved.",
+  "gotchas": [
+   "LookupFn's volume cache is never invalidated: a volume that moves keeps resolving to its old locations for the life of the closure (fetches still retry other replicas)."
+  ]
+ },
+ "weed/filer/reader_cache.go": {
+  "character": "Shared per-file downloader cache: one in-flight whole-chunk download per file id, with pinning, eviction and prefetch",
+  "what": "ReaderCache maps file ids to SingleChunkCachers. readChunkAt joins an existing download, else reads the persistent chunk cache, else starts a download (evicting the oldest finished downloader, preferring unpinned ones, when at the limit) and waits for it. A stream (one reader positioned in a chunk) pins the chunk it is in; a downloader is dropped once fully consumed or left by its last stream, or on error so the next read retries. MaybeCache starts prefetch downloads for the next chunk views. SingleChunkCacher reserves memory from the optional ReaderCacheBudget, looks up and fetches the whole chunk (retrying on fresh locations), stores it in the chunk cache when asked, and serves slices to readers.",
+  "why": "Consequence: sequential readers would download each chunk once per read call, and concurrent readers of one file would download it many times. Design: share the download, keep a chunk only while a stream is in it, and bound memory.",
+  "when": "ChunkReadAt reads and prefetch in mounts and other chunk readers.",
+  "ux": "Mount sequential read throughput.",
+  "if_broken": "Memory blowups from undropped chunk buffers, repeated downloads, or reads blocked behind a dead download.",
+  "gotchas": [
+   "Downloads run on context.Background(): a reader can stop waiting on its own context, but the download itself continues to completion or its retry limit.",
+   "A failed download is removed only when the next reader notices the completed error, so the first reader after a failure pays a retry."
+  ]
+ },
+ "weed/filer/reader_cache_budget.go": {
+  "character": "Memory budget shared by reader caches: reservations, idle eviction and waiting",
+  "what": "ReaderCacheBudget (default 256 MiB) reserves a downloader's allocation before it fetches; when full it evicts idle (completed) downloaders, unpinned first, and otherwise waits for a release or completion. canFit tells callers when a chunk cannot fit at all, so they range-fetch instead. A chunk larger than the whole budget is an error.",
+  "why": "Consequence: many open files each prefetching whole chunks could exhaust a mount's memory. Design: one budget across files, evicting finished buffers before waiting.",
+  "when": "Reader caches created with a budget (weed mount's -readerCacheSizeMB).",
+  "ux": "Bounded mount memory under many concurrent readers.",
+  "if_broken": "OOM in mounts, or reads that wait forever for budget.",
+  "gotchas": [
+   "reserve waits without a timeout when every reservation is an in-flight download and none is idle; it is released only when a download finishes or is destroyed."
+  ]
+ },
+ "weed/filer/reader_pattern.go": {
+  "character": "Sequential-versus-random access detection for a reader",
+  "what": "MonitorReadAt tracks the furthest byte read; a read starting within 8 MiB of it counts toward sequential (up to +3), a read further away pushes the counter down, straight to -3 once it is at or below zero. IsRandomMode is a negative counter.",
+  "why": "Design: hysteresis so one seek does not flip a sequential reader into random mode, and a tolerance wide enough for parallel readahead that arrives slightly out of order.",
+  "when": "Every ChunkReadAt read.",
+  "ux": "Prefetch for streaming reads, no wasted downloads for random reads.",
+  "if_broken": "Random readers download whole chunks they do not need, or sequential readers lose prefetch.",
+  "gotchas": []
+ },
+ "weed/filer/stream.go": {
+  "character": "Streaming file content to a writer, and ChunkStreamReader, an io.ReadSeeker / ReaderAt over a chunk list",
+  "what": "PrepareStreamContentWithThrottler resolves visible chunk views for a range, looks every chunk's locations up first (with a short backoff), then returns a function that writes the range: zeros for gaps, each chunk via retriedStreamFetchChunkData, a retry on fresh locations when a chunk failed before writing anything, optional bandwidth throttling. PrepareStreamContentWithPrefetch does the same with several chunks fetched ahead through pipes (stream_prefetch.go). StreamContent is the unthrottled form. Read JWTs come from jwt.signing.read.key (or the filer JWT when reading through the filer proxy). ChunkStreamReader reads chunk views one at a time into a buffer, keeping up to 16 chunks / 128 MiB of recent buffers, and remembers the first source error (ReaderSourceError). NewFileReader returns inline content or a ChunkStreamReader. IsSameData compares content, or chunk ETags as a multiset.",
+  "why": "Consequence: the filer HTTP read path, the admin file browser and many tools stream files through here. Design: resolve all locations before writing a byte, so a missing volume becomes an error status rather than a truncated 200.",
+  "when": "Filer HTTP GET (with prefetch), admin file browser and Iceberg data preview, filer.conf and other small-file reads (ReadEntry); ChunkStreamReader in replication sinks, sftp, the metadata-log readers, mount sync, the Iceberg worker and the filer's chunk merge.",
+  "ux": "File downloads from the filer and replicated copies of files.",
+  "if_broken": "Truncated downloads, or replicated files that differ from their source.",
+  "gotchas": [
+   "A chunk that fails after some of its bytes were written is not retried, and the error arrives after part of the response is already out.",
+   "ChunkStreamReader sizes the stream as the sum of its chunk views and answers io.EOF when the next offset falls in a hole, so a sparse file reads only up to its first hole, without an error."
+  ],
+  "issue": "bug",
+  "issue_note": "ChunkStreamReader silently truncates sparse files. doNewChunkStreamReader sets totalSize to the sum of the chunk views' sizes, ignoring gaps between them and any trailing hole, and prepareBufferFor returns io.EOF when the read offset is not inside a chunk view, so reading stops at the first hole and io.ReadAll reports success. NewFileReader hands this reader to the replication sinks (replication/sink/s3sink/s3_sink.go CreateEntry, and repl_util copyWithDecryption for SSE files), so filer.backup or filer.sync to an S3 sink uploads a file with a hole (created through weed mount by seeking past the end, or extended with truncate -s) cut short at the hole, and the backup reports nothing. Sftp downloads and the Iceberg worker's file reads use the same reader. Reproduced at 917cf534 with a temporary unit test: two chunks [0,10) and [20,30) of a 30-byte file read back 10 bytes, err=nil, SourceError=nil, while FileSize reports 30. The fix is to zero-fill gaps between views and to the entry's file size, as ChunkReadAt.doReadAt and PrepareStreamContentWithThrottler already do."
+ },
+ "weed/filer/stream_prefetch.go": {
+  "character": "Prefetched streaming: several chunks fetched ahead through pipes while one is written out",
+  "what": "streamChunksPrefetched starts a producer that, for each chunk view, waits for one of prefetchAhead slots, opens a pipe and starts a fetch goroutine writing the chunk into it; the consumer writes zeros for gaps and copies each pipe to the writer in order, retrying a chunk on fresh locations when its fetch failed before writing anything, and throttling if asked. On any failure it cancels the producer and drains every pending pipe before returning.",
+  "why": "Consequence: one chunk at a time leaves the link idle during each chunk's first-byte latency. Design: pipes bound prefetch memory to what the writer has not consumed, instead of buffering whole chunks.",
+  "when": "Filer HTTP GET when prefetch is configured (PrepareStreamContentWithPrefetch).",
+  "ux": "Higher download throughput from the filer.",
+  "if_broken": "Out-of-order or truncated downloads, or goroutines left behind after a client disconnects.",
+  "gotchas": [
+   "As in the unprefetched path, a chunk that fails after writing some bytes is not retried."
+  ]
+ },
+ "weed/filer/gateway_upload.go": {
+  "character": "One-chunk upload helper for gateways that write data through a filer connection",
+  "what": "SaveGatewayDataAsChunk assigns a volume through the filer (collection, replication, TTL, disk type, data center and path from the request), uploads the reader with retries (optionally through the filer's HTTP proxy when volume servers are not directly reachable), and returns the FileChunk at the given offset and timestamp. The filename defaults to the path's last component.",
+  "why": "Design: one shared implementation of 'assign, upload, build the chunk' for gateways that save data as chunks themselves, with an injectable uploader for tests.",
+  "when": "The S3 gateway's chunk-manifest saving (s3api_chunk_manifest.go) and WebDAV writes.",
+  "ux": "None directly.",
+  "if_broken": "Manifest chunks or WebDAV writes fail, or land in the wrong collection.",
+  "gotchas": []
+ },
+ "weed/filer/manifest_batch.go": {
+  "character": "The default manifest fold size",
+  "what": "ManifestBatch = 10000 data chunks per manifest chunk, for every build without the foundationdb tag.",
+  "why": "Design: stores reached by this build hold values far larger than a 10,000-chunk list encodes to.",
+  "when": "MaybeManifestize in every component that folds chunk lists (filer, S3 gateway, mount, WebDAV, shell, filer.copy).",
+  "ux": "None directly.",
+  "if_broken": "Entries too large for the store, or needless manifest reads.",
+  "gotchas": [
+   "The value is a property of the build, not of the configured store; every component folding for one filer must be built the same way."
+  ]
+ },
+ "weed/filer/manifest_batch_foundationdb.go": {
+  "character": "The manifest fold size for FoundationDB builds",
+  "what": "ManifestBatch = 500 under the foundationdb build tag, because a FoundationDB value stops at 100,000 bytes and a chunk record is about 100 bytes; 500 maximizes how many chunks one fold level can hold (about 250,000, roughly 1 TB at the default chunk size).",
+  "why": "Consequence: with the default 10,000 the entry was already too large to store before folding ever ran. Design: chosen so the unfolded remainder and the manifest pointers balance.",
+  "when": "Every binary built with -tags foundationdb.",
+  "ux": "Files up to about 1 TB on a FoundationDB-backed filer.",
+  "if_broken": "Large files cannot be saved on FoundationDB.",
+  "gotchas": [
+   "Files beyond about 250,000 chunks would need nested manifests, which MaybeManifestize does not build (author comment)."
+  ]
  }
 }
