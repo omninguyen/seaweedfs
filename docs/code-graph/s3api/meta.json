@@ -9,7 +9,7 @@
   "excluded": "*_test.go, s3tables/s3tablestest, s3lifecycle/lifecycletest, iceberg/testdata, worker/tasks/iceberg/testdata, policy_engine/examples.go (go:build ignore), kms_azure.go (azurekms build tag), weed/filer/filer_notify_read_testing.go and meta_aggregator_testing.go (test hooks); the individual filer store backends; import fan-out edges into file nodes",
   "why_criterion": "consequence if it fails + design decision + AWS compatibility constraint",
   "dependency_rule": "none",
-  "baseline": "curated against master 917cf534: the 54 nodes changed since 995084f re-read against their diffs, the 92 new nodes (7 s3api/s3vectors, 85 filer) read in full; earlier history: first curated at 984eac6, synced to 199b2e2 and 995084f, flags re-checked at b9866bae"
+  "baseline": "curated against master 4fc41872: the 20 nodes changed since 917cf534 re-read against their diffs; at 917cf534 the 54 nodes changed since 995084f were re-read and the 92 new nodes (7 s3api/s3vectors, 85 filer) read in full; earlier history: first curated at 984eac6, synced to 199b2e2 and 995084f, flags re-checked at b9866bae"
  },
  "layers": [
   {

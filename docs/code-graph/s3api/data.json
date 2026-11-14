@@ -176,7 +176,7 @@
    "file": "weed/filer/filer_delete_entry.go",
    "kind": "file",
    "layer": 14,
-   "in": 6,
+   "in": 7,
    "out": 4,
    "symbols": 23
   },
@@ -518,7 +518,7 @@
    "layer": 16,
    "in": 7,
    "out": 4,
-   "symbols": 33
+   "symbols": 34
   },
   {
    "id": "weed/filer/reader_cache_budget.go",
@@ -766,7 +766,7 @@
    "file": "weed/s3api/bucket_paths.go",
    "kind": "file",
    "layer": 6,
-   "in": 29,
+   "in": 30,
    "out": 7,
    "symbols": 14
   },
@@ -1757,7 +1757,7 @@
    "kind": "file",
    "layer": 4,
    "in": 8,
-   "out": 18,
+   "out": 19,
    "symbols": 21
   },
   {
@@ -1767,7 +1767,7 @@
    "kind": "file",
    "layer": 4,
    "in": 1,
-   "out": 12,
+   "out": 13,
    "symbols": 9
   },
   {
@@ -1777,7 +1777,7 @@
    "kind": "file",
    "layer": 4,
    "in": 22,
-   "out": 41,
+   "out": 40,
    "symbols": 66
   },
   {
@@ -1836,7 +1836,7 @@
    "file": "weed/s3api/s3api_object_routed_read.go",
    "kind": "file",
    "layer": 6,
-   "in": 13,
+   "in": 14,
    "out": 7,
    "symbols": 9
   },
@@ -1848,7 +1848,7 @@
    "layer": 6,
    "in": 13,
    "out": 13,
-   "symbols": 20
+   "symbols": 18
   },
   {
    "id": "weed/s3api/s3api_object_upload_acl.go",
@@ -1867,8 +1867,8 @@
    "kind": "file",
    "layer": 5,
    "in": 7,
-   "out": 11,
-   "symbols": 12
+   "out": 12,
+   "symbols": 15
   },
   {
    "id": "weed/s3api/s3api_object_versioning.go",
@@ -1926,9 +1926,9 @@
    "file": "weed/s3api/s3api_server.go",
    "kind": "file",
    "layer": 1,
-   "in": 23,
-   "out": 51,
-   "symbols": 30
+   "in": 25,
+   "out": 53,
+   "symbols": 33
   },
   {
    "id": "weed/s3api/s3api_server_grpc.go",
@@ -1988,7 +1988,7 @@
    "layer": 7,
    "in": 1,
    "out": 8,
-   "symbols": 56
+   "symbols": 57
   },
   {
    "id": "weed/s3api/s3api_vector_iam.go",
@@ -2088,7 +2088,7 @@
    "layer": 7,
    "in": 30,
    "out": 6,
-   "symbols": 453
+   "symbols": 459
   },
   {
    "id": "weed/s3api/s3vectors/describe.go",
@@ -2216,7 +2216,7 @@
    "file": "weed/server/filer_grpc_server.go",
    "kind": "file",
    "layer": 13,
-   "in": 5,
+   "in": 4,
    "out": 10,
    "symbols": 31
   },
@@ -11463,12 +11463,12 @@
    "s": "weed/s3api/s3api_object_handlers_copy.go",
    "t": "weed/s3api/s3api_server.go",
    "r": "calls",
-   "w": 4,
+   "w": 5,
    "via": [
+    ".CopyObjectHandler() \u2192 .checkVersionFileWrite()",
     ".CopyObjectHandler() \u2192 .recheckPolicyForKeyWithLookup()",
     ".CopyObjectHandler() \u2192 .recheckCopySourcePolicy()",
-    ".CopyObjectPartHandler() \u2192 .recheckPolicyForKeyWithLookup()",
-    ".CopyObjectPartHandler() \u2192 .recheckCopySourcePolicy()"
+    ".CopyObjectPartHandler() \u2192 .recheckPolicyForKeyWithLookup()"
    ]
   },
   {
@@ -12185,8 +12185,9 @@
    "s": "weed/s3api/s3api_object_handlers_extract.go",
    "t": "weed/s3api/s3api_server.go",
    "r": "calls",
-   "w": 1,
+   "w": 2,
    "via": [
+    ".extractZipObject() \u2192 .checkVersionFileWrite()",
     ".extractZipObject() \u2192 .checkPolicyWithEntry()"
    ]
   },
@@ -12674,6 +12675,16 @@
   },
   {
    "s": "weed/s3api/s3api_object_handlers_multipart.go",
+   "t": "weed/s3api/s3api_server.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".NewMultipartUploadHandler() \u2192 .checkVersionFileWrite()",
+    ".CompleteMultipartUploadHandler() \u2192 .checkVersionFileWrite()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_multipart.go",
    "t": "weed/s3api/s3err/",
    "r": "calls",
    "w": 14,
@@ -12833,6 +12844,15 @@
     ".PostPolicyBucketHandler() \u2192 putObjectACLPolicyRequest()",
     ".PostPolicyBucketHandler() \u2192 .checkPutObjectACLPolicy()",
     ".PostPolicyBucketHandler() \u2192 .preparePostObjectACL()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_postpolicy.go",
+   "t": "weed/s3api/s3api_server.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".PostPolicyBucketHandler() \u2192 .checkVersionFileWrite()"
    ]
   },
   {
@@ -13259,8 +13279,9 @@
    "s": "weed/s3api/s3api_object_handlers_put.go",
    "t": "weed/s3api/s3api_server.go",
    "r": "calls",
-   "w": 1,
+   "w": 2,
    "via": [
+    ".PutObjectHandler() \u2192 .checkVersionFileWrite()",
     ".PutObjectHandler() \u2192 .checkPolicyWithEntry()"
    ]
   },
@@ -13330,15 +13351,6 @@
    "via": [
     "validatePutHeaders() \u2192 parseTagsHeader()",
     "validatePutHeaders() \u2192 ValidateTags()"
-   ]
-  },
-  {
-   "s": "weed/s3api/s3api_object_handlers_put.go",
-   "t": "weed/server/filer_grpc_server.go",
-   "r": "calls",
-   "w": 1,
-   "via": [
-    ".uploadedChunksExist() \u2192 .lookupFileId()"
    ]
   },
   {
@@ -13474,8 +13486,9 @@
    "s": "weed/s3api/s3api_object_handlers_rename.go",
    "t": "weed/s3api/s3api_server.go",
    "r": "calls",
-   "w": 3,
+   "w": 4,
    "via": [
+    ".RenameObjectHandler() \u2192 .checkVersionFileWrite()",
     ".RenameObjectHandler() \u2192 .recheckPolicyForKeyWithLookup()",
     ".RenameObjectHandler() \u2192 .recheckCopySourcePolicy()",
     ".RenameObjectHandler() \u2192 .recheckPolicyWithObjectEntry()"
@@ -13958,7 +13971,7 @@
    "s": "weed/s3api/s3api_object_routed_write.go",
    "t": "weed/pb/filer.proto",
    "r": "references",
-   "w": 26,
+   "w": 24,
    "via": [
     "routeWriteCondition() \u2192 WriteCondition",
     "buildWriteCondition() \u2192 WriteCondition",
@@ -14249,9 +14262,18 @@
   },
   {
    "s": "weed/s3api/s3api_object_versioned_finalize.go",
+   "t": "weed/filer/filer_delete_entry.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "ownerRefusedNonEmpty() \u2192 DeleteEntryError()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_versioned_finalize.go",
    "t": "weed/pb/filer.proto",
    "r": "references",
-   "w": 8,
+   "w": 14,
    "via": [
     ".latestPointerRecompute() \u2192 ObjectMutation",
     ".routedVersionedFinalize() \u2192 Entry",
@@ -14263,17 +14285,19 @@
    "s": "weed/s3api/s3api_object_versioned_finalize.go",
    "t": "weed/s3api/bucket_paths.go",
    "r": "calls",
-   "w": 1,
+   "w": 2,
    "via": [
-    ".routedDeleteNullVersion() \u2192 .bucketDir()"
+    ".routedDeleteNullVersion() \u2192 .bucketDir()",
+    ".routedDemoteNullVersion() \u2192 .bucketDir()"
    ]
   },
   {
    "s": "weed/s3api/s3api_object_versioned_finalize.go",
    "t": "weed/s3api/filer_util.go",
    "r": "calls",
-   "w": 1,
+   "w": 2,
    "via": [
+    ".routedDemoteNullVersion() \u2192 clearDirectoryMarkerMetadata()",
     ".routedMultipartFinalize() \u2192 .exists()"
    ]
   },
@@ -14330,8 +14354,9 @@
    "s": "weed/s3api/s3api_object_versioned_finalize.go",
    "t": "weed/s3api/s3api_object_routed_read.go",
    "r": "calls",
-   "w": 1,
+   "w": 2,
    "via": [
+    ".routedDemoteNullVersion() \u2192 .lookupEntryOnFiler()",
     ".finalizeSuspendedNullWrite() \u2192 .lookupEntryPreferringOwner()"
    ]
   },
@@ -14339,7 +14364,7 @@
    "s": "weed/s3api/s3api_object_versioned_finalize.go",
    "t": "weed/s3api/s3api_object_routed_write.go",
    "r": "calls",
-   "w": 9,
+   "w": 11,
    "via": [
     ".objectWriteOwner() \u2192 .objectRouteKey()",
     ".routedVersionedFinalize() \u2192 .objectRouteKey()",
@@ -14370,7 +14395,7 @@
    "s": "weed/s3api/s3api_object_versioned_finalize.go",
    "t": "weed/s3api/s3err/",
    "r": "references",
-   "w": 4,
+   "w": 5,
    "via": [
     ".routedVersionedFinalize() \u2192 ErrorCode",
     ".routedMultipartFinalize() \u2192 ErrorCode",
@@ -14890,7 +14915,7 @@
    "s": "weed/s3api/s3api_server.go",
    "t": "weed/s3api/auth_credentials.go",
    "r": "calls",
-   "w": 25,
+   "w": 26,
    "via": [
     "NewS3ApiServerWithStore() \u2192 NewIdentityAccessManagementWithStore()",
     ".checkPolicyWithEntry() \u2192 Action",
@@ -14942,6 +14967,15 @@
    "w": 1,
    "via": [
     "S3ApiServer \u2192 BucketRegistry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_server.go",
+   "t": "weed/s3api/bucket_paths.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".checkVersionFileWrite() \u2192 .bucketDir()"
    ]
   },
   {
@@ -15002,7 +15036,7 @@
    "s": "weed/s3api/s3api_server.go",
    "t": "weed/s3api/s3_constants/",
    "r": "calls",
-   "w": 5,
+   "w": 6,
    "via": [
     "NewS3ApiServerWithStore() \u2192 SetAllowBackslashInObjectKey()",
     ".checkPolicyWithEntry() \u2192 GetIdentityFromContext()",
@@ -15277,7 +15311,7 @@
    "s": "weed/s3api/s3api_server.go",
    "t": "weed/s3api/s3api_object_anonymous_read.go",
    "r": "calls",
-   "w": 4,
+   "w": 6,
    "via": [
     ".recheckPolicyWithObjectEntry() \u2192 isAnonymousObjectRead()",
     ".recheckPolicyWithObjectEntry() \u2192 .authorizeAnonymousObjectRead()",
@@ -15435,11 +15469,22 @@
   },
   {
    "s": "weed/s3api/s3api_server.go",
+   "t": "weed/s3api/s3api_object_routed_read.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".checkVersionFileWrite() \u2192 .getObjectScopedEntryRoutedByKey()",
+    ".checkVersionFileWrite() \u2192 .lookupEntryOnFiler()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_server.go",
    "t": "weed/s3api/s3api_object_routed_write.go",
    "r": "calls",
-   "w": 1,
+   "w": 2,
    "via": [
-    "NewS3ApiServerWithStore() \u2192 .objectRouteKey()"
+    "NewS3ApiServerWithStore() \u2192 .objectRouteKey()",
+    ".checkVersionFileWrite() \u2192 .routableWriteOwner()"
    ]
   },
   {
@@ -15537,7 +15582,7 @@
    "s": "weed/s3api/s3api_server.go",
    "t": "weed/s3api/s3err/",
    "r": "references",
-   "w": 7,
+   "w": 8,
    "via": [
     ".checkPolicyWithEntry() \u2192 ErrorCode",
     ".recheckPolicyWithObjectEntry() \u2192 ErrorCode",
@@ -16136,7 +16181,7 @@
    "via": [
     ".getAccountID() \u2192 GetIdentityFromContext()",
     ".getAccountID() \u2192 GetIdentityNameFromContext()",
-    ".trustedIssuers() \u2192 GetIdentityFromContext()",
+    "requestClaims() \u2192 GetIdentityFromContext()",
     ".shouldUseIAM() \u2192 GetIdentityFromContext()"
    ]
   },
