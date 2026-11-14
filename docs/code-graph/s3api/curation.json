@@ -1622,7 +1622,7 @@
   "why": "Hệ quả: sản phẩm backup định cỡ job và thất bại sớm khi repository đầy dựa trên những con số này. Thiết kế: các file được tạo theo yêu cầu, nên chúng luôn phản ánh dung lượng hiện tại và không bao giờ tồn tại trên đĩa. Tương thích AWS: không có; SOSAPI là một protocol của nhà cung cấp chạy trên S3."
  },
  "weed/s3api/s3api_status_handlers.go": {
-  "character": "Handler health probe",
+  "character": "Handler cho health probe",
   "gotchas": [
    "/readyz báo sẵn sàng cả khi filer không truy cập được, nên lưu lượng được route tới một gateway sẽ trả 500."
   ],
@@ -2386,587 +2386,587 @@
   ]
  },
  "weed/filer/entry.go": {
-  "character": "The filer's in-memory Entry type and its conversions to and from filer_pb.Entry, plus the S3-lifecycle expiry marks",
-  "what": "Entry is a full path with Attr (mtime, crtime, ctime, atime, mode, uid/gid, mime, TTL, user and group names, symlink target, md5, file size, rdev, inode), the extended map, chunks, hard-link id and counter, inline content, remote entry, quota, WORM enforcement time and the commit timestamp of the mutation that produced it. Size is the largest of the chunk extent, the stored file size and the content length. ShallowClone copies the struct; ToProtoEntry / FromPbEntry convert, filling FileSize from the chunks. ApplyStorageTtl stamps the storage rule's TTL (never on remote entries) and, for S3 objects that are not versioned, marks SeaweedFSExpiresS3 so expiry counts from mtime rather than crtime; GetS3ExpireTime computes it.",
-  "why": "Consequence: every layer between the RPCs and the stores passes this type, so a field missing from a conversion is silently dropped on the next write. Design: S3 lifecycle TTLs must restart on overwrite (mtime), while plain filer TTLs count from creation; versioned entries are excluded because the S3 expiry path skips them, and stamping one would drop its expiry entirely.",
-  "when": "Everywhere in the filer.",
-  "ux": "S3 objects with a lifecycle TTL expire relative to their last write.",
-  "if_broken": "Fields lost between store and wire (quota, WORM time, commit stamps), or objects expiring from the wrong time.",
+  "character": "Kiểu Entry trong bộ nhớ của filer và các phép chuyển qua lại với filer_pb.Entry, cùng các dấu hết hạn S3-lifecycle",
+  "what": "Entry là một full path với Attr (mtime, crtime, ctime, atime, mode, uid/gid, mime, TTL, tên user và group, đích symlink, md5, file size, rdev, inode), extended map, chunk, hard-link id và bộ đếm, inline content, remote entry, quota, thời điểm thực thi WORM và commit timestamp của mutation tạo ra nó. Size là giá trị lớn nhất trong phạm vi chunk, file size đã lưu và độ dài content. ShallowClone copy struct; ToProtoEntry / FromPbEntry chuyển đổi, điền FileSize từ chunk. ApplyStorageTtl đóng dấu TTL của storage rule (không bao giờ trên remote entry) và, với S3 object không versioning, đánh dấu SeaweedFSExpiresS3 để hạn hết tính từ mtime thay vì crtime; GetS3ExpireTime tính nó.",
+  "why": "Hệ quả: mọi lớp giữa RPC và store đều truyền kiểu này, nên một trường thiếu trong phép chuyển âm thầm bị rơi ở lần ghi kế tiếp. Thiết kế: TTL S3 lifecycle phải bắt đầu lại khi ghi đè (mtime), trong khi TTL filer thường tính từ lúc tạo; entry versioned bị loại vì đường hết hạn S3 bỏ qua chúng, và đóng dấu lên một entry như vậy sẽ làm mất hẳn hạn hết của nó.",
+  "when": "Ở mọi nơi trong filer.",
+  "ux": "S3 object có lifecycle TTL hết hạn tính theo lần ghi cuối.",
+  "if_broken": "Trường bị mất giữa store và dây (quota, thời điểm WORM, commit stamp), hoặc object hết hạn tính từ sai thời điểm.",
   "gotchas": [
-   "ShallowClone shares the Extended map and the Chunks slice with the original; callers that change either must clone them first, as the RPC handlers do."
+   "ShallowClone dùng chung Extended map và Chunks slice với bản gốc; caller sửa một trong hai phải clone chúng trước, như các RPC handler làm."
   ]
  },
  "weed/filer/entry_codec.go": {
-  "character": "Store encoding of an entry, attribute conversion, and the entry-equality test",
-  "what": "EncodeAttributesAndChunks and DecodeAttributesAndChunks marshal an entry through pooled filer_pb.Entry messages (the encoded bytes are copied out before the message goes back to the pool). EntryAttributeToPb, EntryAttributeToExistingPb and PbToEntryAttribute convert attributes, keeping nanoseconds for mtime, ctime and atime (a missing ctime or atime decodes as mtime). EqualEntry compares attributes, chunks, extended attributes, md5, hard-link data, content, remote entry and quota.",
-  "why": "Design: every store saves the same protobuf blob under its own key scheme, so the codec is shared; pooling cuts allocations on hot listing paths.",
-  "when": "Every store read and write; EqualEntry in UpdateEntry (to skip no-op updates) and in the remote-cache commit.",
-  "ux": "None directly.",
-  "if_broken": "Entries that fail to decode, or no-op updates that are written and announced anyway (or real updates that are skipped).",
+  "character": "Mã hoá entry cho store, chuyển đổi attribute, và phép kiểm tra entry bằng nhau",
+  "what": "EncodeAttributesAndChunks và DecodeAttributesAndChunks marshal một entry qua các message filer_pb.Entry lấy từ pool (byte đã encode được copy ra trước khi message trả về pool). EntryAttributeToPb, EntryAttributeToExistingPb và PbToEntryAttribute chuyển đổi attribute, giữ nano giây cho mtime, ctime và atime (ctime hoặc atime thiếu được decode thành mtime). EqualEntry so attribute, chunk, extended attribute, md5, dữ liệu hard-link, content, remote entry và quota.",
+  "why": "Thiết kế: mọi store lưu cùng một protobuf blob dưới sơ đồ key riêng của nó, nên codec được dùng chung; pooling giảm cấp phát trên các đường listing nóng.",
+  "when": "Mọi lần đọc và ghi store; EqualEntry trong UpdateEntry (để bỏ qua update không làm gì) và trong commit remote-cache.",
+  "ux": "Không có trực tiếp.",
+  "if_broken": "Entry decode thất bại, hoặc update không làm gì vẫn được ghi và thông báo (hoặc update thật bị bỏ qua).",
   "gotchas": [
-   "EqualEntry ignores WORMEnforcedAtTsNs and CommitTsNs, so an UpdateEntry RPC that changes only the WORM enforcement time is treated as no change and not written.",
-   "Crtime is stored in whole seconds; its nanoseconds are lost on every round trip."
+   "EqualEntry bỏ qua WORMEnforcedAtTsNs và CommitTsNs, nên một RPC UpdateEntry chỉ đổi thời điểm thực thi WORM bị coi là không thay đổi và không được ghi.",
+   "Crtime được lưu theo giây tròn; phần nano giây của nó bị mất ở mỗi vòng round trip."
   ]
  },
  "weed/filer/entry_codec_attributes.go": {
-  "character": "Attributes-only decoding of a stored entry for listings that do not need chunks",
-  "what": "DecodeListedEntry decodes in full, or, when the context asks for chunks to be omitted, DecodeAttributesOnly: it walks the protobuf fields, skips every chunks field while still computing the largest chunk end (offset + size) and validating the skipped chunk's nested messages and UTF-8 strings, unmarshals the rest, and raises FileSize to the chunk extent.",
-  "why": "Consequence: decoding large chunk lists dominated mount readdir cost. Design: skip them but keep the size right for stores whose blobs never had FileSize folded in, and still reject a malformed blob that a full decode would reject.",
-  "when": "Stores' listing paths when filer_pb.WithChunksOmitted is set (mount readdir).",
-  "ux": "Faster directory listings in mounts.",
-  "if_broken": "Listed files show size 0 or a corrupt entry slips through a listing.",
+  "character": "Decode chỉ attribute của một entry đã lưu cho các listing không cần chunk",
+  "what": "DecodeListedEntry decode đầy đủ, hoặc, khi context yêu cầu bỏ chunk, DecodeAttributesOnly: nó duyệt các trường protobuf, bỏ qua mọi trường chunks trong khi vẫn tính điểm kết thúc chunk lớn nhất (offset + size) và kiểm tra các nested message và chuỗi UTF-8 của chunk bị bỏ qua, unmarshal phần còn lại, và nâng FileSize lên bằng phạm vi chunk.",
+  "why": "Hệ quả: decode danh sách chunk lớn chiếm phần lớn chi phí readdir của mount. Thiết kế: bỏ qua chúng nhưng giữ kích thước đúng cho các store có blob chưa từng gộp FileSize vào, và vẫn từ chối một blob sai dạng mà một lần decode đầy đủ sẽ từ chối.",
+  "when": "Các đường listing của store khi đặt filer_pb.WithChunksOmitted (readdir của mount).",
+  "ux": "Directory listing nhanh hơn trong mount.",
+  "if_broken": "File được list hiện kích thước 0 hoặc một entry hỏng lọt qua listing.",
   "gotchas": []
  },
  "weed/filer/configuration.go": {
-  "character": "Filer store selection from filer.toml",
-  "what": "LoadConfiguration requires exactly one enabled default store among the registered Stores (exits listing the supported ones if none, fatal if two), initializes a fresh instance and sets it, then initializes each '<store>.<id>.enabled' section as a path-specific store mounted at its required location.",
-  "why": "Design: one default store plus optional per-path stores lets a subtree (for example a hot bucket) live in a different database.",
-  "when": "Filer startup.",
-  "ux": "Operators choose LevelDB, SQL, Redis, Cassandra and others in filer.toml.",
-  "if_broken": "The filer does not start, or a path's metadata lands in the wrong store.",
+  "character": "Chọn filer store từ filer.toml",
+  "what": "LoadConfiguration yêu cầu đúng một default store được bật trong các Stores đã đăng ký (thoát kèm liệt kê các store được hỗ trợ nếu không có, fatal nếu có hai), khởi tạo một instance mới và đặt nó, rồi khởi tạo từng section '<store>.<id>.enabled' thành một store theo path được gắn ở location bắt buộc của nó.",
+  "why": "Thiết kế: một default store cộng các store theo path tuỳ chọn cho phép một cây con (ví dụ một bucket nóng) nằm ở database khác.",
+  "when": "Lúc filer khởi động.",
+  "ux": "Người vận hành chọn LevelDB, SQL, Redis, Cassandra và các loại khác trong filer.toml.",
+  "if_broken": "Filer không khởi động, hoặc metadata của một path rơi vào nhầm store.",
   "gotchas": [
-   "Path-specific stores are outside the default store's transactions (FilerStoreWrapper begins transactions on the default store only), so a rename across the boundary is not atomic."
+   "Store theo path nằm ngoài transaction của default store (FilerStoreWrapper chỉ bắt đầu transaction trên default store), nên một rename vượt ranh giới không nguyên tử."
   ]
  },
  "weed/filer/filer_conf.go": {
-  "character": "Path-prefix storage rules (filer.conf): load, match, merge and edit",
-  "what": "FilerConf keeps PathConf rules in a ptrie keyed by location prefix, loaded from /etc/seaweedfs/filer.conf (inline content or chunks; versions before 2 drop explicit false fsync and worm flags so they inherit). MatchStorageRule merges every rule whose prefix matches the path, outer to inner: strings and counts are overridden by the inner rule, read_only and disable_chunk_deletion are ORed, fsync and worm are tri-state. ApplyBucketQuotaReadOnly flips a bucket's read-only flag around its quota; ClearBucketReadOnly rewrites filer.conf with SaveInsideFiler; ClearBucketLifecycleDayTTLs drops legacy day-TTL rules a lifecycle once created (or clears the TTL on an operator's rule) and saves conditionally (If-Match on the content MD5, else if-unmodified-since). Also directory constants (/etc/, /etc/seaweedfs, /etc/remote, /etc/iam).",
-  "why": "Consequence: these rules choose collection, replication, TTL, disk type, fsync, placement, read-only and WORM for every write, and the S3 gateway's bucket quota enforcement works by toggling read-only here. Design: prefix rules compose, so a bucket-level rule refines a cluster-wide one.",
-  "when": "Every write's storage option (detectStorageOption), the S3 gateway's quota and lifecycle code, weed shell fs.configure.",
-  "ux": "Per-bucket collections, TTLs, replication and quotas.",
-  "if_broken": "Data lands in the wrong collection or replication, quotas never block writes, or a bucket stays read-only after it drops below quota.",
+  "character": "Quy tắc lưu trữ theo path prefix (filer.conf): nạp, khớp, gộp và sửa",
+  "what": "FilerConf giữ các rule PathConf trong một ptrie khoá theo location prefix, nạp từ /etc/seaweedfs/filer.conf (inline content hoặc chunk; phiên bản trước 2 bỏ các cờ fsync và worm false tường minh để chúng kế thừa). MatchStorageRule gộp mọi rule có prefix khớp path, từ ngoài vào trong: chuỗi và số đếm bị rule bên trong ghi đè, read_only và disable_chunk_deletion được OR, fsync và worm là ba trạng thái. ApplyBucketQuotaReadOnly lật cờ read-only của một bucket theo quota của nó; ClearBucketReadOnly viết lại filer.conf bằng SaveInsideFiler; ClearBucketLifecycleDayTTLs bỏ các rule day-TTL kiểu cũ mà một lifecycle đã từng tạo (hoặc xoá TTL trên rule của người vận hành) và lưu có điều kiện (If-Match trên MD5 của content, nếu không thì if-unmodified-since). Ngoài ra các hằng số thư mục (/etc/, /etc/seaweedfs, /etc/remote, /etc/iam).",
+  "why": "Hệ quả: các rule này chọn collection, replication, TTL, disk type, fsync, placement, read-only và WORM cho mọi thao tác ghi, và việc thực thi bucket quota của S3 gateway hoạt động bằng cách bật tắt read-only ở đây. Thiết kế: rule theo prefix kết hợp được, nên một rule cấp bucket tinh chỉnh một rule toàn cluster.",
+  "when": "Storage option của mọi thao tác ghi (detectStorageOption), code quota và lifecycle của S3 gateway, weed shell fs.configure.",
+  "ux": "Collection, TTL, replication và quota theo bucket.",
+  "if_broken": "Dữ liệu rơi vào sai collection hay replication, quota không bao giờ chặn thao tác ghi, hoặc một bucket ở lại read-only sau khi đã xuống dưới quota.",
   "gotchas": [
-   "Matching is a plain string prefix: a rule for /buckets/a without a trailing slash also applies to /buckets/ab.",
-   "read_only is ORed down the chain, so an inner rule cannot make a path writable under a read-only outer rule.",
-   "doLoadConf stops at the first rule SetLocationConf rejects and returns nil, silently ignoring the rest.",
-   "ClearBucketReadOnly writes back with the unconditional SaveInsideFiler, while ClearBucketLifecycleDayTTLs uses a conditional write; a concurrent fs.configure edit can be lost to the former."
+   "Việc khớp là string prefix thuần: một rule cho /buckets/a không có dấu gạch chéo cuối cũng áp cho /buckets/ab.",
+   "read_only được OR xuống dọc chuỗi, nên một rule bên trong không làm path ghi được dưới một rule read-only bên ngoài.",
+   "doLoadConf dừng ở rule đầu tiên mà SetLocationConf từ chối và trả nil, âm thầm bỏ qua phần còn lại.",
+   "ClearBucketReadOnly ghi lại bằng SaveInsideFiler không điều kiện, trong khi ClearBucketLifecycleDayTTLs dùng thao tác ghi có điều kiện; một lần sửa fs.configure đồng thời có thể bị mất vào tay cái trước."
   ]
  },
  "weed/filer/filerstore.go": {
-  "character": "The FilerStore interface every metadata backend implements, and its optional capabilities",
-  "what": "FilerStore: insert, update, find, delete, delete folder children, list (with and without a name prefix), transactions, KV get/put/delete, shutdown. Optional interfaces: EntryScanner (one consistent snapshot of a subtree), BucketAware (per-bucket tables: creation and deletion hooks, dropping a whole bucket), Debuggable. Sentinels for unsupported prefix listing, unsupported scans, unimplemented KV and KV misses.",
-  "why": "Design: a minimal interface lets many databases back the namespace; capabilities are discovered by type assertion so a store opts into what it can do well.",
-  "when": "Implemented by every store under weed/filer/*; called only through FilerStoreWrapper.",
-  "ux": "None directly.",
-  "if_broken": "A store that half-implements a contract (for example a prefix listing that ignores the prefix) breaks S3 listings.",
+  "character": "Interface FilerStore mà mọi metadata backend hiện thực, và các khả năng tuỳ chọn của nó",
+  "what": "FilerStore: insert, update, find, delete, delete folder children, list (có và không có name prefix), transaction, KV get/put/delete, shutdown. Các interface tuỳ chọn: EntryScanner (một snapshot nhất quán của một cây con), BucketAware (bảng theo bucket: hook tạo và xoá, drop cả một bucket), Debuggable. Sentinel cho prefix listing không hỗ trợ, scan không hỗ trợ, KV chưa hiện thực và KV miss.",
+  "why": "Thiết kế: một interface tối giản cho phép nhiều database làm nền cho namespace; các khả năng được phát hiện bằng type assertion để store chọn tham gia những gì nó làm tốt.",
+  "when": "Được mọi store dưới weed/filer/* hiện thực; chỉ được gọi qua FilerStoreWrapper.",
+  "ux": "Không có trực tiếp.",
+  "if_broken": "Một store hiện thực nửa vời một hợp đồng (ví dụ prefix listing bỏ qua prefix) làm hỏng S3 listing.",
   "gotchas": [
-   "A store that answers ErrUnsupportedListDirectoryPrefixed is served by the wrapper's client-side prefix filter, which scans the directory from the start name."
+   "Một store trả ErrUnsupportedListDirectoryPrefixed được phục vụ bằng bộ lọc prefix phía client của wrapper, thứ quét thư mục từ tên bắt đầu."
   ]
  },
  "weed/filer/filerstore_hardlink.go": {
-  "character": "Hard-link indirection: the shared inode record kept in the store's KV under the hard-link id",
-  "what": "On insert and update of a file with a hard-link id, the wrapper writes the entry's attributes and chunks into KV under that id (setHardLink) and, if the path previously held a different link, decrements the old one. maybeReadHardLink replaces a listed or found entry's attributes and chunks with the shared record. DeleteHardLink decrements the record's counter and deletes it at zero.",
-  "why": "Consequence: all names of a hard link must see one file. Design: the per-path entry holds only the id; the data lives once in KV.",
-  "when": "Every store operation on an entry with a hard-link id (mounts).",
-  "ux": "ln in mounts.",
-  "if_broken": "Links diverge, or chunks are freed while another link still points at them.",
+  "character": "Lớp gián tiếp hard-link: bản ghi inode dùng chung giữ trong KV của store dưới hard-link id",
+  "what": "Khi insert và update một file có hard-link id, wrapper ghi attribute và chunk của entry vào KV dưới id đó (setHardLink) và, nếu path trước đó giữ một link khác, giảm link cũ. maybeReadHardLink thay attribute và chunk của một entry được list hoặc tìm thấy bằng bản ghi dùng chung. DeleteHardLink giảm bộ đếm của bản ghi và xoá nó khi về 0.",
+  "why": "Hệ quả: mọi tên của một hard link phải thấy cùng một file. Thiết kế: entry theo path chỉ giữ id; dữ liệu nằm một lần trong KV.",
+  "when": "Mọi thao tác store trên một entry có hard-link id (mount).",
+  "ux": "ln trong mount.",
+  "if_broken": "Các link phân kỳ, hoặc chunk bị giải phóng trong khi link khác vẫn trỏ tới chúng.",
   "gotchas": [
-   "The counter decrement is an unlocked read-modify-write on KV; two concurrent unlinks of the same file can both read the same count, leaving the record (and its chunks) behind or deleting it early."
+   "Việc giảm bộ đếm là đọc-sửa-ghi không lock trên KV; hai lần unlink đồng thời cùng file có thể cùng đọc một số đếm, để lại bản ghi (và chunk của nó) hoặc xoá nó quá sớm."
   ]
  },
  "weed/filer/filerstore_translate_path.go": {
-  "character": "Adapter that makes a path-specific store see paths relative to its mount point",
-  "what": "FilerStorePathTranslator strips the store's root from every path before calling the inner store and restores the full path on returned entries, for every FilerStore method; KV calls pass through.",
-  "why": "Design: a path-specific store can be the same implementation as the default store and need not know where it is mounted.",
-  "when": "Wraps each store added by AddPathSpecificStore.",
-  "ux": "None directly.",
-  "if_broken": "Entries in a path-specific store come back with wrong paths, or land outside its root.",
+  "character": "Adapter khiến một store theo path thấy path tương đối với điểm gắn của nó",
+  "what": "FilerStorePathTranslator cắt root của store khỏi mọi path trước khi gọi store bên trong và khôi phục full path trên các entry trả về, cho mọi method FilerStore; lời gọi KV đi qua nguyên vẹn.",
+  "why": "Thiết kế: một store theo path có thể là cùng hiện thực với default store và không cần biết nó được gắn ở đâu.",
+  "when": "Bọc từng store được thêm bởi AddPathSpecificStore.",
+  "ux": "Không có trực tiếp.",
+  "if_broken": "Entry trong store theo path trả về với path sai, hoặc rơi ra ngoài root của nó.",
   "gotchas": [
-   "Wrapping a translator in another translator returns the inner one unchanged, ignoring the new root."
+   "Bọc một translator trong một translator khác trả về translator bên trong không đổi, bỏ qua root mới."
   ]
  },
  "weed/filer/filerstore_wrapper.go": {
-  "character": "The VirtualFilerStore every filer call goes through: routing to path-specific stores, hard links, chunk-id compaction, metrics and context detachment",
-  "what": "FilerStoreWrapper routes each path to the default store or the path-specific store whose prefix matches, counts and times every operation, and on write moves chunk ids into the compact Fid form, maps the default mime to empty, strips ExtKeepRemoteObjectKey and maintains hard links; on read it restores ids and resolves hard links. Store calls run on a context detached from cancellation once started (a cancelled caller is refused only before the call). Prefix listing falls back to a client-side filter for stores without it. ScanEntries is offered only without path-specific stores. Transactions and KV always go to the default store. DeleteEntry and DeleteOneEntry decrement hard-link records unless the context marks a rename.",
-  "why": "Consequence: a store write abandoned halfway because a client hung up could leave metadata inconsistent with what was already done around it (chunk deletes, events). Design: decide before the write, then finish it.",
-  "when": "Every filer store access.",
-  "ux": "None directly.",
-  "if_broken": "Path-specific stores receive the wrong paths, hard links break, or chunk ids are lost in storage.",
+  "character": "VirtualFilerStore mà mọi lời gọi của filer đi qua: route tới store theo path, hard link, nén chunk-id, metric và tách context",
+  "what": "FilerStoreWrapper route mỗi path tới default store hoặc store theo path có prefix khớp, đếm và đo thời gian mọi thao tác, và khi ghi thì dời chunk id sang dạng Fid gọn, ánh xạ mime mặc định thành rỗng, gỡ ExtKeepRemoteObjectKey và duy trì hard link; khi đọc thì khôi phục id và resolve hard link. Lời gọi store chạy trên một context tách khỏi việc huỷ một khi đã bắt đầu (caller đã huỷ chỉ bị từ chối trước lời gọi). Prefix listing rơi về bộ lọc phía client với store không có nó. ScanEntries chỉ được cung cấp khi không có store theo path. Transaction và KV luôn đi tới default store. DeleteEntry và DeleteOneEntry giảm bản ghi hard-link trừ khi context đánh dấu một rename.",
+  "why": "Hệ quả: một lần ghi store bị bỏ dở giữa chừng vì client ngắt có thể để metadata không nhất quán với những gì đã làm xung quanh (xoá chunk, event). Thiết kế: quyết định trước lần ghi, rồi làm cho xong.",
+  "when": "Mọi truy cập filer store.",
+  "ux": "Không có trực tiếp.",
+  "if_broken": "Store theo path nhận sai path, hard link hỏng, hoặc chunk id bị mất trong lưu trữ.",
   "gotchas": [
-   "Writes mutate the caller's entry in place: chunk FileId strings are moved into Fid (FileId cleared) and Extended loses ExtKeepRemoteObjectKey; a caller that reuses the entry afterwards sees the compacted chunks.",
-   "A hard-link record that cannot be read is logged and ignored by FindEntry, which returns the per-path entry without its shared data.",
-   "A FindEntry error on a whole-bucket-table store is turned into NotFound by matching the text 'Table' and \"doesn't exist\"."
+   "Thao tác ghi sửa entry của caller tại chỗ: chuỗi FileId của chunk được dời vào Fid (FileId bị xoá) và Extended mất ExtKeepRemoteObjectKey; caller dùng lại entry sau đó thấy các chunk đã nén.",
+   "Một bản ghi hard-link không đọc được bị FindEntry log và bỏ qua, trả entry theo path thiếu dữ liệu dùng chung.",
+   "Một lỗi FindEntry trên store kiểu whole-bucket-table được biến thành NotFound bằng cách khớp text 'Table' và \"doesn't exist\"."
   ]
  },
  "weed/filer/placement_overlay.go": {
-  "character": "An optional hook that overrides disk type, replication and data center per collection",
-  "what": "RegisterPlacementOverlay installs a factory; NewFiler builds the overlay from it if one is registered. ResolvePlacement asks it for a collection and reports whether it steered.",
-  "why": "Design: a seam for placement policy that is not expressed in filer.conf, without the filer core depending on it.",
-  "when": "The filer HTTP write path (filer_server_handlers_write.go) when choosing where to assign a chunk.",
-  "ux": "None unless an overlay is registered.",
-  "if_broken": "Writes ignore a configured placement policy.",
+  "character": "Một hook tuỳ chọn ghi đè disk type, replication và data center theo collection",
+  "what": "RegisterPlacementOverlay cài một factory; NewFiler dựng overlay từ nó nếu có đăng ký. ResolvePlacement hỏi nó cho một collection và báo nó có điều hướng hay không.",
+  "why": "Thiết kế: một điểm nối cho placement policy không biểu diễn trong filer.conf, mà lõi filer không phụ thuộc vào nó.",
+  "when": "Đường ghi HTTP của filer (filer_server_handlers_write.go) khi chọn nơi gán một chunk.",
+  "ux": "Không có trừ khi có overlay được đăng ký.",
+  "if_broken": "Thao tác ghi bỏ qua một placement policy đã cấu hình.",
   "gotchas": [
-   "Nothing in this repository calls RegisterPlacementOverlay, so ResolvePlacement always reports no override here."
+   "Không gì trong repository này gọi RegisterPlacementOverlay, nên ResolvePlacement ở đây luôn báo không có override."
   ]
  },
  "weed/filer/s3iam_conf.go": {
-  "character": "JSON helpers for the S3 and IAM configuration protos kept in the filer",
-  "what": "ParseS3ConfigurationFromBytes unmarshals protojson leniently (unknown fields discarded, partial messages allowed); ProtoToText writes indented JSON with unpopulated fields; CheckDuplicateAccessKey refuses an access key configured on two different identities.",
-  "why": "Design: the identity, circuit-breaker and other configs are stored as JSON protos in /etc so operators can edit them; lenient parsing lets older binaries read configs written by newer ones.",
-  "when": "The S3 gateway loading /etc/iam and /etc/s3 files, the circuit breaker, shell commands that edit them.",
-  "ux": "Hand-edited JSON configs load.",
-  "if_broken": "Configs fail to load, or two users share an access key.",
+  "character": "Các helper JSON cho các proto cấu hình S3 và IAM giữ trong filer",
+  "what": "ParseS3ConfigurationFromBytes unmarshal protojson một cách dễ dãi (trường lạ bị bỏ, cho phép message dở dang); ProtoToText ghi JSON thụt lề kèm các trường chưa điền; CheckDuplicateAccessKey từ chối một access key được cấu hình trên hai identity khác nhau.",
+  "why": "Thiết kế: identity, circuit-breaker và các config khác được lưu thành JSON proto trong /etc để người vận hành sửa được; parse dễ dãi cho binary cũ đọc được config do binary mới ghi.",
+  "when": "S3 gateway nạp các file /etc/iam và /etc/s3, circuit breaker, các lệnh shell sửa chúng.",
+  "ux": "Config JSON sửa tay nạp được.",
+  "if_broken": "Config nạp thất bại, hoặc hai user dùng chung một access key.",
   "gotchas": [
-   "Unknown fields are discarded silently, so a misspelled field name in a hand-edited config is ignored rather than reported.",
-   "CheckDuplicateAccessKey checks identities only, not service accounts."
+   "Trường lạ bị bỏ âm thầm, nên một tên trường viết sai trong config sửa tay bị bỏ qua thay vì được báo.",
+   "CheckDuplicateAccessKey chỉ kiểm tra identity, không kiểm tra service account."
   ]
  },
  "weed/filer/abstract_sql/": {
-  "character": "The shared implementation behind the MySQL, Postgres and SQLite filer stores, with optional one-table-per-bucket layout",
-  "what": "AbstractSqlStore implements FilerStore on database/sql through a SqlGenerator each dialect supplies. Rows are keyed by (hash of directory, name, directory) with the encoded entry as the value (gzipped when it has more than 50 chunks on insert). With SupportBucketTable, paths under /buckets/<bucket>/ live in a table named after the bucket, created on first use and dropped when the bucket's children are deleted, so deleting a bucket is one DROP TABLE. Transactions are a *sql.Tx carried in the context under 'tx' (read committed). KV rows live in the default table, keyed by the first 8 bytes of the key and its base64 rest, optionally on a separate small connection pool (a quarter of max connections, at most 8). ScanEntries reads a subtree in one repeatable-read read-only transaction, across bucket tables when scanning / or /buckets, refusing when the store has a single connection. Retryable errors are retried outside transactions.",
-  "why": "Consequence: SQL stores are what multi-filer clusters share, so their key layout decides listing order and bucket-delete cost. Design: per-bucket tables make bucket deletion O(1) and keep one bucket's rows out of another's index; KV gets its own pool so a burst of metadata queries cannot starve lock and offset writes.",
-  "when": "Filers configured with mysql, mysql2, postgres, postgres2 or sqlite.",
-  "ux": "Fast bucket deletes with the per-bucket-table variants.",
-  "if_broken": "Entries vanish into the wrong table, bucket deletes leave rows, or the connection pool deadlocks.",
+  "character": "Hiện thực dùng chung đứng sau các filer store MySQL, Postgres và SQLite, với bố cục tuỳ chọn mỗi bucket một bảng",
+  "what": "AbstractSqlStore hiện thực FilerStore trên database/sql qua một SqlGenerator mà mỗi dialect cung cấp. Row được khoá theo (hash của directory, name, directory) với entry đã encode làm value (gzip khi nó có hơn 50 chunk lúc insert). Với SupportBucketTable, các path dưới /buckets/<bucket>/ nằm trong một bảng mang tên bucket, được tạo ở lần dùng đầu và drop khi các con của bucket bị xoá, nên xoá một bucket là một DROP TABLE. Transaction là một *sql.Tx mang trong context dưới 'tx' (read committed). KV row nằm trong bảng mặc định, khoá theo 8 byte đầu của key và phần còn lại ở base64, tuỳ chọn trên một connection pool nhỏ riêng (một phần tư số kết nối tối đa, nhiều nhất 8). ScanEntries đọc một cây con trong một transaction read-only repeatable-read, qua các bảng bucket khi quét / hoặc /buckets, từ chối khi store chỉ có một kết nối. Lỗi có thể retry được retry bên ngoài transaction.",
+  "why": "Hệ quả: SQL store là thứ mà các cluster nhiều filer dùng chung, nên bố cục key của chúng quyết định thứ tự listing và chi phí xoá bucket. Thiết kế: bảng theo bucket làm việc xoá bucket thành O(1) và giữ row của bucket này ngoài index của bucket khác; KV có pool riêng để một cơn bùng metadata query không bỏ đói các lần ghi lock và offset.",
+  "when": "Filer cấu hình với mysql, mysql2, postgres, postgres2 hoặc sqlite.",
+  "ux": "Xoá bucket nhanh với các biến thể bảng theo bucket.",
+  "if_broken": "Entry biến mất vào nhầm bảng, xoá bucket để lại row, hoặc connection pool deadlock.",
   "gotchas": [
-   "The bucket routing hardcodes /buckets/ instead of the filer's DirBucketsPath, and accepts bucket names by the lenient VerifyS3BucketName (non-ASCII names become table names).",
-   "Insert falls back to update only when the error text contains 'duplicate entry' (MySQL wording); KvPut falls back to update on any insert error.",
-   "UpdateEntry does not gzip large chunk lists the way InsertEntry does, and an UPDATE that matches no row reports success.",
-   "A transaction left open (see the StreamRenameEntry issue) keeps its pooled connection until the filer restarts, since the wrapper begins it on a context that is never cancelled."
+   "Việc route bucket hardcode /buckets/ thay vì DirBucketsPath của filer, và chấp nhận tên bucket bằng VerifyS3BucketName dễ dãi (tên không phải ASCII thành tên bảng).",
+   "Insert chỉ rơi về update khi text lỗi chứa 'duplicate entry' (cách diễn đạt của MySQL); KvPut rơi về update với mọi lỗi insert.",
+   "UpdateEntry không gzip danh sách chunk lớn như InsertEntry, và một UPDATE không khớp row nào vẫn báo thành công.",
+   "Một transaction bị bỏ mở (xem issue của StreamRenameEntry) giữ kết nối trong pool cho tới khi filer restart, vì wrapper bắt đầu nó trên một context không bao giờ bị huỷ."
   ]
  },
  "weed/filer/filechunks.go": {
-  "character": "Chunk-list arithmetic: sizes, ETags, garbage detection, chunk differences and the chunk views a read needs",
-  "what": "TotalSize is the furthest chunk end; FileSize takes the larger of that and the stored size (and the remote size when the remote is newer). ETag returns the stored MD5, else ETagChunks: a single chunk's MD5, or the multipart form md5(concat(chunk md5s))-N. CompactFileChunks resolves manifests, computes visible intervals and splits chunks into those still visible and garbage fully overwritten by newer ones; MinusChunks resolves both lists (data and manifest chunks) and returns what the old list has that the new one does not, which is what the filer deletes on an update. ViewFromChunks / ViewFromVisibleIntervals cut the visible intervals into ChunkViews (file id, offset in chunk, view size and offset, cipher key, gzip flag) for a byte range; MergeIntoVisibles and MergeIntoChunkViews add one chunk to existing lists.",
-  "why": "Consequence: SeaweedFS files are lists of possibly overlapping chunks where the newest write wins; every read and every chunk deletion depends on computing which bytes of which chunk are visible. Design: the newest ModifiedTsNs wins per byte range, so overwrites need no rewrite of older chunks, and a chunk becomes garbage only when nothing of it is visible.",
-  "when": "Every read path (S3 GET through the gateway's own reader uses these too), CreateEntry/UpdateEntry chunk cleanup, rename overwrite cleanup.",
-  "ux": "Correct bytes after overwrites and partial writes from mounts.",
-  "if_broken": "Reads return old data or wrong offsets, or still-visible chunks are deleted.",
+  "character": "Số học trên danh sách chunk: kích thước, ETag, phát hiện rác, hiệu giữa các chunk và các chunk view mà một lần đọc cần",
+  "what": "TotalSize là điểm kết thúc chunk xa nhất; FileSize lấy giá trị lớn hơn giữa nó và kích thước đã lưu (và remote size khi remote mới hơn). ETag trả MD5 đã lưu, nếu không thì ETagChunks: MD5 của một chunk đơn, hoặc dạng multipart md5(concat(chunk md5s))-N. CompactFileChunks resolve manifest, tính visible interval và tách chunk thành những chunk vẫn nhìn thấy và rác bị ghi đè hoàn toàn bởi chunk mới hơn; MinusChunks resolve cả hai danh sách (data và manifest chunk) và trả những gì danh sách cũ có mà danh sách mới không có, chính là thứ filer xoá khi update. ViewFromChunks / ViewFromVisibleIntervals cắt các visible interval thành ChunkViews (file id, offset trong chunk, kích thước và offset của view, cipher key, cờ gzip) cho một byte range; MergeIntoVisibles và MergeIntoChunkViews thêm một chunk vào các danh sách có sẵn.",
+  "why": "Hệ quả: file của SeaweedFS là danh sách các chunk có thể chồng lấn trong đó lần ghi mới nhất thắng; mọi lần đọc và mọi lần xoá chunk phụ thuộc vào việc tính byte nào của chunk nào đang nhìn thấy. Thiết kế: ModifiedTsNs mới nhất thắng theo từng byte range, nên ghi đè không cần viết lại các chunk cũ hơn, và một chunk chỉ thành rác khi không còn phần nào của nó nhìn thấy.",
+  "when": "Mọi đường đọc (S3 GET qua reader riêng của gateway cũng dùng chúng), dọn chunk của CreateEntry/UpdateEntry, dọn khi rename ghi đè.",
+  "ux": "Byte đúng sau khi ghi đè và ghi một phần từ mount.",
+  "if_broken": "Lần đọc trả dữ liệu cũ hoặc offset sai, hoặc chunk vẫn nhìn thấy bị xoá.",
   "gotchas": [
-   "ETagChunks gives a multi-chunk object a multipart-style ETag ('-N') even when it was written in one PUT; the S3 gateway avoids this by storing its own ETag and MD5."
+   "ETagChunks cho object nhiều chunk một ETag kiểu multipart ('-N') kể cả khi nó được ghi trong một PUT; S3 gateway tránh điều này bằng cách lưu ETag và MD5 riêng."
   ]
  },
  "weed/filer/filechunks_read.go": {
-  "character": "The sweep that turns overlapping chunks into non-overlapping visible intervals",
-  "what": "readResolvedChunks makes a start and an end point per chunk inside the range, sorts them by offset then timestamp, and sweeps with a queue ordered by timestamp: at each point the newest active chunk owns the bytes since the previous point. The result is an IntervalList of VisibleIntervals, each naming the chunk, its offset in the chunk, size, cipher key and gzip flag.",
-  "why": "Design: one O(n log n) sweep instead of repeated interval insertion; it is the basis of CompactFileChunks and every read.",
-  "when": "NonOverlappingVisibleIntervals and FileChunkSection.",
-  "ux": "None directly.",
-  "if_broken": "Overlapping writes read back the wrong version of a byte range.",
+  "character": "Phép quét biến các chunk chồng lấn thành các visible interval không chồng lấn",
+  "what": "readResolvedChunks tạo một điểm bắt đầu và một điểm kết thúc cho mỗi chunk trong range, sắp xếp theo offset rồi timestamp, và quét với một hàng đợi sắp theo timestamp: ở mỗi điểm, chunk đang hoạt động mới nhất sở hữu các byte kể từ điểm trước. Kết quả là một IntervalList các VisibleIntervals, mỗi cái nêu chunk, offset trong chunk, kích thước, cipher key và cờ gzip.",
+  "why": "Thiết kế: một lần quét O(n log n) thay vì chèn interval lặp đi lặp lại; nó là nền của CompactFileChunks và mọi lần đọc.",
+  "when": "NonOverlappingVisibleIntervals và FileChunkSection.",
+  "ux": "Không có trực tiếp.",
+  "if_broken": "Các lần ghi chồng lấn đọc lại sai phiên bản của một byte range.",
   "gotchas": [
-   "Chunks are told apart by ModifiedTsNs: two overlapping chunks with the same timestamp make the end-point removal ambiguous (it removes the first queued point with that timestamp).",
-   "The sort comparator converts int64 differences to int, which truncates on 32-bit builds.",
-   "A manifest chunk reaching it only prints a warning to stdout; callers must resolve manifests first."
+   "Chunk được phân biệt bằng ModifiedTsNs: hai chunk chồng lấn cùng timestamp làm việc gỡ điểm kết thúc mơ hồ (nó gỡ điểm đầu tiên trong hàng đợi có timestamp đó).",
+   "Bộ so sánh khi sắp xếp đổi hiệu int64 sang int, bị cắt cụt trên bản build 32-bit.",
+   "Một manifest chunk tới được nó chỉ in cảnh báo ra stdout; caller phải resolve manifest trước."
   ]
  },
  "weed/filer/interval_list.go": {
-  "character": "A doubly linked list of non-overlapping intervals with newest-wins insertion",
-  "what": "IntervalList keeps intervals between sentinel head and tail. AppendInterval adds at the end (callers append in order). InsertInterval places an interval and, where it overlaps existing ones, keeps whichever has the newer timestamp, splitting and cloning values (SetStartStop adjusts each value's own offsets). Overlay replaces a range unconditionally. Len counts intervals.",
-  "why": "Design: generic over the value (VisibleInterval, ChunkView) so visible intervals and chunk views share the split logic; incremental insertion lets a mount add a freshly written chunk without recomputing the whole file.",
-  "when": "Visible-interval and chunk-view lists in reads and in FileChunkSection.addChunk.",
-  "ux": "None directly.",
-  "if_broken": "Interval lists with gaps or overlaps, hence wrong reads.",
+  "character": "Một danh sách liên kết đôi các interval không chồng lấn với phép chèn mới-nhất-thắng",
+  "what": "IntervalList giữ các interval giữa head và tail sentinel. AppendInterval thêm vào cuối (caller append theo thứ tự). InsertInterval đặt một interval và, ở chỗ nó chồng lên các interval có sẵn, giữ bên nào có timestamp mới hơn, tách và clone value (SetStartStop điều chỉnh offset riêng của từng value). Overlay thay một range vô điều kiện. Len đếm số interval.",
+  "why": "Thiết kế: generic theo value (VisibleInterval, ChunkView) để visible interval và chunk view dùng chung logic tách; chèn tăng dần cho phép mount thêm một chunk vừa ghi mà không phải tính lại cả file.",
+  "when": "Danh sách visible-interval và chunk-view khi đọc và trong FileChunkSection.addChunk.",
+  "ux": "Không có trực tiếp.",
+  "if_broken": "Interval list có khoảng trống hoặc chồng lấn, dẫn tới đọc sai.",
   "gotchas": [
-   "Overlay shares the split pieces' values with the original instead of cloning and re-offsetting them; nothing outside tests calls it.",
-   "Front() and traversal do not take the list's lock; readers such as ChunkReadAt hold Lock.RLock themselves."
+   "Overlay dùng chung value của các mảnh đã tách với bản gốc thay vì clone và đặt lại offset; không gì ngoài test gọi nó.",
+   "Front() và việc duyệt không lấy lock của danh sách; reader như ChunkReadAt tự giữ Lock.RLock."
   ]
  },
  "weed/filer/filechunk_manifest.go": {
-  "character": "Chunk manifests: folding long chunk lists into manifest chunks, resolving them back, and the retrying whole-chunk fetch",
-  "what": "ResolveChunkManifest expands manifest chunks overlapping a byte range into their data chunks (and returns the manifest chunks themselves), fetching manifests in parallel with 4 workers plus overflow goroutines, cancelling the batch on the first failure and recursing into nested manifests. resolveOneChunkManifest fetches and unmarshals one manifest, optionally through a ChunkManifestCache. fetchWholeChunk and retriedStreamFetchChunkData read a chunk from its locations, reachable ones first, resuming at the byte already written, with backoff (1 s growing by half up to util.RetryWaitTime) and a retry on fresh locations when every URL fails. MaybeManifestize first folds 256 or more chunks under 1 MiB into manifests of 256 (foldSmallChunks), then folds every full batch of ManifestBatch data chunks into one manifest chunk (mergeIntoManifest: saves the serialized list as a chunk spanning min..max offset); on failure it deletes the manifests it saved and returns the input list.",
-  "why": "Consequence: an entry's whole chunk list is one store value, and stores cap value size; a large or long-appended file would stop being writable. Design: one level of folding, small chunks first because many tiny chunks (appends) bloat the list fastest; the input list is still a correct entry if folding fails.",
-  "when": "CreateEntry/UpdateEntry chunk cleanup, AppendToEntry, the filer's autochunk and zip-extract writes, WebDAV, the gateway's chunk manifest path, shell fs.distribute.chunks; resolution on every read.",
-  "ux": "Very large files and append-heavy logs remain writable.",
-  "if_broken": "Large files fail to save, or manifests resolve to the wrong chunk set (data loss on the next cleanup).",
+  "character": "Chunk manifest: gộp danh sách chunk dài thành manifest chunk, resolve ngược lại, và việc tải cả chunk có retry",
+  "what": "ResolveChunkManifest mở các manifest chunk chồng lên một byte range thành data chunk của chúng (và trả chính các manifest chunk), tải manifest song song với 4 worker cộng các goroutine tràn, huỷ cả lô ở thất bại đầu tiên và đệ quy vào manifest lồng nhau. resolveOneChunkManifest tải và unmarshal một manifest, tuỳ chọn qua một ChunkManifestCache. fetchWholeChunk và retriedStreamFetchChunkData đọc một chunk từ các location của nó, location liên lạc được trước, tiếp tục từ byte đã ghi, với backoff (1 s tăng thêm một nửa tới util.RetryWaitTime) và một lần retry trên location mới khi mọi URL thất bại. MaybeManifestize trước tiên gộp 256 chunk dưới 1 MiB trở lên thành các manifest 256 cái (foldSmallChunks), rồi gộp mỗi lô đầy ManifestBatch data chunk thành một manifest chunk (mergeIntoManifest: lưu danh sách đã serialize thành một chunk trải từ offset min..max); khi thất bại nó xoá các manifest đã lưu và trả danh sách đầu vào.",
+  "why": "Hệ quả: toàn bộ danh sách chunk của một entry là một value của store, và store giới hạn kích thước value; một file lớn hoặc được append lâu dài sẽ không còn ghi được. Thiết kế: một cấp gộp, chunk nhỏ trước vì nhiều chunk tí hon (append) làm phình danh sách nhanh nhất; danh sách đầu vào vẫn là một entry đúng nếu việc gộp thất bại.",
+  "when": "Dọn chunk của CreateEntry/UpdateEntry, AppendToEntry, autochunk và ghi zip-extract của filer, WebDAV, đường chunk manifest của gateway, shell fs.distribute.chunks; resolve ở mọi lần đọc.",
+  "ux": "File rất lớn và log append nhiều vẫn ghi được.",
+  "if_broken": "File lớn lưu thất bại, hoặc manifest resolve ra sai tập chunk (mất dữ liệu ở lần dọn kế tiếp).",
   "gotchas": [
-   "Every chunk read appends readDeleted=true, so a needle already deleted on the volume server is still served while its space is not reclaimed.",
-   "On a failed resolution ResolveChunkManifest returns the data chunks resolved before the failing slot together with the error; callers must not use them as the full list.",
-   "mergeIntoManifest moves the data chunks' FileId strings into Fid (BeforeEntrySerialization) in place."
+   "Mọi lần đọc chunk nối thêm readDeleted=true, nên một needle đã bị xoá trên volume server vẫn được phục vụ trong khi dung lượng của nó chưa được thu hồi.",
+   "Khi resolve thất bại, ResolveChunkManifest trả các data chunk đã resolve trước slot thất bại cùng với lỗi; caller không được dùng chúng như danh sách đầy đủ.",
+   "mergeIntoManifest dời chuỗi FileId của data chunk vào Fid (BeforeEntrySerialization) tại chỗ."
   ]
  },
  "weed/filer/filechunk_manifest_cache.go": {
-  "character": "A small LRU of fetched manifest bytes with request coalescing",
-  "what": "ChunkManifestCache keeps manifest blobs keyed by file id, cipher key and compression flag, bounded by entry count and bytes (mounts use 256 entries / 64 MiB), returns copies, and coalesces concurrent fetches of one manifest through singleflight while letting each caller give up on its own context.",
-  "why": "Consequence: a mount reopening the same large file re-fetched every manifest each time. Design: manifests are immutable needles, so caching by file id is safe.",
-  "when": "ChunkGroup.SetChunks in weed mount.",
-  "ux": "Faster opens of large files in mounts.",
-  "if_broken": "Repeated manifest fetches, or stale manifests if a file id were ever reused.",
+  "character": "Một LRU nhỏ của byte manifest đã tải với gộp request",
+  "what": "ChunkManifestCache giữ các manifest blob khoá theo file id, cipher key và cờ compression, giới hạn theo số entry và byte (mount dùng 256 entry / 64 MiB), trả bản sao, và gộp các lần tải đồng thời của một manifest qua singleflight trong khi cho mỗi caller bỏ cuộc theo context riêng.",
+  "why": "Hệ quả: một mount mở lại cùng file lớn từng tải lại mọi manifest mỗi lần. Thiết kế: manifest là needle bất biến, nên cache theo file id là an toàn.",
+  "when": "ChunkGroup.SetChunks trong weed mount.",
+  "ux": "Mở file lớn nhanh hơn trong mount.",
+  "if_broken": "Tải manifest lặp lại, hoặc manifest cũ nếu một file id từng bị dùng lại.",
   "gotchas": []
  },
  "weed/filer/filechunk_section.go": {
-  "character": "A 64 MiB slice of a file's chunks with its own visible intervals, chunk views and reader",
-  "what": "FileChunkSection holds the chunks overlapping one 64 MiB section. addChunk merges a newly written chunk into the section's visible intervals and chunk views incrementally and drops chunks it fully hides. setupForRead builds visible intervals and chunk views lazily on first read and a ChunkReadAt over them; readDataAt reads through it. DataStartOffset and NextStopOffset answer SEEK_DATA / SEEK_HOLE within the section.",
-  "why": "Consequence: recomputing visibility over a whole large file on every write or read was too slow for mounts. Design: sections bound the work to the region touched.",
-  "when": "weed mount's file handles through ChunkGroup.",
-  "ux": "Mount reads and writes on large files stay fast; lseek SEEK_DATA/SEEK_HOLE work.",
-  "if_broken": "Mount reads return stale bytes after writes, or seek reports wrong holes.",
+  "character": "Một lát 64 MiB của các chunk của một file với visible interval, chunk view và reader riêng",
+  "what": "FileChunkSection giữ các chunk chồng lên một section 64 MiB. addChunk gộp một chunk vừa ghi vào visible interval và chunk view của section theo kiểu tăng dần và bỏ các chunk mà nó che hoàn toàn. setupForRead dựng visible interval và chunk view một cách lười ở lần đọc đầu và một ChunkReadAt trên chúng; readDataAt đọc qua nó. DataStartOffset và NextStopOffset trả lời SEEK_DATA / SEEK_HOLE trong section.",
+  "why": "Hệ quả: tính lại khả năng nhìn thấy trên cả một file lớn ở mỗi lần ghi hay đọc quá chậm với mount. Thiết kế: section giới hạn công việc trong vùng bị chạm tới.",
+  "when": "File handle của weed mount qua ChunkGroup.",
+  "ux": "Đọc và ghi của mount trên file lớn vẫn nhanh; lseek SEEK_DATA/SEEK_HOLE hoạt động.",
+  "if_broken": "Lần đọc của mount trả byte cũ sau khi ghi, hoặc seek báo sai lỗ trống.",
   "gotchas": [
-   "removeGarbageChunks matches chunks by their FileId string, which is only populated after GetFileIdString ran on them."
+   "removeGarbageChunks khớp chunk theo chuỗi FileId, thứ chỉ được điền sau khi GetFileIdString đã chạy trên chúng."
   ]
  },
  "weed/filer/filechunk_group.go": {
-  "character": "A file's chunks organized as sections, with parallel reads and hole search, for weed mount",
-  "what": "NewChunkGroup builds a reader cache (2 x concurrent readers, at least 32 downloaders) and sets the chunks: SetChunks resolves top-level manifest chunks (through the manifest cache) and distributes data chunks to 64 MiB sections. AddChunk adds a written chunk to every section it touches. ReadDataAt reads a range sequentially or, across several sections, in parallel (up to the concurrent-reader limit, 16 by default, capped at 128), zero-filling sections with no chunks; a manifest resolution failure is returned on every read. SearchChunks implements SEEK_DATA and SEEK_HOLE.",
-  "why": "Design: per-section state lets concurrent reads of different regions proceed without one lock over the whole file, and lets writes update only the sections they touch.",
-  "when": "Every open file in weed mount.",
-  "ux": "Throughput of large sequential and parallel reads in mounts.",
-  "if_broken": "Mount reads stall, return zeros for data, or fail after one transient manifest error.",
+  "character": "Chunk của một file được tổ chức thành các section, với đọc song song và tìm lỗ trống, cho weed mount",
+  "what": "NewChunkGroup dựng một reader cache (2 x số reader đồng thời, ít nhất 32 downloader) và đặt chunk: SetChunks resolve các manifest chunk cấp cao nhất (qua manifest cache) và phân phối data chunk vào các section 64 MiB. AddChunk thêm một chunk đã ghi vào mọi section nó chạm tới. ReadDataAt đọc một range tuần tự hoặc, khi qua nhiều section, song song (tới giới hạn reader đồng thời, mặc định 16, chặn ở 128), điền 0 cho section không có chunk; một lỗi resolve manifest được trả ở mọi lần đọc. SearchChunks hiện thực SEEK_DATA và SEEK_HOLE.",
+  "why": "Thiết kế: trạng thái theo section cho phép các lần đọc đồng thời ở vùng khác nhau tiến hành mà không cần một lock cho cả file, và cho thao tác ghi chỉ cập nhật các section chúng chạm tới.",
+  "when": "Mọi file đang mở trong weed mount.",
+  "ux": "Thông lượng đọc tuần tự và song song lớn trong mount.",
+  "if_broken": "Lần đọc của mount đứng lại, trả số 0 thay cho dữ liệu, hoặc thất bại sau một lỗi manifest tạm thời.",
   "gotchas": [
-   "SetChunks resolves one level of manifests with context.Background(); a manifest found inside a manifest would be treated as a data chunk.",
-   "A failed manifest resolution is remembered (resolveErr) until the next successful SetChunks, so every read fails meanwhile."
+   "SetChunks resolve một cấp manifest bằng context.Background(); một manifest tìm thấy bên trong một manifest sẽ bị coi là data chunk.",
+   "Một lần resolve manifest thất bại được ghi nhớ (resolveErr) cho tới lần SetChunks thành công kế tiếp, nên trong lúc đó mọi lần đọc đều thất bại."
   ]
  },
  "weed/filer/reader_at.go": {
-  "character": "ChunkReadAt: io.ReaderAt over chunk views, with parallel chunk reads, zero-filled holes and prefetch; and LookupFn, a cached volume lookup over a filer client",
-  "what": "doReadAt maps a read to tasks per chunk view and gaps to zero-fill, reads the tasks sequentially (one task, or a random access pattern) or in parallel (at least 4), and on a sequential pattern asks the reader cache to prefetch the next chunk views. Small reads of range-fetchable chunks (unencrypted, uncompressed) go straight to the chunk cache or a ranged fetch; others read the whole chunk through the shared ReaderCache, caching it when it fits the chunk cache's part limit. EOF is returned when the read reaches the file size. LookupFn resolves a file id's volume through the filer's LookupVolume, caches up to 10,000 volumes, orders same-data-center and locally stored (not remote-tiered) replicas first and shuffles within each group.",
-  "why": "Design: whole-chunk reads with caching suit sequential workloads, ranged reads suit random ones; ReaderPattern decides. Holes read as zeros, matching POSIX sparse files.",
-  "when": "Mount reads (via FileChunkSection), filer HTTP and other readers built with NewChunkReaderAtFromClient; LookupFn in clients that only have a filer connection (sftp, replication sources, ChunkStreamReader).",
-  "ux": "Read latency and throughput in mounts and gateways.",
-  "if_broken": "Short or corrupted reads, or reads that keep hitting a volume server that moved.",
+  "character": "ChunkReadAt: io.ReaderAt trên chunk view, với đọc chunk song song, lỗ trống điền 0 và prefetch; và LookupFn, một volume lookup có cache trên một filer client",
+  "what": "doReadAt ánh xạ một lần đọc thành các task theo chunk view và các khoảng trống cần điền 0, đọc các task tuần tự (một task, hoặc kiểu truy cập ngẫu nhiên) hoặc song song (ít nhất 4), và với kiểu tuần tự thì nhờ reader cache prefetch các chunk view kế tiếp. Lần đọc nhỏ trên chunk có thể fetch theo range (không mã hoá, không nén) đi thẳng tới chunk cache hoặc một lần fetch theo range; các trường hợp khác đọc cả chunk qua ReaderCache dùng chung, cache nó khi vừa giới hạn phần của chunk cache. EOF được trả khi lần đọc chạm kích thước file. LookupFn resolve volume của một file id qua LookupVolume của filer, cache tới 10,000 volume, xếp replica cùng data center và lưu cục bộ (không phải remote-tiered) lên trước và xáo trộn trong từng nhóm.",
+  "why": "Thiết kế: đọc cả chunk có cache hợp với workload tuần tự, đọc theo range hợp với workload ngẫu nhiên; ReaderPattern quyết định. Lỗ trống đọc ra số 0, khớp với sparse file của POSIX.",
+  "when": "Lần đọc của mount (qua FileChunkSection), HTTP của filer và các reader khác dựng bằng NewChunkReaderAtFromClient; LookupFn trong các client chỉ có kết nối filer (sftp, nguồn replication, ChunkStreamReader).",
+  "ux": "Độ trễ và thông lượng đọc trong mount và gateway.",
+  "if_broken": "Đọc thiếu hoặc hỏng, hoặc lần đọc cứ chạm vào một volume server đã dời đi.",
   "gotchas": [
-   "LookupFn's volume cache is never invalidated: a volume that moves keeps resolving to its old locations for the life of the closure (fetches still retry other replicas)."
+   "Volume cache của LookupFn không bao giờ bị vô hiệu: một volume đã dời đi vẫn resolve về location cũ suốt đời closure (việc fetch vẫn retry các replica khác)."
   ]
  },
  "weed/filer/reader_cache.go": {
-  "character": "Shared per-file downloader cache: one in-flight whole-chunk download per file id, with pinning, eviction and prefetch",
-  "what": "ReaderCache maps file ids to SingleChunkCachers. readChunkAt joins an existing download, else reads the persistent chunk cache, else starts a download (evicting the oldest finished downloader, preferring unpinned ones, when at the limit) and waits for it. A stream (one reader positioned in a chunk) pins the chunk it is in; a downloader is dropped once fully consumed or left by its last stream, or on error so the next read retries. MaybeCache starts prefetch downloads for the next chunk views. SingleChunkCacher runs on its own context, cancelled once no reader or stream can use it any more (consumed, left by its last stream, or dropped by destroy, which cancels unheld downloads instead of waiting for them, #12616); it reserves memory from the optional ReaderCacheBudget, looks up and fetches the whole chunk (retrying on fresh locations), stores it in the chunk cache when asked, and serves slices to readers.",
-  "why": "Consequence: sequential readers would download each chunk once per read call, and concurrent readers of one file would download it many times. Design: share the download, keep a chunk only while a stream is in it, and bound memory.",
-  "when": "ChunkReadAt reads and prefetch in mounts and other chunk readers.",
-  "ux": "Mount sequential read throughput.",
-  "if_broken": "Memory blowups from undropped chunk buffers, repeated downloads, or reads blocked behind a dead download.",
+  "character": "Cache downloader dùng chung theo file: một lần tải cả chunk đang chạy cho mỗi file id, với ghim, loại bỏ và prefetch",
+  "what": "ReaderCache ánh xạ file id tới SingleChunkCachers. readChunkAt tham gia một lần tải có sẵn, nếu không thì đọc persistent chunk cache, nếu không nữa thì bắt đầu một lần tải (loại downloader đã xong lâu nhất, ưu tiên cái không bị ghim, khi chạm giới hạn) và chờ nó. Một stream (một reader đang đứng trong một chunk) ghim chunk nó đang ở; một downloader bị bỏ khi đã tiêu thụ hết hoặc bị stream cuối cùng rời khỏi, hoặc khi lỗi để lần đọc sau retry. MaybeCache bắt đầu các lần tải prefetch cho các chunk view kế tiếp. SingleChunkCacher chạy trên context riêng, bị huỷ khi không reader hay stream nào còn dùng được nó (đã tiêu thụ, bị stream cuối rời khỏi, hoặc bị destroy bỏ, thứ huỷ các lần tải không ai giữ thay vì đợi chúng, #12616); nó giữ chỗ bộ nhớ từ ReaderCacheBudget tuỳ chọn, lookup và tải cả chunk (retry trên location mới), lưu nó vào chunk cache khi được yêu cầu, và phục vụ các lát cho reader.",
+  "why": "Hệ quả: reader tuần tự sẽ tải mỗi chunk một lần cho mỗi lời gọi đọc, và các reader đồng thời của một file sẽ tải nó nhiều lần. Thiết kế: chia sẻ lần tải, chỉ giữ một chunk khi có stream đang ở trong nó, và giới hạn bộ nhớ.",
+  "when": "Đọc và prefetch của ChunkReadAt trong mount và các chunk reader khác.",
+  "ux": "Thông lượng đọc tuần tự của mount.",
+  "if_broken": "Bộ nhớ phình to vì buffer chunk không bị bỏ, tải lặp lại, hoặc lần đọc bị chặn sau một lần tải đã chết.",
   "gotchas": [
-   "A download is shared, so it runs on its own context rather than a reader's: a reader that gives up only stops waiting, and the download is cancelled only when no reader or stream holds it. Its volume re-lookups ignore even that context, because concurrent lookups of one volume are coalesced and a cancelled download must not fail the others (#12616).",
-   "A failed download is removed only when the next reader notices the completed error, so the first reader after a failure pays a retry."
+   "Một lần tải được chia sẻ, nên nó chạy trên context riêng thay vì context của một reader: reader bỏ cuộc chỉ ngừng chờ, và lần tải chỉ bị huỷ khi không reader hay stream nào giữ nó. Các lần lookup lại volume của nó bỏ qua cả context đó, vì các lookup đồng thời của một volume được gộp lại và một lần tải bị huỷ không được làm hỏng các lần khác (#12616).",
+   "Một lần tải thất bại chỉ bị gỡ khi reader kế tiếp nhận ra lỗi đã hoàn tất, nên reader đầu tiên sau một lần thất bại phải trả một lần retry."
   ]
  },
  "weed/filer/reader_cache_budget.go": {
-  "character": "Memory budget shared by reader caches: reservations, idle eviction and waiting",
-  "what": "ReaderCacheBudget (default 256 MiB) reserves a downloader's allocation before it fetches; when full it evicts idle (completed) downloaders, unpinned first, and otherwise waits for a release or completion, or until the download is cancelled; a cancelled download never evicts a chunk for itself (#12616). canFit tells callers when a chunk cannot fit at all, so they range-fetch instead. A chunk larger than the whole budget is an error.",
-  "why": "Consequence: many open files each prefetching whole chunks could exhaust a mount's memory. Design: one budget across files, evicting finished buffers before waiting.",
-  "when": "Reader caches created with a budget (weed mount's -readerCacheSizeMB).",
-  "ux": "Bounded mount memory under many concurrent readers.",
-  "if_broken": "OOM in mounts, or reads that wait forever for budget.",
+  "character": "Ngân sách bộ nhớ dùng chung bởi các reader cache: giữ chỗ, loại bỏ khi rảnh và chờ đợi",
+  "what": "ReaderCacheBudget (mặc định 256 MiB) giữ chỗ phần cấp phát của một downloader trước khi nó tải; khi đầy nó loại các downloader rảnh (đã xong), cái không bị ghim trước, và ngược lại chờ một lần nhả hoặc hoàn tất, hoặc tới khi lần tải bị huỷ; một lần tải bị huỷ không bao giờ loại một chunk cho chính nó (#12616). canFit cho caller biết khi một chunk hoàn toàn không vừa, để chúng fetch theo range thay vào. Một chunk lớn hơn cả ngân sách là lỗi.",
+  "why": "Hệ quả: nhiều file đang mở mỗi file prefetch cả chunk có thể vắt kiệt bộ nhớ của mount. Thiết kế: một ngân sách cho mọi file, loại các buffer đã xong trước khi chờ.",
+  "when": "Reader cache được tạo kèm ngân sách (-readerCacheSizeMB của weed mount).",
+  "ux": "Bộ nhớ mount có giới hạn khi có nhiều reader đồng thời.",
+  "if_broken": "OOM trong mount, hoặc lần đọc chờ ngân sách mãi mãi.",
   "gotchas": [
-   "The wait has no timeout of its own: a reservation waits as long as every reserved chunk is an in-flight download that some reader still holds."
+   "Việc chờ không có timeout riêng: một lần giữ chỗ chờ chừng nào mọi chunk đã giữ chỗ còn là lần tải đang chạy mà reader nào đó vẫn giữ."
   ]
  },
  "weed/filer/reader_pattern.go": {
-  "character": "Sequential-versus-random access detection for a reader",
-  "what": "MonitorReadAt tracks the furthest byte read; a read starting within 8 MiB of it counts toward sequential (up to +3), a read further away pushes the counter down, straight to -3 once it is at or below zero. IsRandomMode is a negative counter.",
-  "why": "Design: hysteresis so one seek does not flip a sequential reader into random mode, and a tolerance wide enough for parallel readahead that arrives slightly out of order.",
-  "when": "Every ChunkReadAt read.",
-  "ux": "Prefetch for streaming reads, no wasted downloads for random reads.",
-  "if_broken": "Random readers download whole chunks they do not need, or sequential readers lose prefetch.",
+  "character": "Phát hiện truy cập tuần tự so với ngẫu nhiên cho một reader",
+  "what": "MonitorReadAt theo dõi byte xa nhất đã đọc; một lần đọc bắt đầu trong vòng 8 MiB quanh nó được tính hướng về tuần tự (tới +3), một lần đọc xa hơn đẩy bộ đếm xuống, thẳng về -3 một khi nó ở hoặc dưới 0. IsRandomMode là bộ đếm âm.",
+  "why": "Thiết kế: có độ trễ (hysteresis) để một lần seek không lật một reader tuần tự sang chế độ ngẫu nhiên, và dung sai đủ rộng cho readahead song song tới hơi lệch thứ tự.",
+  "when": "Mọi lần đọc của ChunkReadAt.",
+  "ux": "Prefetch cho đọc streaming, không phí lần tải cho đọc ngẫu nhiên.",
+  "if_broken": "Reader ngẫu nhiên tải cả chunk mà chúng không cần, hoặc reader tuần tự mất prefetch.",
   "gotchas": []
  },
  "weed/filer/stream.go": {
-  "character": "Streaming file content to a writer, and ChunkStreamReader, an io.ReadSeeker / ReaderAt over a chunk list",
-  "what": "PrepareStreamContentWithThrottler resolves visible chunk views for a range, looks every chunk's locations up first (with a short backoff), then returns a function that writes the range: zeros for gaps, each chunk via retriedStreamFetchChunkData, a retry on fresh locations when a chunk failed before writing anything, optional bandwidth throttling. PrepareStreamContentWithPrefetch does the same with several chunks fetched ahead through pipes (stream_prefetch.go). StreamContent is the unthrottled form. Read JWTs come from jwt.signing.read.key (or the filer JWT when reading through the filer proxy). ChunkStreamReader reads chunk views one at a time into a buffer, keeping up to 16 chunks / 128 MiB of recent buffers, and remembers the first source error (ReaderSourceError). NewFileReader returns inline content or a ChunkStreamReader. IsSameData compares content, or chunk ETags as a multiset.",
-  "why": "Consequence: the filer HTTP read path, the admin file browser and many tools stream files through here. Design: resolve all locations before writing a byte, so a missing volume becomes an error status rather than a truncated 200.",
-  "when": "Filer HTTP GET (with prefetch), admin file browser and Iceberg data preview, filer.conf and other small-file reads (ReadEntry); ChunkStreamReader in replication sinks, sftp, the metadata-log readers, mount sync, the Iceberg worker and the filer's chunk merge.",
-  "ux": "File downloads from the filer and replicated copies of files.",
-  "if_broken": "Truncated downloads, or replicated files that differ from their source.",
+  "character": "Stream nội dung file ra một writer, và ChunkStreamReader, một io.ReadSeeker / ReaderAt trên một danh sách chunk",
+  "what": "PrepareStreamContentWithThrottler resolve các chunk view nhìn thấy cho một range, lookup location của mọi chunk trước (với backoff ngắn), rồi trả một hàm ghi range đó: số 0 cho khoảng trống, từng chunk qua retriedStreamFetchChunkData, một lần retry trên location mới khi một chunk thất bại trước khi ghi được gì, throttling băng thông tuỳ chọn. PrepareStreamContentWithPrefetch làm điều tương tự với nhiều chunk được tải trước qua pipe (stream_prefetch.go). StreamContent là dạng không throttle. Read JWT lấy từ jwt.signing.read.key (hoặc filer JWT khi đọc qua proxy của filer). ChunkStreamReader đọc từng chunk view vào một buffer, giữ tới 16 chunk / 128 MiB buffer gần đây, và nhớ lỗi nguồn đầu tiên (ReaderSourceError). NewFileReader trả inline content hoặc một ChunkStreamReader. IsSameData so content, hoặc chunk ETag như một multiset.",
+  "why": "Hệ quả: đường đọc HTTP của filer, file browser của admin và nhiều công cụ stream file qua đây. Thiết kế: resolve mọi location trước khi ghi một byte, để một volume bị thiếu thành một status lỗi thay vì một 200 bị cắt cụt.",
+  "when": "GET HTTP của filer (có prefetch), file browser của admin và xem trước dữ liệu Iceberg, filer.conf và các lần đọc file nhỏ khác (ReadEntry); ChunkStreamReader trong replication sink, sftp, các reader metadata-log, sync của mount, Iceberg worker và việc gộp chunk của filer.",
+  "ux": "Tải file từ filer và các bản sao replicate của file.",
+  "if_broken": "Download bị cắt cụt, hoặc file được replicate khác với nguồn của chúng.",
   "gotchas": [
-   "A chunk that fails after some of its bytes were written is not retried, and the error arrives after part of the response is already out.",
-   "ChunkStreamReader sizes the stream as the sum of its chunk views and answers io.EOF when the next offset falls in a hole, so a sparse file reads only up to its first hole, without an error."
+   "Một chunk thất bại sau khi đã ghi một phần byte không được retry, và lỗi tới sau khi một phần response đã ra ngoài.",
+   "ChunkStreamReader tính kích thước stream bằng tổng các chunk view và trả io.EOF khi offset kế tiếp rơi vào lỗ trống, nên một sparse file chỉ đọc được tới lỗ trống đầu tiên, không có lỗi."
   ],
   "issue": "bug",
-  "issue_note": "ChunkStreamReader silently truncates sparse files. doNewChunkStreamReader sets totalSize to the sum of the chunk views' sizes, ignoring gaps between them and any trailing hole, and prepareBufferFor returns io.EOF when the read offset is not inside a chunk view, so reading stops at the first hole and io.ReadAll reports success. NewFileReader hands this reader to the replication sinks (replication/sink/s3sink/s3_sink.go CreateEntry, and repl_util copyWithDecryption for SSE files), so filer.backup or filer.sync to an S3 sink uploads a file with a hole (created through weed mount by seeking past the end, or extended with truncate -s) cut short at the hole, and the backup reports nothing. Sftp downloads and the Iceberg worker's file reads use the same reader. Reproduced at 917cf534 with a temporary unit test: two chunks [0,10) and [20,30) of a 30-byte file read back 10 bytes, err=nil, SourceError=nil, while FileSize reports 30. The fix is to zero-fill gaps between views and to the entry's file size, as ChunkReadAt.doReadAt and PrepareStreamContentWithThrottler already do."
+  "issue_note": "ChunkStreamReader âm thầm cắt cụt sparse file. doNewChunkStreamReader đặt totalSize bằng tổng kích thước các chunk view, bỏ qua khoảng trống giữa chúng và mọi lỗ trống ở cuối, và prepareBufferFor trả io.EOF khi offset đọc không nằm trong một chunk view, nên việc đọc dừng ở lỗ trống đầu tiên và io.ReadAll báo thành công. NewFileReader giao reader này cho các replication sink (CreateEntry trong replication/sink/s3sink/s3_sink.go, và copyWithDecryption của repl_util cho file SSE), nên filer.backup hoặc filer.sync tới một S3 sink upload một file có lỗ trống (tạo qua weed mount bằng cách seek quá cuối, hoặc kéo dài bằng truncate -s) bị cắt ngắn ở lỗ trống, và bản backup không báo gì. Download qua sftp và việc đọc file của Iceberg worker dùng cùng reader. Tái hiện ở 917cf534 với một unit test tạm: hai chunk [0,10) và [20,30) của một file 30 byte đọc lại được 10 byte, err=nil, SourceError=nil, trong khi FileSize báo 30. Cách sửa là điền 0 cho khoảng trống giữa các view và tới file size của entry, như ChunkReadAt.doReadAt và PrepareStreamContentWithThrottler đã làm."
  },
  "weed/filer/stream_prefetch.go": {
-  "character": "Prefetched streaming: several chunks fetched ahead through pipes while one is written out",
-  "what": "streamChunksPrefetched starts a producer that, for each chunk view, waits for one of prefetchAhead slots, opens a pipe and starts a fetch goroutine writing the chunk into it; the consumer writes zeros for gaps and copies each pipe to the writer in order, retrying a chunk on fresh locations when its fetch failed before writing anything, and throttling if asked. On any failure it cancels the producer and drains every pending pipe before returning.",
-  "why": "Consequence: one chunk at a time leaves the link idle during each chunk's first-byte latency. Design: pipes bound prefetch memory to what the writer has not consumed, instead of buffering whole chunks.",
-  "when": "Filer HTTP GET when prefetch is configured (PrepareStreamContentWithPrefetch).",
-  "ux": "Higher download throughput from the filer.",
-  "if_broken": "Out-of-order or truncated downloads, or goroutines left behind after a client disconnects.",
+  "character": "Streaming có prefetch: nhiều chunk được tải trước qua pipe trong khi một chunk được ghi ra",
+  "what": "streamChunksPrefetched bắt đầu một producer, với mỗi chunk view, chờ một trong prefetchAhead slot, mở một pipe và bắt đầu một goroutine fetch ghi chunk vào đó; consumer ghi số 0 cho khoảng trống và copy từng pipe ra writer theo thứ tự, retry một chunk trên location mới khi lần fetch của nó thất bại trước khi ghi được gì, và throttle nếu được yêu cầu. Khi có bất kỳ thất bại nào, nó huỷ producer và xả mọi pipe đang chờ trước khi trả về.",
+  "why": "Hệ quả: mỗi lần một chunk để đường truyền rảnh trong độ trễ byte đầu tiên của mỗi chunk. Thiết kế: pipe giới hạn bộ nhớ prefetch ở phần writer chưa tiêu thụ, thay vì buffer cả chunk.",
+  "when": "GET HTTP của filer khi có cấu hình prefetch (PrepareStreamContentWithPrefetch).",
+  "ux": "Thông lượng download từ filer cao hơn.",
+  "if_broken": "Download sai thứ tự hoặc bị cắt cụt, hoặc goroutine bị bỏ lại sau khi client ngắt kết nối.",
   "gotchas": [
-   "As in the unprefetched path, a chunk that fails after writing some bytes is not retried."
+   "Như đường không prefetch, một chunk thất bại sau khi đã ghi một số byte không được retry."
   ]
  },
  "weed/filer/gateway_upload.go": {
-  "character": "One-chunk upload helper for gateways that write data through a filer connection",
-  "what": "SaveGatewayDataAsChunk assigns a volume through the filer (collection, replication, TTL, disk type, data center and path from the request), uploads the reader with retries (optionally through the filer's HTTP proxy when volume servers are not directly reachable), and returns the FileChunk at the given offset and timestamp. The filename defaults to the path's last component.",
-  "why": "Design: one shared implementation of 'assign, upload, build the chunk' for gateways that save data as chunks themselves, with an injectable uploader for tests.",
-  "when": "The S3 gateway's chunk-manifest saving (s3api_chunk_manifest.go) and WebDAV writes.",
-  "ux": "None directly.",
-  "if_broken": "Manifest chunks or WebDAV writes fail, or land in the wrong collection.",
+  "character": "Helper upload một chunk cho các gateway ghi dữ liệu qua một kết nối filer",
+  "what": "SaveGatewayDataAsChunk gán một volume qua filer (collection, replication, TTL, disk type, data center và path từ request), upload reader có retry (tuỳ chọn qua HTTP proxy của filer khi volume server không liên lạc trực tiếp được), và trả FileChunk ở offset và timestamp đã cho. Tên file mặc định là thành phần cuối của path.",
+  "why": "Thiết kế: một hiện thực dùng chung cho 'gán, upload, dựng chunk' cho các gateway tự lưu dữ liệu thành chunk, với uploader tiêm được cho test.",
+  "when": "Việc lưu chunk-manifest của S3 gateway (s3api_chunk_manifest.go) và thao tác ghi của WebDAV.",
+  "ux": "Không có trực tiếp.",
+  "if_broken": "Manifest chunk hoặc thao tác ghi WebDAV thất bại, hoặc rơi vào sai collection.",
   "gotchas": []
  },
  "weed/filer/manifest_batch.go": {
-  "character": "The default manifest fold size",
-  "what": "ManifestBatch = 10000 data chunks per manifest chunk, for every build without the foundationdb tag.",
-  "why": "Design: stores reached by this build hold values far larger than a 10,000-chunk list encodes to.",
-  "when": "MaybeManifestize in every component that folds chunk lists (filer, S3 gateway, mount, WebDAV, shell, filer.copy).",
-  "ux": "None directly.",
-  "if_broken": "Entries too large for the store, or needless manifest reads.",
+  "character": "Kích thước gộp manifest mặc định",
+  "what": "ManifestBatch = 10000 data chunk cho mỗi manifest chunk, cho mọi bản build không có tag foundationdb.",
+  "why": "Thiết kế: các store mà bản build này dùng giữ được value lớn hơn nhiều so với kích thước encode của một danh sách 10,000 chunk.",
+  "when": "MaybeManifestize trong mọi thành phần gộp danh sách chunk (filer, S3 gateway, mount, WebDAV, shell, filer.copy).",
+  "ux": "Không có trực tiếp.",
+  "if_broken": "Entry quá lớn cho store, hoặc đọc manifest không cần thiết.",
   "gotchas": [
-   "The value is a property of the build, not of the configured store; every component folding for one filer must be built the same way."
+   "Giá trị là thuộc tính của bản build, không phải của store đã cấu hình; mọi thành phần gộp cho một filer phải được build theo cùng cách."
   ]
  },
  "weed/filer/manifest_batch_foundationdb.go": {
-  "character": "The manifest fold size for FoundationDB builds",
-  "what": "ManifestBatch = 500 under the foundationdb build tag, because a FoundationDB value stops at 100,000 bytes and a chunk record is about 100 bytes; 500 maximizes how many chunks one fold level can hold (about 250,000, roughly 1 TB at the default chunk size).",
-  "why": "Consequence: with the default 10,000 the entry was already too large to store before folding ever ran. Design: chosen so the unfolded remainder and the manifest pointers balance.",
-  "when": "Every binary built with -tags foundationdb.",
-  "ux": "Files up to about 1 TB on a FoundationDB-backed filer.",
-  "if_broken": "Large files cannot be saved on FoundationDB.",
+  "character": "Kích thước gộp manifest cho bản build FoundationDB",
+  "what": "ManifestBatch = 500 dưới build tag foundationdb, vì value của FoundationDB dừng ở 100,000 byte và một bản ghi chunk khoảng 100 byte; 500 tối đa hoá số chunk mà một cấp gộp chứa được (khoảng 250,000, cỡ 1 TB với kích thước chunk mặc định).",
+  "why": "Hệ quả: với mặc định 10,000, entry đã quá lớn để lưu trước khi việc gộp kịp chạy. Thiết kế: được chọn để phần chưa gộp còn lại và các con trỏ manifest cân bằng nhau.",
+  "when": "Mọi binary build với -tags foundationdb.",
+  "ux": "File tới khoảng 1 TB trên filer dùng FoundationDB.",
+  "if_broken": "File lớn không lưu được trên FoundationDB.",
   "gotchas": [
-   "Files beyond about 250,000 chunks would need nested manifests, which MaybeManifestize does not build (author comment)."
+   "File vượt khoảng 250,000 chunk sẽ cần manifest lồng nhau, thứ MaybeManifestize không dựng (comment của tác giả)."
   ]
  },
  "weed/filer/filer_notify.go": {
-  "character": "Emitting metadata events: commit stamps, the local metadata log buffer and its flush to log files",
-  "what": "NotifyUpdateEvent builds a SubscribeMetadataResponse for an old/new entry pair (skipping the system log directory and contexts marked WithSuppressedMetadataEvents), appends this filer's signature, stamps it with the commit timestamp the mutation reserved (or a fresh one), sends it to the external notification queue if one is configured, appends it to LocalMetaLogBuffer, records it in the request's event sink and runs onMetadataChangeEvent. metaLogInflight hands out strictly increasing stamps and tracks which are still in flight, so LocalDeliveredThroughTsNs / LocalFlushedThroughTsNs can claim a watermark no unannounced mutation lies below. logFlushFunc writes each minute's buffer to /topics/.system/log/<date>/<hh-mm>.<filerId>, in pieces of at most one log-buffer size (lowered when a volume reports a smaller file limit), retrying every 737 ms until it succeeds or shutdown cancels the flush context (then the rest is dropped and counted). ReadPersistedLogBuffer replays those files from a position through an ordered visitor with an 8192-entry readahead, at most 64 replays at once.",
-  "why": "Consequence: every subscriber (S3 gateways, mounts, filer.sync, peer filers) learns changes only through this log; an event stamped below a watermark already claimed would be skipped by readers that trust the watermark. Design: mutations reserve their stamp before the store write and release it if they abort, so the claimed watermark never passes a mutation that may still be announced.",
-  "when": "Every filer mutation; the log buffer flushes every minute.",
-  "ux": "Change propagation latency across gateways and mounts.",
-  "if_broken": "Subscribers miss or reorder events, caches go stale, peers diverge.",
+  "character": "Phát metadata event: commit stamp, local metadata log buffer và việc flush nó ra log file",
+  "what": "NotifyUpdateEvent dựng một SubscribeMetadataResponse cho một cặp entry cũ/mới (bỏ qua thư mục system log và các context được đánh dấu WithSuppressedMetadataEvents), nối chữ ký của filer này, đóng dấu nó bằng commit timestamp mà mutation đã giữ chỗ (hoặc một cái mới), gửi nó tới hàng đợi notification bên ngoài nếu có cấu hình, nối nó vào LocalMetaLogBuffer, ghi nó vào event sink của request và chạy onMetadataChangeEvent. metaLogInflight phát các stamp tăng nghiêm ngặt và theo dõi cái nào vẫn đang chạy, để LocalDeliveredThroughTsNs / LocalFlushedThroughTsNs có thể tuyên bố một watermark mà không mutation chưa thông báo nào nằm dưới. logFlushFunc ghi buffer của mỗi phút vào /topics/.system/log/<date>/<hh-mm>.<filerId>, thành các mảnh nhiều nhất bằng một log-buffer (hạ xuống khi một volume báo giới hạn file nhỏ hơn), retry mỗi 737 ms tới khi thành công hoặc shutdown huỷ flush context (khi đó phần còn lại bị bỏ và được đếm). ReadPersistedLogBuffer phát lại các file đó từ một vị trí qua một visitor có thứ tự với readahead 8192 entry, nhiều nhất 64 lần phát lại cùng lúc.",
+  "why": "Hệ quả: mọi subscriber (S3 gateway, mount, filer.sync, filer peer) chỉ biết thay đổi qua log này; một event được đóng dấu dưới một watermark đã tuyên bố sẽ bị reader tin watermark bỏ qua. Thiết kế: mutation giữ chỗ stamp của nó trước lần ghi store và nhả nó nếu huỷ bỏ, nên watermark đã tuyên bố không bao giờ vượt qua một mutation vẫn có thể được thông báo.",
+  "when": "Mọi mutation của filer; log buffer flush mỗi phút.",
+  "ux": "Độ trễ lan truyền thay đổi giữa các gateway và mount.",
+  "if_broken": "Subscriber bỏ lỡ hoặc sắp sai thứ tự event, cache bị cũ, peer phân kỳ.",
   "gotchas": [
-   "The external notification queue is called synchronously inside every mutation and its errors are only logged, so a slow queue slows writes and a failing one loses its events.",
-   "A metadata-log flush that keeps failing (for example no writable volume) retries forever until shutdown, while the buffer keeps holding the window."
+   "Hàng đợi notification bên ngoài được gọi đồng bộ bên trong mọi mutation và lỗi của nó chỉ được log, nên một hàng đợi chậm làm chậm thao tác ghi và một hàng đợi hỏng làm mất event của nó.",
+   "Một lần flush metadata-log liên tục thất bại (ví dụ không có volume ghi được) retry mãi tới khi shutdown, trong khi buffer vẫn giữ cửa sổ đó."
   ]
  },
  "weed/filer/filer_notify_append.go": {
-  "character": "Appending a metadata-log piece to its log file as a new chunk",
-  "what": "appendToFile gzips the piece when that saves more than 10%, assigns a volume in the metadata-log collection and replication (filer.options.metaLog.* overrides, then the filer default, then the path rule), uploads it, and commitAppendedChunk appends the chunk at the file's current end with CreateEntry, creating the file if needed. If CreateEntry reports failure but the chunk is in the stored entry, the append is counted as landed; otherwise the uploaded chunk is deleted.",
-  "why": "Design: log files are append-only lists of chunks, one per flush piece, so a reader can fetch just the new chunks (the client direct-read path ships chunk refs).",
-  "when": "logFlushFunc, once a minute per filer.",
-  "ux": "None directly.",
-  "if_broken": "Metadata history is lost (subscribers that fall behind cannot catch up) or orphaned log chunks accumulate.",
+  "character": "Nối một mảnh metadata-log vào log file của nó thành một chunk mới",
+  "what": "appendToFile gzip mảnh khi việc đó tiết kiệm hơn 10%, gán một volume trong collection và replication của metadata-log (các override filer.options.metaLog.*, rồi mặc định của filer, rồi path rule), upload nó, và commitAppendedChunk nối chunk vào cuối hiện tại của file bằng CreateEntry, tạo file nếu cần. Nếu CreateEntry báo thất bại nhưng chunk có trong entry đã lưu, lần nối được tính là đã tới nơi; ngược lại chunk đã upload bị xoá.",
+  "why": "Thiết kế: log file là danh sách chunk chỉ-nối-thêm, mỗi mảnh flush một chunk, nên reader có thể chỉ tải các chunk mới (đường client direct-read gửi chunk ref).",
+  "when": "logFlushFunc, mỗi phút một lần cho mỗi filer.",
+  "ux": "Không có trực tiếp.",
+  "if_broken": "Lịch sử metadata bị mất (subscriber bị tụt lại không bắt kịp được) hoặc chunk log mồ côi tích tụ.",
   "gotchas": [
-   "The append is a find-then-create without a path lock; it relies on each filer writing its own file name (the filer id suffix)."
+   "Lần nối là tìm-rồi-tạo không có path lock; nó dựa vào việc mỗi filer ghi tên file riêng của nó (hậu tố filer id)."
   ]
  },
  "weed/filer/filer_notify_read.go": {
-  "character": "Reading persisted metadata-log files: ordered replay across filers and chunk refs for client-side reading",
-  "what": "collectPersistedLogBuffer lists the day directories from one flush interval before the start, and OrderedLogVisitor merges every filer's minute files in timestamp order with a heap of per-filer iterators (LogFileQueueIterator over LogFileIterator, which reads [4-byte size | LogEntry] records, through the persisted-log cache when possible). CollectLogFileRefs lists the same files as LogFileChunkRefs (chunks, minute, filer id) for clients that read volume servers directly; LastShippedLogEntryTsNsForFiler finds the last timestamp a set of shipped refs covers and whether the last file was complete. HasPersistedLogFiles checks for any day directory at or after a position.",
-  "why": "Consequence: a subscriber resuming from a timestamp must see events from every filer that wrote to this store, in order. Design: one file per filer per minute, merged on read; shipping refs lets a client fetch log chunks itself instead of the filer streaming every event.",
-  "when": "SubscribeMetadata disk passes (filer_grpc_server_sub_meta.go).",
-  "ux": "Subscribers can resume after downtime.",
-  "if_broken": "Resumed subscribers miss or duplicate events.",
+  "character": "Đọc các metadata-log file đã lưu: phát lại có thứ tự qua các filer và chunk ref cho việc đọc phía client",
+  "what": "collectPersistedLogBuffer liệt kê các thư mục ngày từ một chu kỳ flush trước điểm bắt đầu, và OrderedLogVisitor trộn các file theo phút của mọi filer theo thứ tự timestamp bằng một heap các iterator theo filer (LogFileQueueIterator trên LogFileIterator, thứ đọc các bản ghi [4-byte size | LogEntry], qua persisted-log cache khi có thể). CollectLogFileRefs liệt kê cùng các file đó thành LogFileChunkRefs (chunk, phút, filer id) cho client đọc trực tiếp volume server; LastShippedLogEntryTsNsForFiler tìm timestamp cuối mà một tập ref đã gửi bao phủ và file cuối có đầy đủ không. HasPersistedLogFiles kiểm tra có thư mục ngày nào tại hoặc sau một vị trí không.",
+  "why": "Hệ quả: một subscriber tiếp tục từ một timestamp phải thấy event từ mọi filer đã ghi vào store này, theo thứ tự. Thiết kế: mỗi filer mỗi phút một file, trộn khi đọc; gửi ref cho client tự tải log chunk thay vì filer stream mọi event.",
+  "when": "Các lượt đọc đĩa của SubscribeMetadata (filer_grpc_server_sub_meta.go).",
+  "ux": "Subscriber có thể tiếp tục sau khi ngừng hoạt động.",
+  "if_broken": "Subscriber tiếp tục bỏ lỡ hoặc nhân đôi event.",
   "gotchas": [
-   "A log chunk that cannot be found (volume deleted or lost) makes the iterator skip the rest of that file with a warning, so its events are never replayed.",
-   "Day and minute directories are compared as strings; the layout must stay zero-padded."
+   "Một log chunk không tìm thấy (volume bị xoá hoặc mất) khiến iterator bỏ qua phần còn lại của file đó kèm cảnh báo, nên event của nó không bao giờ được phát lại.",
+   "Thư mục ngày và phút được so như chuỗi; bố cục phải giữ việc đệm số 0."
   ]
  },
  "weed/filer/filer_on_meta_event.go": {
-  "character": "The filer's own reactions to metadata events: config reloads, bucket hooks, empty-folder tracking and remote tombstones",
-  "what": "onMetadataChangeEvent runs for every local event and every event applied from a peer: reloads filer.conf when /etc/seaweedfs/filer.conf changes, reloads remote storage configuration and mappings on /etc/remote changes, calls the store's OnBucketCreation / OnBucketDeletion for directories created, deleted or renamed directly under the buckets path, feeds creates, deletes and renames to the empty-folder cleaner (and invalidates its cached bucket policy), and records remote deletions. LoadFilerConf and LoadRemoteStorageConfAndMapping load them at startup.",
-  "why": "Design: configuration lives in the filer namespace, so watching the event stream makes a change made on any filer take effect on all of them without a restart.",
-  "when": "Inline in NotifyUpdateEvent and in the meta aggregator's peer event processing.",
-  "ux": "fs.configure and remote.mount take effect immediately cluster-wide.",
-  "if_broken": "Storage rules or remote mounts go stale on some filers; per-bucket SQL tables are not created or dropped.",
+  "character": "Các phản ứng riêng của filer với metadata event: nạp lại config, hook bucket, theo dõi thư mục rỗng và remote tombstone",
+  "what": "onMetadataChangeEvent chạy cho mọi event cục bộ và mọi event áp từ một peer: nạp lại filer.conf khi /etc/seaweedfs/filer.conf thay đổi, nạp lại cấu hình và mapping của remote storage khi /etc/remote thay đổi, gọi OnBucketCreation / OnBucketDeletion của store cho các thư mục được tạo, xoá hoặc đổi tên ngay dưới buckets path, đưa create, delete và rename cho empty-folder cleaner (và vô hiệu bucket policy được cache của nó), và ghi nhận các lần xoá remote. LoadFilerConf và LoadRemoteStorageConfAndMapping nạp chúng lúc khởi động.",
+  "why": "Thiết kế: cấu hình nằm trong namespace của filer, nên theo dõi event stream làm một thay đổi thực hiện trên bất kỳ filer nào có hiệu lực trên tất cả mà không cần restart.",
+  "when": "Inline trong NotifyUpdateEvent và trong bước xử lý event từ peer của meta aggregator.",
+  "ux": "fs.configure và remote.mount có hiệu lực ngay trên toàn cluster.",
+  "if_broken": "Storage rule hoặc remote mount bị cũ trên một số filer; các bảng SQL theo bucket không được tạo hoặc drop.",
   "gotchas": [
-   "It runs synchronously in the mutation path; a filer.conf stored as chunks is fetched from volume servers inside the write that changed it.",
-   "Deleting filer.conf does not reset the rules: only events with a new entry trigger a reload, so the old rules stay until restart.",
-   "f.FilerConf is replaced without synchronization while writes read it."
+   "Nó chạy đồng bộ trong đường mutation; một filer.conf lưu thành chunk được tải từ volume server ngay trong lần ghi đã thay đổi nó.",
+   "Xoá filer.conf không reset các rule: chỉ event có entry mới mới kích hoạt nạp lại, nên rule cũ ở lại tới khi restart.",
+   "f.FilerConf bị thay mà không có đồng bộ hoá trong khi các thao tác ghi đọc nó."
   ]
  },
  "weed/filer/meta_aggregator.go": {
-  "character": "MetaAggregator: following every peer filer's metadata log, merging it into one aggregated buffer and replicating peers' changes into this filer's store",
-  "what": "OnPeerUpdate starts or stops a subscription loop per filer (itself included), reconnecting every 1.7 s after an error. doSubscribeToOneFiler reads the peer's store signature; a peer on a different store is replicated: its offset is read from KV (filer.meta.offset by signature) or, on first contact, the peer's whole tree is copied (traversePeerMetadata, excluding the system log) and the offset saved one minute before the copy began. It then calls SubscribeLocalMetadata (batching, idle heartbeats, log chunk refs read client-side), appends each event to MetaLogBuffer, replays it into the local store when the peer has a different store (replicateMetadataChange retries transient errors), runs onMetadataChangeEvent, and advances the peer's delivery and flush watermarks; the offset is persisted at most once a minute and on exit, clamped below the first event that failed to replay. Low watermarks across peers, change channels and RemotePeerArrivedChan let aggregated subscribers hold back until every peer has delivered or flushed a range.",
-  "why": "Consequence: with several filers, each sees only its own mutations; subscribers and (for separate stores) the stores themselves need everyone's. Design: peers sharing one store only aggregate events, peers with their own stores also replay them; watermarks make the merged stream safe to resume.",
-  "when": "Filers in a cluster with more than one filer (AggregateFromPeers at startup).",
-  "ux": "A write through one filer is visible through all of them.",
-  "if_broken": "Filers with separate stores diverge, or aggregated subscribers miss peer events.",
+  "character": "MetaAggregator: theo dõi metadata log của mọi filer peer, trộn nó vào một buffer gộp và replicate thay đổi của peer vào store của filer này",
+  "what": "OnPeerUpdate bắt đầu hoặc dừng một vòng subscription cho mỗi filer (kể cả chính nó), kết nối lại mỗi 1.7 s sau một lỗi. doSubscribeToOneFiler đọc store signature của peer; một peer trên store khác được replicate: offset của nó được đọc từ KV (filer.meta.offset theo signature) hoặc, ở lần tiếp xúc đầu, cả cây của peer được copy (traversePeerMetadata, loại trừ system log) và offset được lưu ở một phút trước khi bắt đầu copy. Rồi nó gọi SubscribeLocalMetadata (batching, heartbeat lúc rảnh, log chunk ref đọc phía client), nối từng event vào MetaLogBuffer, phát lại nó vào store cục bộ khi peer có store khác (replicateMetadataChange retry lỗi tạm thời), chạy onMetadataChangeEvent, và tiến watermark delivery và flush của peer; offset được lưu nhiều nhất mỗi phút một lần và khi thoát, chặn dưới event đầu tiên phát lại thất bại. Watermark thấp giữa các peer, các change channel và RemotePeerArrivedChan cho subscriber gộp đứng chờ tới khi mọi peer đã giao hoặc flush một khoảng.",
+  "why": "Hệ quả: với nhiều filer, mỗi filer chỉ thấy mutation của chính nó; subscriber và (với store riêng) chính các store cần của tất cả. Thiết kế: peer dùng chung một store chỉ gộp event, peer có store riêng còn phát lại chúng; watermark làm stream đã trộn an toàn để tiếp tục.",
+  "when": "Filer trong cluster có nhiều hơn một filer (AggregateFromPeers lúc khởi động).",
+  "ux": "Một thao tác ghi qua một filer hiện ra qua tất cả.",
+  "if_broken": "Filer có store riêng phân kỳ, hoặc subscriber gộp bỏ lỡ event của peer.",
   "gotchas": [
-   "A replay that fails with a non-transient error is skipped for the rest of the session: only the persisted offset is held below it, so it is retried after a restart, not before.",
-   "Last-writer-wins between filers compares commit timestamps from different hosts' clocks, so clock skew decides conflicting writes.",
-   "Shutdown waits for every peer loop without a deadline, logging every 5 s."
+   "Một lần phát lại thất bại với lỗi không tạm thời bị bỏ qua cho phần còn lại của phiên: chỉ offset đã lưu được giữ dưới nó, nên nó được retry sau khi restart, không phải trước.",
+   "Last-writer-wins giữa các filer so commit timestamp từ đồng hồ của các host khác nhau, nên lệch đồng hồ quyết định các thao tác ghi xung đột.",
+   "Shutdown đợi mọi vòng peer không có deadline, log mỗi 5 s."
   ]
  },
  "weed/filer/meta_replay.go": {
-  "character": "Applying a peer filer's metadata event to the local store, newest commit wins",
-  "what": "Replay locks the event's old and new paths exclusively and their ancestors shared, then: for an in-place update, skips it if the local commit is newer, else updates directories in place and replaces files; for a delete or rename source, skips if newer locally, else deletes (a directory's children are swept recursively, keeping any child committed locally after the event and any remote-only entry that took a path since the listing, deleting children's remote objects unless the delete was metadata-only or from another cluster, and their chunks in batches when the event deletes chunks); for a create or rename target, inserts unless the local commit is newer. Writes go straight to the store with the event's mutation timestamp as the commit stamp.",
-  "why": "Consequence: two filers with separate stores receive each other's writes in an order that can differ from their own; applying blindly would let an older event overwrite a newer local write. Design: per-path commit timestamps decide, and a directory delete keeps the children that changed after it.",
-  "when": "meta_aggregator.go for every event from a peer with a different store.",
-  "ux": "None directly.",
-  "if_broken": "Deleted files reappear on some filers, or newer writes are lost to older replicated ones.",
+  "character": "Áp metadata event của một filer peer vào store cục bộ, commit mới nhất thắng",
+  "what": "Replay lock độc quyền path cũ và mới của event và lock dùng chung các tổ tiên của chúng, rồi: với cập nhật tại chỗ, bỏ qua nếu commit cục bộ mới hơn, ngược lại cập nhật thư mục tại chỗ và thay file; với delete hoặc nguồn của rename, bỏ qua nếu cục bộ mới hơn, ngược lại xoá (con của một thư mục được quét đệ quy, giữ mọi con được commit cục bộ sau event và mọi entry chỉ-ở-remote đã chiếm một path kể từ listing, xoá remote object của các con trừ khi thao tác xoá chỉ là metadata hoặc đến từ cluster khác, và chunk của chúng theo lô khi event xoá chunk); với create hoặc đích của rename, chèn trừ khi commit cục bộ mới hơn. Thao tác ghi đi thẳng vào store với mutation timestamp của event làm commit stamp.",
+  "why": "Hệ quả: hai filer có store riêng nhận thao tác ghi của nhau theo thứ tự có thể khác với của chính chúng; áp mù quáng sẽ để một event cũ hơn ghi đè một lần ghi cục bộ mới hơn. Thiết kế: commit timestamp theo path quyết định, và một lần xoá thư mục giữ lại các con đã thay đổi sau nó.",
+  "when": "meta_aggregator.go cho mọi event từ một peer có store khác.",
+  "ux": "Không có trực tiếp.",
+  "if_broken": "File đã xoá xuất hiện lại trên một số filer, hoặc thao tác ghi mới hơn bị mất vào tay các thao tác được replicate cũ hơn.",
   "gotchas": [
-   "Replayed writes go to the store directly and publish no local event of their own; subscribers of the aggregated stream see the peer's event instead.",
-   "A child path held by a local mutation makes the sweep fail with ErrLockContended rather than wait."
+   "Thao tác ghi được phát lại đi thẳng vào store và không phát event cục bộ riêng; subscriber của stream gộp thấy event của peer thay vào đó.",
+   "Một path con đang bị một mutation cục bộ giữ khiến lần quét thất bại với ErrLockContended thay vì chờ."
   ]
  },
  "weed/filer/meta_path_ts.go": {
-  "character": "Per-path commit timestamps for ordering replicated changes",
-  "what": "CommitTsNs and EntryCommitTsNs return the entry's stored commit timestamp, or a fallback (the event time) for entries written before the field existed; localCommitTsNs uses the entry's mtime as that fallback and 0 for a missing entry.",
-  "why": "Design: the commit timestamp is the version of a path; replay, bootstrap and the BFS traversal compare it to decide which side is newer.",
+  "character": "Commit timestamp theo path để sắp thứ tự các thay đổi được replicate",
+  "what": "CommitTsNs và EntryCommitTsNs trả commit timestamp đã lưu của entry, hoặc một giá trị dự phòng (thời điểm event) cho entry ghi trước khi trường này tồn tại; localCommitTsNs dùng mtime của entry làm dự phòng đó và 0 cho entry không tồn tại.",
+  "why": "Thiết kế: commit timestamp là version của một path; replay, bootstrap và lượt duyệt BFS so nó để quyết định bên nào mới hơn.",
   "when": "meta_replay.go, applyTraversedEntry, TraverseBfsMetadata.",
-  "ux": "None directly.",
-  "if_broken": "Replicated writes are applied out of order.",
+  "ux": "Không có trực tiếp.",
+  "if_broken": "Thao tác ghi được replicate bị áp sai thứ tự.",
   "gotchas": [
-   "For entries without a stored commit timestamp the comparison falls back to mtime in whole-second precision from the store."
+   "Với entry không có commit timestamp đã lưu, phép so rơi về mtime với độ chính xác giây tròn từ store."
   ]
  },
  "weed/filer/metadata_event_context.go": {
-  "character": "Context flag that suppresses automatic metadata events",
-  "what": "WithSuppressedMetadataEvents marks a context so NotifyUpdateEvent emits nothing for operations under it.",
-  "why": "Design: a rename is implemented as creates and deletes; their individual events would look like a copy plus a delete to subscribers, so the rename publishes its own rename events after commit instead.",
-  "when": "Rename's internal creates and deletes, rename target replacement.",
-  "ux": "Mounts and replicas see a rename as a rename.",
-  "if_broken": "Renames replicate as delete+create (losing hard-link and inode continuity), or produce duplicate events.",
+  "character": "Context flag chặn các metadata event tự động",
+  "what": "WithSuppressedMetadataEvents đánh dấu một context để NotifyUpdateEvent không phát gì cho các thao tác dưới nó.",
+  "why": "Thiết kế: rename được hiện thực bằng create và delete; event riêng của chúng sẽ trông như một lần copy cộng một lần xoá với subscriber, nên rename phát rename event riêng của nó sau commit thay vào đó.",
+  "when": "Các create và delete nội bộ của rename, thay đích của rename.",
+  "ux": "Mount và replica thấy rename là rename.",
+  "if_broken": "Rename được replicate thành delete+create (mất tính liên tục của hard-link và inode), hoặc tạo event trùng lặp.",
   "gotchas": []
  },
  "weed/filer/metadata_event_sink.go": {
-  "character": "Request-scoped capture of the metadata event a mutation produced",
-  "what": "WithMetadataEventSink attaches a sink to a context; NotifyUpdateEvent records each event into it, keeping the last; the RPC returns it in metadata_event.",
-  "why": "Consequence: a client that wrote an entry wants to update its own cache with the exact event (timestamp included) without waiting for the subscription to deliver it.",
-  "when": "CreateEntry, UpdateEntry, DeleteEntry and remote-cache RPCs.",
-  "ux": "Mounts see their own writes immediately.",
-  "if_broken": "Clients apply their own writes late or twice.",
+  "character": "Thu giữ trong phạm vi request metadata event mà một mutation tạo ra",
+  "what": "WithMetadataEventSink gắn một sink vào context; NotifyUpdateEvent ghi từng event vào đó, giữ cái cuối cùng; RPC trả nó trong metadata_event.",
+  "why": "Hệ quả: client đã ghi một entry muốn cập nhật cache của chính nó bằng đúng event (kể cả timestamp) mà không phải chờ subscription giao tới.",
+  "when": "Các RPC CreateEntry, UpdateEntry, DeleteEntry và remote-cache.",
+  "ux": "Mount thấy thao tác ghi của chính nó ngay lập tức.",
+  "if_broken": "Client áp thao tác ghi của chính nó muộn hoặc hai lần.",
   "gotchas": [
-   "Only the last event is kept; a recursive delete returns the directory's event, not its children's."
+   "Chỉ event cuối cùng được giữ; một lần xoá đệ quy trả event của thư mục, không phải của các con."
   ]
  },
  "weed/filer/mount_peer_registry.go": {
-  "character": "In-memory registry of live weed mount peers for peer chunk sharing",
-  "what": "MountPeerRegistry maps a peer address to its data center, rack, last-seen and expiry. Register refreshes an entry (TTL defaults to 60 s, capped at one hour; new entries are refused beyond 10,000). List returns unexpired entries; Sweep deletes expired ones.",
-  "why": "Design: soft state rebuilt by heartbeats, bounded so a misbehaving client cannot grow it without limit.",
-  "when": "MountRegister / MountList RPCs and the filer's sweeper.",
-  "ux": "None directly.",
-  "if_broken": "Mounts route chunk requests to dead peers or never find live ones.",
+  "character": "Registry trong bộ nhớ các peer weed mount còn sống cho việc chia sẻ chunk giữa peer",
+  "what": "MountPeerRegistry ánh xạ một địa chỉ peer tới data center, rack, lần thấy cuối và thời điểm hết hạn của nó. Register làm mới một entry (TTL mặc định 60 s, chặn ở một giờ; entry mới bị từ chối khi vượt 10,000). List trả các entry chưa hết hạn; Sweep xoá các entry đã hết hạn.",
+  "why": "Thiết kế: soft state dựng lại bằng heartbeat, có giới hạn để một client cư xử sai không làm nó phình vô hạn.",
+  "when": "Các RPC MountRegister / MountList và sweeper của filer.",
+  "ux": "Không có trực tiếp.",
+  "if_broken": "Mount route request chunk tới peer đã chết hoặc không bao giờ tìm được peer còn sống.",
   "gotchas": [
-   "The registry is per filer and not replicated; mounts connected to different filers see different peer sets."
+   "Registry theo từng filer và không được replicate; mount kết nối tới các filer khác nhau thấy các tập peer khác nhau."
   ]
  },
  "weed/filer/persisted_log_cache.go": {
-  "character": "LRU cache of decoded metadata-log chunks shared by all subscribers",
-  "what": "persistedLogCache keeps decoded LogEntry lists by chunk file id (256 MiB total, idle entries evicted after 5 minutes), loads each chunk once through singleflight under a 128 MiB load budget, and caches only chunks that decode completely (whole records, increasing timestamps); a partial chunk returns errLogChunkIncomplete so callers fall back to streaming.",
-  "why": "Consequence: many subscribers catching up over the same minutes refetched and re-decoded the same log chunks. Design: decode once, share; never cache a chunk that is still being appended to.",
-  "when": "LogFileIterator and LastShippedLogEntryTsNs during subscription catch-up.",
-  "ux": "Faster catch-up for many lagging subscribers.",
-  "if_broken": "Memory spikes during catch-up, or subscribers served a truncated chunk.",
+  "character": "LRU cache các metadata-log chunk đã decode, dùng chung bởi mọi subscriber",
+  "what": "persistedLogCache giữ danh sách LogEntry đã decode theo chunk file id (tổng 256 MiB, entry rảnh bị loại sau 5 phút), nạp mỗi chunk một lần qua singleflight dưới ngân sách nạp 128 MiB, và chỉ cache các chunk decode trọn vẹn (bản ghi đầy đủ, timestamp tăng dần); một chunk dở dang trả errLogChunkIncomplete để caller rơi về streaming.",
+  "why": "Hệ quả: nhiều subscriber bắt kịp qua cùng các phút từng tải lại và decode lại cùng các log chunk. Thiết kế: decode một lần, dùng chung; không bao giờ cache một chunk vẫn đang được nối thêm.",
+  "when": "LogFileIterator và LastShippedLogEntryTsNs trong lúc subscription bắt kịp.",
+  "ux": "Bắt kịp nhanh hơn cho nhiều subscriber bị tụt lại.",
+  "if_broken": "Bộ nhớ vọt lên trong lúc bắt kịp, hoặc subscriber được phục vụ một chunk bị cắt cụt.",
   "gotchas": [
-   "Cached entry slices are shared between subscribers and must not be mutated."
+   "Các slice entry được cache dùng chung giữa các subscriber và không được sửa đổi."
   ]
  },
  "weed/filer/topics.go": {
-  "character": "Paths of the topics tree and the system metadata log",
-  "what": "TopicsDir is /topics, SystemLogDir is /topics/.system/log (where every filer writes its per-minute metadata log), TopicConfFile is topic.conf.",
-  "why": "Design: the metadata log lives in the namespace itself, so it is stored and replicated like any file.",
-  "when": "Log flush and replay, event filtering (events under SystemLogDir are never published), traversals that exclude it.",
-  "ux": "None directly.",
-  "if_broken": "Log files publish events about themselves (feedback loop) or are copied into backups.",
+  "character": "Path của cây topics và system metadata log",
+  "what": "TopicsDir là /topics, SystemLogDir là /topics/.system/log (nơi mọi filer ghi metadata log theo phút của nó), TopicConfFile là topic.conf.",
+  "why": "Thiết kế: metadata log nằm ngay trong namespace, nên nó được lưu và replicate như mọi file.",
+  "when": "Flush và phát lại log, lọc event (event dưới SystemLogDir không bao giờ được phát), các lượt duyệt loại trừ nó.",
+  "ux": "Không có trực tiếp.",
+  "if_broken": "Log file phát event về chính nó (vòng phản hồi) hoặc bị copy vào backup.",
   "gotchas": []
  },
  "weed/filer/remote_storage.go": {
-  "character": "Remote storage configuration and mount rules held by the filer",
-  "what": "FilerRemoteStorage loads /etc/remote: each <name>.conf (a RemoteConf, optionally checked by a validator that rejects unsafe endpoints) and mount.mapping (local directory -> remote name, bucket, path), into a ptrie of mount directories; reloads are serialized and swapped in under a lock, and remote storage clients for removed confs are released. FindMountDirectory returns the deepest mount containing a path; FindRemoteStorageConf / GetRemoteStorageConf return its conf. ReadRemoteStorageConf, DetectMountInfo and UnmarshalRemoteStorageMappings serve shell commands.",
-  "why": "Design: a remote mount makes a local directory a cache of a cloud bucket path; mounts and credentials are stored in the filer so every filer and tool sees the same set.",
-  "when": "Startup and every /etc/remote change (filer_on_meta_event.go); every lookup under a mounted path.",
+  "character": "Cấu hình remote storage và các quy tắc mount mà filer giữ",
+  "what": "FilerRemoteStorage nạp /etc/remote: từng <name>.conf (một RemoteConf, tuỳ chọn được một validator kiểm tra để từ chối endpoint không an toàn) và mount.mapping (thư mục cục bộ -> tên remote, bucket, path), vào một ptrie các thư mục mount; việc nạp lại được tuần tự hoá và hoán đổi dưới một lock, và remote storage client của các conf bị gỡ được giải phóng. FindMountDirectory trả mount sâu nhất chứa một path; FindRemoteStorageConf / GetRemoteStorageConf trả conf của nó. ReadRemoteStorageConf, DetectMountInfo và UnmarshalRemoteStorageMappings phục vụ các lệnh shell.",
+  "why": "Thiết kế: một remote mount biến một thư mục cục bộ thành cache của một path trong cloud bucket; mount và credential được lưu trong filer để mọi filer và công cụ thấy cùng một tập.",
+  "when": "Lúc khởi động và mọi thay đổi /etc/remote (filer_on_meta_event.go); mọi lần lookup dưới một path được mount.",
   "ux": "weed shell remote.configure / remote.mount.",
-  "if_broken": "Mounted paths stop resolving to their remote, or a removed mount keeps being used.",
+  "if_broken": "Path được mount ngừng resolve tới remote của nó, hoặc một mount đã gỡ vẫn tiếp tục được dùng.",
   "gotchas": [
-   "GetRemoteStorageClient / FindRemoteStorageClient build clients with remote_storage.GetRemoteStorage directly, bypassing the filer's guarded builder (BuildGuardedRemoteClient); nothing in this repository calls them, the filer paths use buildRemoteStorageClient."
+   "GetRemoteStorageClient / FindRemoteStorageClient dựng client bằng remote_storage.GetRemoteStorage trực tiếp, bỏ qua builder có bảo vệ của filer (BuildGuardedRemoteClient); không gì trong repository này gọi chúng, các đường của filer dùng buildRemoteStorageClient."
   ]
  },
  "weed/filer/remote_mapping.go": {
-  "character": "Read and edit the mount.mapping file",
-  "what": "FindMountedRemoteMapping picks the longest mapping containing a directory; ReadMountMappings reads the file; InsertMountMapping and DeleteMountMapping read it, add or remove one directory, and save it back.",
-  "why": "Design: one small protobuf file lists every remote mount.",
-  "when": "weed shell remote.mount / remote.unmount and related tools; the filer's remote-cache RPC.",
-  "ux": "Mounting and unmounting remote storage.",
-  "if_broken": "Mounts lost or not applied.",
+  "character": "Đọc và sửa file mount.mapping",
+  "what": "FindMountedRemoteMapping chọn mapping dài nhất chứa một thư mục; ReadMountMappings đọc file; InsertMountMapping và DeleteMountMapping đọc nó, thêm hoặc bớt một thư mục, và lưu lại.",
+  "why": "Thiết kế: một file protobuf nhỏ liệt kê mọi remote mount.",
+  "when": "weed shell remote.mount / remote.unmount và các công cụ liên quan; RPC remote-cache của filer.",
+  "ux": "Mount và unmount remote storage.",
+  "if_broken": "Mount bị mất hoặc không được áp.",
   "gotchas": [
-   "Insert and Delete are read-modify-write with the unconditional SaveInsideFiler; two concurrent mount edits can lose one.",
-   "addRemoteStorageMapping ignores an unmarshal error, so a corrupt mapping file is replaced by one holding only the new mapping."
+   "Insert và Delete là đọc-sửa-ghi với SaveInsideFiler không điều kiện; hai lần sửa mount đồng thời có thể mất một.",
+   "addRemoteStorageMapping bỏ qua lỗi unmarshal, nên một mapping file hỏng bị thay bằng một file chỉ chứa mapping mới."
   ]
  },
  "weed/filer/read_remote.go": {
-  "character": "Remote-entry helpers: remote-only test, path mapping and the cache request",
-  "what": "IsInRemoteOnly is true for an entry with no chunks and a positive remote size. MergeRemoteContentEncoding copies the remote object's content encoding into the extended map (deleting it when the remote says none). MapFullPathToRemoteStorageLocation and MapRemoteStorageLocationPathToFullPath convert between a local path under a mount and the remote location. CacheRemoteObjectToLocalCluster asks a filer to cache an entry's bytes locally.",
-  "why": "Design: remote-only entries are metadata stubs whose bytes stay on the remote until cached.",
-  "when": "Lazy fetch and listing, deletes, renames, the S3 gateway and filer read paths deciding whether to cache first.",
-  "ux": "Reads of remote-mounted objects.",
-  "if_broken": "Remote objects resolve to the wrong remote key.",
+  "character": "Các helper remote-entry: kiểm tra chỉ-ở-remote, ánh xạ path và request cache",
+  "what": "IsInRemoteOnly đúng với entry không có chunk và remote size dương. MergeRemoteContentEncoding copy content encoding của remote object vào extended map (xoá nó khi remote nói không có). MapFullPathToRemoteStorageLocation và MapRemoteStorageLocationPathToFullPath chuyển đổi giữa một path cục bộ dưới mount và remote location. CacheRemoteObjectToLocalCluster nhờ một filer cache byte của một entry về cục bộ.",
+  "why": "Thiết kế: entry chỉ-ở-remote là các stub metadata có byte ở lại remote cho tới khi được cache.",
+  "when": "Lazy fetch và listing, thao tác xoá, rename, S3 gateway và các đường đọc của filer quyết định có cache trước không.",
+  "ux": "Đọc các object remote-mount.",
+  "if_broken": "Remote object resolve tới sai remote key.",
   "gotchas": [
-   "MapFullPathToRemoteStorageLocation slices the path by the mount directory's length without checking it is under the mount."
+   "MapFullPathToRemoteStorageLocation cắt path theo độ dài của thư mục mount mà không kiểm tra nó có nằm dưới mount không."
   ]
  },
  "weed/filer/filer_remote_evict.go": {
-  "character": "Finding locally cached remote objects that can be evicted",
-  "what": "IsEvictableRemoteEntry is true for a file with a remote copy, local chunks and a sync stamp no older than its mtime (no local change since it was synced). ListEvictableRemoteEntries walks every mount directory recursively through the store and returns such entries synced before a cutoff, oldest sync first. chunksEqual compares chunk lists by fid, size, offset and timestamp.",
-  "why": "Consequence: cached remote objects fill local volumes; only copies identical to the remote can be dropped safely. Design: the sync stamp proves the local chunks equal the remote object.",
-  "when": "The filer's remote-cache eviction when a cache write hits a capacity error (filer_grpc_server_remote.go reclaimRemoteCacheSpace).",
-  "ux": "Remote-mount caches shrink when volumes fill.",
-  "if_broken": "Local-only changes are evicted (data loss) or the cache never shrinks.",
+  "character": "Tìm các remote object được cache cục bộ có thể loại bỏ",
+  "what": "IsEvictableRemoteEntry đúng với một file có bản sao remote, chunk cục bộ và sync stamp không cũ hơn mtime của nó (không có thay đổi cục bộ nào kể từ lúc sync). ListEvictableRemoteEntries duyệt đệ quy mọi thư mục mount qua store và trả các entry như vậy được sync trước một mốc, sync cũ nhất trước. chunksEqual so danh sách chunk theo fid, size, offset và timestamp.",
+  "why": "Hệ quả: remote object được cache lấp đầy volume cục bộ; chỉ những bản sao giống hệt remote mới bỏ được an toàn. Thiết kế: sync stamp chứng minh chunk cục bộ bằng remote object.",
+  "when": "Việc loại remote-cache của filer khi một lần ghi cache gặp lỗi dung lượng (reclaimRemoteCacheSpace trong filer_grpc_server_remote.go).",
+  "ux": "Cache của remote mount co lại khi volume đầy.",
+  "if_broken": "Thay đổi chỉ có cục bộ bị loại (mất dữ liệu) hoặc cache không bao giờ co lại.",
   "gotchas": [
-   "The walk collects every candidate under every mount in memory before sorting."
+   "Lượt duyệt gom mọi ứng viên dưới mọi mount vào bộ nhớ trước khi sắp xếp."
   ]
  },
  "weed/filer/filer_lazy_remote.go": {
-  "character": "On-demand materialization of remote-mount entries and remote deletes",
-  "what": "maybeLazyFetchFromRemote runs on a FindEntry miss under a remote mount: after the tombstone rebuild finishes and unless a delete is pending for the path, it stats the remote object (singleflight per path), creates any missing parent directories the same way, and persists a remote-only entry (mtime and size from the remote, content encoding merged), retracting it if a delete landed meanwhile. maybeDeleteFromRemote deletes a file's remote object or a directory's remote prefix; deleteSweptEntryRemote deletes only if the remote object is unchanged (conditional delete where supported, else stat-and-compare), releasing a pending rename source. RemoteSourcePath / RemoteReadPath follow ExtRemoteRenameSourceKey to where a renamed, not-yet-copied entry's bytes still live; CopyRemoteOnlyEntry and RemoteCopyLocations copy a remote-only object to a new key on the remote (refused out of the mount or for storage types without copy).",
-  "why": "Consequence: a remote mount can hold millions of objects; listing them all at mount time would be slow and stale. Design: entries appear when first looked up or listed, and a delete pending on the remote must not be resurrected by the next lookup.",
-  "when": "FindEntry misses and deletes under remote mounts; renames of remote-only entries.",
-  "ux": "S3 GET or mount access of an object that exists only in the mounted bucket works without a prior sync.",
-  "if_broken": "Remote objects invisible, deleted objects reappearing, or remote objects deleted while still referenced.",
+  "character": "Hiện thực hoá theo yêu cầu các entry remote-mount và thao tác xoá remote",
+  "what": "maybeLazyFetchFromRemote chạy khi FindEntry miss dưới một remote mount: sau khi việc dựng lại tombstone xong và trừ khi path có một lần xoá đang chờ, nó stat remote object (singleflight theo path), tạo các thư mục cha còn thiếu theo cùng cách, và lưu một entry chỉ-ở-remote (mtime và size từ remote, content encoding được gộp), rút nó lại nếu một lần xoá đã tới trong lúc đó. maybeDeleteFromRemote xoá remote object của một file hoặc remote prefix của một thư mục; deleteSweptEntryRemote chỉ xoá nếu remote object chưa đổi (xoá có điều kiện khi được hỗ trợ, nếu không thì stat-và-so), nhả một rename source đang chờ. RemoteSourcePath / RemoteReadPath theo ExtRemoteRenameSourceKey tới nơi byte của một entry đã đổi tên chưa copy vẫn nằm; CopyRemoteOnlyEntry và RemoteCopyLocations copy một object chỉ-ở-remote sang key mới trên remote (bị từ chối khi ra ngoài mount hoặc với loại storage không có copy).",
+  "why": "Hệ quả: một remote mount có thể chứa hàng triệu object; list hết chúng lúc mount sẽ chậm và cũ. Thiết kế: entry xuất hiện khi được lookup hoặc list lần đầu, và một lần xoá đang chờ trên remote không được bị lần lookup kế tiếp làm sống lại.",
+  "when": "FindEntry miss và thao tác xoá dưới remote mount; rename các entry chỉ-ở-remote.",
+  "ux": "S3 GET hoặc truy cập qua mount một object chỉ tồn tại trong bucket được mount hoạt động mà không cần sync trước.",
+  "if_broken": "Remote object không thấy được, object đã xoá xuất hiện lại, hoặc remote object bị xoá khi vẫn còn được tham chiếu.",
   "gotchas": [
-   "A remote stat that fails for any reason is treated as 'not found', so a transient remote error makes the object look absent (404).",
-   "Misses are not cached: every lookup of a key absent locally under a mount calls the remote."
+   "Một lần stat remote thất bại vì bất kỳ lý do gì đều bị coi là 'không tìm thấy', nên một lỗi remote tạm thời khiến object trông như vắng mặt (404).",
+   "Miss không được cache: mọi lần lookup một key vắng mặt cục bộ dưới mount đều gọi remote."
   ]
  },
  "weed/filer/filer_lazy_remote_listing.go": {
-  "character": "Refreshing a remote-mount directory listing into the filer, with a per-directory TTL",
-  "what": "maybeLazyListFromRemote, when the mount has a listing cache TTL and the directory's remote.listing.synced_at is older than it, lists the remote directory (singleflight per directory) and for each child creates a remote-only entry or directory, or refreshes an existing remote-backed entry's remote stamp, size, mtime and content encoding; entries without a remote stamp and paths with a pending delete are left alone. It then records the sync time on the directory.",
-  "why": "Design: listing the remote on every directory read would be slow and costly; a TTL bounds staleness.",
-  "when": "doListDirectoryEntries under remote mounts with ListingCacheTtlSeconds > 0.",
-  "ux": "ls / S3 ListObjects on a remote mount shows remote objects added outside SeaweedFS within the TTL.",
-  "if_broken": "Remote additions never appear, or listings hammer the remote.",
+  "character": "Làm mới directory listing của remote mount vào filer, với TTL theo thư mục",
+  "what": "maybeLazyListFromRemote, khi mount có listing cache TTL và remote.listing.synced_at của thư mục cũ hơn nó, list thư mục remote (singleflight theo thư mục) và với mỗi con thì tạo một entry hoặc thư mục chỉ-ở-remote, hoặc làm mới remote stamp, size, mtime và content encoding của một entry có remote làm nền đã tồn tại; entry không có remote stamp và path có lần xoá đang chờ được để yên. Rồi nó ghi thời điểm sync lên thư mục.",
+  "why": "Thiết kế: list remote ở mỗi lần đọc thư mục sẽ chậm và tốn kém; TTL giới hạn độ cũ.",
+  "when": "doListDirectoryEntries dưới remote mount có ListingCacheTtlSeconds > 0.",
+  "ux": "ls / S3 ListObjects trên remote mount hiện các remote object được thêm bên ngoài SeaweedFS trong phạm vi TTL.",
+  "if_broken": "Các thứ được thêm ở remote không bao giờ hiện ra, hoặc listing dội liên tục vào remote.",
   "gotchas": [
-   "Refreshed entries are written straight to the store with no metadata event, so subscribers (mount caches, peers) do not see listing-driven updates.",
-   "Store and remote errors are logged and swallowed; a failed listing looks like an unchanged directory."
+   "Entry được làm mới được ghi thẳng vào store không có metadata event, nên subscriber (cache của mount, peer) không thấy các cập nhật do listing gây ra.",
+   "Lỗi store và remote được log và nuốt đi; một listing thất bại trông như thư mục không đổi."
   ]
  },
  "weed/filer/filer_remote_tombstone.go": {
-  "character": "Tombstones that keep deleted remote-mount paths from being lazily resurrected until the remote delete is applied",
-  "what": "remoteDeletionTombstones records deleted files and directories (a directory covers its subtree) under remote mounts with the delete's commit stamp and, once its event lands, its stream position. isRemoteDeletionPending blocks lazy fetch and listing for a path until the write-back daemon's persisted sync offset for the mount passes that position, the path is written again, or 24 hours pass; a tombstone recorded before its event (pending) lifts only by its event or the TTL. When the table (65,536 paths) is full, all lazy fetches stay off until it drains. RebuildRemoteDeletionTombstones replays the persisted metadata log from the oldest sync offset at startup, gating lazy reads until done; onRemoteDeletionEvents maintains the table from the event stream.",
-  "why": "Consequence: deleting a file under a remote mount removes the local entry immediately, but filer.remote.sync deletes the remote object later; a lookup in between would recreate the entry from the remote. Design: track what is owed to the remote and lift it when the sync offset proves it was paid.",
-  "when": "Deletes under remote mounts, lazy fetch and listing, filer startup.",
-  "ux": "Deleted objects under a remote mount stay deleted.",
-  "if_broken": "Deleted remote-mount objects reappear, or lazy fetch stays disabled.",
+  "character": "Tombstone giữ cho các path remote-mount đã xoá không bị làm sống lại một cách lười cho tới khi lần xoá remote được áp",
+  "what": "remoteDeletionTombstones ghi nhận file và thư mục đã xoá (một thư mục bao trùm cây con của nó) dưới remote mount cùng commit stamp của lần xoá và, khi event của nó tới, vị trí trong stream. isRemoteDeletionPending chặn lazy fetch và listing cho một path tới khi sync offset đã lưu của daemon write-back cho mount vượt qua vị trí đó, path được ghi lại, hoặc qua 24 giờ; một tombstone ghi trước event của nó (pending) chỉ gỡ được bằng event của nó hoặc TTL. Khi bảng (65,536 path) đầy, mọi lazy fetch tắt tới khi nó xả bớt. RebuildRemoteDeletionTombstones phát lại metadata log đã lưu từ sync offset cũ nhất lúc khởi động, chặn lazy read tới khi xong; onRemoteDeletionEvents duy trì bảng từ event stream.",
+  "why": "Hệ quả: xoá một file dưới remote mount gỡ entry cục bộ ngay lập tức, nhưng filer.remote.sync xoá remote object sau; một lần lookup ở giữa sẽ tạo lại entry từ remote. Thiết kế: theo dõi những gì còn nợ remote và gỡ khi sync offset chứng minh đã trả xong.",
+  "when": "Thao tác xoá dưới remote mount, lazy fetch và listing, lúc filer khởi động.",
+  "ux": "Object đã xoá dưới remote mount vẫn ở trạng thái đã xoá.",
+  "if_broken": "Object remote-mount đã xoá xuất hiện lại, hoặc lazy fetch bị tắt mãi.",
   "gotchas": [
-   "Without a write-back daemon (no filer.remote.sync), every tombstone lasts the full 24 hours: an object recreated on the remote at a deleted path stays hidden that long.",
-   "Events still in the unflushed log tail at a crash are not replayed by the rebuild (author comment)."
+   "Không có daemon write-back (không có filer.remote.sync), mọi tombstone kéo dài đủ 24 giờ: một object được tạo lại trên remote ở một path đã xoá bị ẩn suốt thời gian đó.",
+   "Event vẫn còn trong phần đuôi log chưa flush lúc crash không được bước dựng lại phát lại (comment của tác giả)."
   ]
  },
  "weed/filer/empty_folder_cleanup/cleanup_queue.go": {
-  "character": "Time-ordered, deduplicated queue of folders waiting to be checked for emptiness",
-  "what": "CleanupQueue keeps one item per folder in a list ordered by event time, with a map for O(1) lookup. Add inserts or moves a folder to a newer time; Remove drops it (a create in the folder cancels its cleanup); PopOlderThan returns the oldest folder only once it has waited longer than the delay; ShouldProcess, Peek, Len, OldestAge and Contains support the processor and metrics.",
-  "why": "Design: waiting a fixed delay after the last delete lets a burst of deletes and re-creates in one folder settle before anything checks it, and deduplication keeps one check per folder.",
-  "when": "EmptyFolderCleaner.OnDeleteEvent / OnCreateEvent and its 30 s processor loop.",
-  "ux": "Empty folders disappear about two minutes after their last object is deleted.",
-  "if_broken": "Folders removed while still in use, or never removed.",
+  "character": "Hàng đợi có thứ tự thời gian, đã khử trùng các thư mục đang chờ được kiểm tra xem có rỗng không",
+  "what": "CleanupQueue giữ mỗi thư mục một mục trong một danh sách sắp theo thời điểm event, với một map để lookup O(1). Add chèn hoặc dời một thư mục sang thời điểm mới hơn; Remove bỏ nó (một create trong thư mục huỷ việc dọn của nó); PopOlderThan chỉ trả thư mục cũ nhất khi nó đã chờ lâu hơn khoảng trễ; ShouldProcess, Peek, Len, OldestAge và Contains hỗ trợ processor và metric.",
+  "why": "Thiết kế: chờ một khoảng trễ cố định sau lần xoá cuối cho phép một loạt xoá và tạo lại trong một thư mục ổn định lại trước khi có gì kiểm tra nó, và việc khử trùng giữ mỗi thư mục một lần kiểm tra.",
+  "when": "EmptyFolderCleaner.OnDeleteEvent / OnCreateEvent và vòng processor 30 s của nó.",
+  "ux": "Thư mục rỗng biến mất khoảng hai phút sau khi object cuối cùng của nó bị xoá.",
+  "if_broken": "Thư mục bị gỡ khi vẫn đang dùng, hoặc không bao giờ bị gỡ.",
   "gotchas": [
-   "ShouldProcess's size trigger (1000 items) is not what the processor uses; it pops only items older than the delay."
+   "Ngưỡng theo kích thước của ShouldProcess (1000 mục) không phải thứ processor dùng; nó chỉ lấy các mục cũ hơn khoảng trễ."
   ]
  },
  "weed/filer/empty_folder_cleanup/empty_folder_cleaner.go": {
-  "character": "EmptyFolderCleaner: removing folders under buckets that become empty after deletes, with per-bucket opt-out and restore-on-race",
-  "what": "Fed by delete, create and rename events (local and from peers), for folders at least one level below a bucket, outside .uploads, and owned by this filer on the DLM ring (one filer per folder). A delete that leaves the cached rough count at zero queues the folder; a create removes it. Every 30 s the processor takes folders queued longer than the delay (filer.options.s3.empty_folder_cleanup_delay in filer.toml, 2 minutes by default) and, if no create came after the last delete, loads the bucket's policy (cached 5 minutes, invalidated by bucket entry updates): the bucket attribute Seaweed-X-Amz-Allow-Empty-Folders=true opts out. It then counts entries (up to 1000), skips directories that are themselves objects (prefix objects, data) and S3 Tables catalog entries, remembers the folder's mode and owner, deletes it non-recursively, and recurses to the parent. A folder written to during or shortly after its delete (within a 2-minute observation window) is restored with its old attributes. Policy-load failures are retried up to 3 times.",
-  "why": "Consequence: S3 has no real directories; after the last object under a/b/ is deleted, clients expect a/b/ to vanish from listings, but the filer keeps the directories it created implicitly. Design: event-driven and delayed, so busy folders are not churned; restore-on-race because a non-recursive delete can still interleave with a write into the folder from another filer.",
-  "when": "Created by AggregateFromPeers on every filer; events arrive through onMetadataChangeEvent.",
-  "ux": "Empty 'folders' disappear from S3 listings shortly after their contents are deleted; weed mount sets the opt-out on its buckets so mkdir'd empty directories survive.",
-  "if_broken": "Empty prefixes linger in listings (Spark and Hadoop clients see phantom directories), or folders are removed while objects are being written into them.",
+  "character": "EmptyFolderCleaner: gỡ các thư mục dưới bucket trở nên rỗng sau khi xoá, với tuỳ chọn tắt theo bucket và khôi phục khi có race",
+  "what": "Được nuôi bởi các event delete, create và rename (cục bộ và từ peer), cho các thư mục ở ít nhất một cấp dưới bucket, ngoài .uploads, và thuộc filer này trên DLM ring (mỗi thư mục một filer). Một lần xoá để số đếm ước lượng được cache về 0 sẽ đưa thư mục vào hàng đợi; một create gỡ nó ra. Mỗi 30 s, processor lấy các thư mục đã xếp hàng lâu hơn khoảng trễ (filer.options.s3.empty_folder_cleanup_delay trong filer.toml, mặc định 2 phút) và, nếu không có create nào tới sau lần xoá cuối, nạp policy của bucket (cache 5 phút, vô hiệu khi bucket entry cập nhật): attribute Seaweed-X-Amz-Allow-Empty-Folders=true của bucket là tuỳ chọn tắt. Rồi nó đếm entry (tới 1000), bỏ qua các thư mục chính là object (prefix object, dữ liệu) và catalog entry của S3 Tables, nhớ mode và owner của thư mục, xoá nó không đệ quy, và đệ quy lên cha. Một thư mục được ghi vào trong lúc hoặc ngay sau lần xoá (trong cửa sổ quan sát 2 phút) được khôi phục với attribute cũ. Lỗi nạp policy được retry tới 3 lần.",
+  "why": "Hệ quả: S3 không có thư mục thật; sau khi object cuối cùng dưới a/b/ bị xoá, client mong a/b/ biến mất khỏi listing, nhưng filer giữ các thư mục nó đã ngầm tạo. Thiết kế: điều khiển bằng event và có độ trễ, để các thư mục bận rộn không bị xáo trộn; khôi phục khi có race vì một lần xoá không đệ quy vẫn có thể đan xen với một lần ghi vào thư mục từ filer khác.",
+  "when": "Được AggregateFromPeers tạo trên mọi filer; event tới qua onMetadataChangeEvent.",
+  "ux": "'Thư mục' rỗng biến mất khỏi S3 listing ngay sau khi nội dung của chúng bị xoá; weed mount đặt tuỳ chọn tắt trên các bucket của nó để thư mục rỗng tạo bằng mkdir được giữ lại.",
+  "if_broken": "Prefix rỗng còn lưu lại trong listing (client Spark và Hadoop thấy thư mục ma), hoặc thư mục bị gỡ khi object đang được ghi vào đó.",
   "gotchas": [
-   "Until the delay passes, the empty folder still exists and an S3 ListObjects with a delimiter returns it as a CommonPrefix (see the s3api_object_handlers_list.go flag).",
-   "State (rough counts, queue, deleted set) is in memory per filer; a restart forgets queued folders, which are then cleaned only by a later delete in them.",
-   "The folder delete is a filer delete like any other and publishes a metadata event; directories removed by the TTL expiry path in filer.go do not go through this cleaner."
+   "Cho tới khi qua khoảng trễ, thư mục rỗng vẫn tồn tại và một S3 ListObjects có delimiter trả nó thành CommonPrefix (xem cờ ở s3api_object_handlers_list.go).",
+   "Trạng thái (số đếm ước lượng, hàng đợi, tập đã xoá) nằm trong bộ nhớ theo từng filer; một lần restart quên các thư mục đã xếp hàng, khi đó chúng chỉ được dọn bởi một lần xoá sau này trong chúng.",
+   "Lần xoá thư mục là một thao tác xoá filer như mọi thao tác khác và phát metadata event; các thư mục bị gỡ bởi đường hết hạn TTL trong filer.go không đi qua cleaner này."
   ]
  },
  "weed/filer/filer_deletion.go": {
-  "character": "Asynchronous chunk deletion: the deletion queue, batch deletes on volume servers and the retry queue",
-  "what": "DeleteChunks queues a file's chunk ids (resolving manifest chunks to their data chunks first) unless the path's storage rule disables chunk deletion; DeleteChunksNotRecursive queues ids as given; deleteChunksIfNotNew queues what an update dropped. loopProcessingDeletion drains the queue every 1.1 s in batches of up to 100,000 unique ids, deletes them through the volume servers (locations from the master client's cache) and classifies each result: success and not-found leave the durable ledger; retryable errors (read-only volume, timeouts, lookup failures, rate limiting and similar text) go to DeletionRetryQueue with backoff from 5 minutes doubling to 6 hours; permanent errors are dropped. After 10 attempts an id is given up.",
-  "why": "Consequence: deleting needles synchronously in every write would tie metadata latency to volume servers. Design: metadata commits first, needles are deleted asynchronously and retried, and a durable ledger (filer_deletion_persist.go) makes the queue survive restarts.",
-  "when": "Every overwrite, delete and rename that frees chunks; the filer process background loop.",
-  "ux": "Space is reclaimed after deletes (after volume vacuum).",
-  "if_broken": "Disk space never reclaimed, or chunks still referenced deleted.",
+  "character": "Xoá chunk bất đồng bộ: deletion queue, xoá theo lô trên volume server và retry queue",
+  "what": "DeleteChunks đưa chunk id của một file vào hàng đợi (resolve manifest chunk thành data chunk trước) trừ khi storage rule của path tắt việc xoá chunk; DeleteChunksNotRecursive đưa id vào hàng đợi nguyên như đã cho; deleteChunksIfNotNew đưa vào những gì một lần update đã bỏ. loopProcessingDeletion xả hàng đợi mỗi 1.1 s theo lô tới 100,000 id duy nhất, xoá chúng qua volume server (location lấy từ cache của master client) và phân loại từng kết quả: thành công và not-found rời khỏi ledger bền; lỗi có thể retry (volume read-only, timeout, lookup thất bại, rate limiting và text tương tự) đi vào DeletionRetryQueue với backoff từ 5 phút nhân đôi tới 6 giờ; lỗi vĩnh viễn bị bỏ. Sau 10 lần thử một id bị bỏ cuộc.",
+  "why": "Hệ quả: xoá needle đồng bộ trong mọi thao tác ghi sẽ buộc độ trễ metadata vào volume server. Thiết kế: metadata commit trước, needle bị xoá bất đồng bộ và retry, và một ledger bền (filer_deletion_persist.go) giúp hàng đợi sống sót qua restart.",
+  "when": "Mọi lần ghi đè, xoá và rename giải phóng chunk; vòng nền của process filer.",
+  "ux": "Dung lượng được thu hồi sau khi xoá (sau volume vacuum).",
+  "if_broken": "Dung lượng đĩa không bao giờ được thu hồi, hoặc chunk vẫn được tham chiếu bị xoá.",
   "gotchas": [
-   "Ids that exhaust their retries, or fail with a non-retryable error, are forgotten and stay on disk as orphans until volume.fsck.",
-   "If a manifest chunk cannot be resolved, the manifest itself is still deleted while its data chunks are not, leaking them.",
-   "Retryable versus permanent is decided by matching error text."
+   "Id hết lượt retry, hoặc thất bại với lỗi không retry được, bị lãng quên và nằm lại trên đĩa như mồ côi cho tới volume.fsck.",
+   "Nếu một manifest chunk không resolve được, chính manifest vẫn bị xoá trong khi các data chunk của nó thì không, làm rò chúng.",
+   "Retry được hay vĩnh viễn được quyết định bằng cách khớp text lỗi."
   ]
  },
  "weed/filer/filer_deletion_persist.go": {
-  "character": "Durable ledger of chunk ids queued for deletion but not yet confirmed gone",
-  "what": "Every queued id is recorded in an in-memory pending set with an epoch; terminal outcomes remove it (an expiry only removes a matching epoch, so a re-queued id survives). The set is snapshotted to the store's KV under filer.deleteQueue.ledger.v1 plus this filer's address when it changes, every 10 s and on shutdown, split into 64 KiB parts written per generation with the manifest published last; an index of ledger keys lets a filer restarted under a new address claim its old ledger. On startup the ledger is reloaded and its ids re-queued after a 30 s grace, so a peer still aggregating metadata can re-reference a chunk first. A failed startup read blocks snapshots until a read succeeds, so an unread ledger is never overwritten. Settings: filer.deleteQueue.persist, .persistInterval, .recoveryGrace.",
-  "why": "Consequence: a crash between queuing a delete and the volume confirming it used to leak the chunk forever. Design: additive on enqueue, subtractive only on terminal outcomes, idempotent volume deletes absorb replays.",
-  "when": "SetStore at startup, every queueDeletions, the snapshot timer and shutdown.",
-  "ux": "Space from deletes is reclaimed even across filer restarts.",
-  "if_broken": "Leaked chunks after crashes, or the ledger overwriting itself with a partial set.",
+  "character": "Ledger bền các chunk id đã xếp hàng để xoá nhưng chưa được xác nhận đã mất",
+  "what": "Mọi id được xếp hàng đều được ghi vào một tập pending trong bộ nhớ kèm một epoch; các kết quả cuối cùng gỡ nó (hết hạn chỉ gỡ epoch khớp, nên một id được xếp hàng lại vẫn sống sót). Tập được chụp snapshot vào KV của store dưới filer.deleteQueue.ledger.v1 cộng địa chỉ của filer này khi nó thay đổi, mỗi 10 s và khi shutdown, chia thành các phần 64 KiB ghi theo generation với manifest được công bố sau cùng; một index các ledger key cho phép một filer restart dưới địa chỉ mới nhận lại ledger cũ của nó. Lúc khởi động ledger được nạp lại và các id của nó được xếp hàng lại sau ân hạn 30 s, để một peer vẫn đang gộp metadata có thể tham chiếu lại một chunk trước. Một lần đọc thất bại lúc khởi động chặn snapshot tới khi đọc thành công, nên một ledger chưa đọc không bao giờ bị ghi đè. Thiết lập: filer.deleteQueue.persist, .persistInterval, .recoveryGrace.",
+  "why": "Hệ quả: một lần crash giữa lúc xếp hàng một lần xoá và lúc volume xác nhận nó từng làm rò chunk mãi mãi. Thiết kế: chỉ cộng khi xếp hàng, chỉ trừ ở kết quả cuối cùng, thao tác xoá volume idempotent hấp thụ các lần phát lại.",
+  "when": "SetStore lúc khởi động, mọi queueDeletions, bộ hẹn giờ snapshot và lúc shutdown.",
+  "ux": "Dung lượng từ các lần xoá được thu hồi kể cả qua các lần restart filer.",
+  "if_broken": "Chunk bị rò sau crash, hoặc ledger ghi đè lên chính nó bằng một tập không đầy đủ.",
   "gotchas": [
-   "Re-queued ledger ids are deleted after the grace without re-checking that no entry references them; correctness relies on the ledger only ever holding chunks that metadata had already dropped."
+   "Id của ledger được xếp hàng lại bị xoá sau ân hạn mà không kiểm tra lại rằng không entry nào tham chiếu chúng; tính đúng dựa vào việc ledger chỉ bao giờ giữ các chunk mà metadata đã bỏ."
   ]
  }
 }

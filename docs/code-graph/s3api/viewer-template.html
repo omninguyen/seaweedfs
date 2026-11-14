@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="vi">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -121,21 +121,21 @@
       <h1>__TITLE__</h1>
       <div class="sub">__SUBTITLE__</div>
       <p class="intro">__INTRO__</p>
-      <div class="hint">Lines are the real AST dependencies between nodes. Click a node: <b>solid</b> = what it uses, <b>dashed</b> = what uses it. Double-bordered cards are collapsed neighbor packages.</div>
+      <div class="hint">Các đường là phụ thuộc AST thật giữa các node. Bấm vào một node: <b>nét liền</b> = những gì nó dùng, <b>nét đứt</b> = những gì dùng nó. Thẻ viền đôi là các package lân cận đã được thu gọn.</div>
       <div class="searchbar">
-        <input id="search" type="text" placeholder="Search by node name or path…" autocomplete="off">
+        <input id="search" type="text" placeholder="Tìm theo tên node hoặc path…" autocomplete="off">
         <span id="searchcount" class="scount"></span>
-        <label class="cbox"><input type="checkbox" id="onlyuncurated"> only uncurated</label>
+        <label class="cbox"><input type="checkbox" id="onlyuncurated"> chỉ node chưa curate</label>
       </div>
       <div class="filterbar">
-        <span class="fl">Lanes</span>
+        <span class="fl">Lane</span>
         <span id="layerchips"></span>
       </div>
       <div class="filterbar">
-        <span class="fl">Edges</span>
+        <span class="fl">Cạnh</span>
         <span id="relchips"></span>
-        <span id="issuewrap" style="display:none"><span class="fl" style="margin-left:14px">Defects</span> <span id="issuechips"></span></span>
-        <span class="btn" id="resetfilters">Reset</span>
+        <span id="issuewrap" style="display:none"><span class="fl" style="margin-left:14px">Lỗi</span> <span id="issuechips"></span></span>
+        <span class="btn" id="resetfilters">Đặt lại</span>
       </div>
       <div id="results" class="results"></div>
       <div id="lanes"></div>
@@ -201,7 +201,7 @@ LAYERS.forEach(L=>{
     const iss = issueOf(n);
     el.className='node'+(isCurated(n)?' curated':'')+(n.kind==='package'?' pkg':'');
     el.style.setProperty('--lc',`var(${L.c})`); el.dataset.id=n.id;
-    el.innerHTML=`<span class="dot" title="${isCurated(n)?'curated':'not curated'}"></span>`+
+    el.innerHTML=`<span class="dot" title="${isCurated(n)?'đã curate':'chưa curate'}"></span>`+
       (iss?`<span class="iss" style="background:${ISSUE_COLORS[iss]||'var(--bug)'}" title="${esc(iss)}"></span>`:'')+
       `<div class="lbl">${esc(displayLabel(n))}</div><div class="deg">in ${n.in} · out ${n.out}</div>`;
     el.onclick=(ev)=>{ev.stopPropagation();select(n.id);};
@@ -263,8 +263,8 @@ function paintPaths(id){
 function emptyPanelHTML(){
   const top = [...DATA.nodes].sort((a,b)=>b.in-a.in).slice(0,3)
     .map(n=>`<b>${esc(displayLabel(n))}</b> (in ${n.in})`).join(', ');
-  const hint = top ? `<br><br>The most depended-on nodes: ${top}.` : '';
-  return `<div class="p-empty">Select a node to see its role and highlight its connections.${hint}</div>`;
+  const hint = top ? `<br><br>Các node được phụ thuộc nhiều nhất: ${top}.` : '';
+  return `<div class="p-empty">Chọn một node để xem vai trò của nó và làm nổi các kết nối.${hint}</div>`;
 }
 function clearSel(){
   curSel=null;
@@ -291,7 +291,7 @@ function select(id){
   renderPanel(n,outs,ins);
 }
 
-const FIELDS = [['what','What it does'],['why','Why it exists'],['when','When it runs'],['ux','What users see'],['if_broken','If it breaks']];
+const FIELDS = [['what','Làm gì'],['why','Vì sao tồn tại'],['when','Khi nào chạy'],['ux','Người dùng thấy gì'],['if_broken','Nếu hỏng']];
 function relRow(p, other, arrow){
   const o = byId[other]; if(!o) return '';
   const rels = p.rels.filter(e=>activeRels.has(e.r));
@@ -301,21 +301,21 @@ function relRow(p, other, arrow){
 }
 function renderPanel(n,outs,ins){
   const c=cur(n), L=layerOf(n.layer);
-  let h=`<span class="clr" onclick="clearSel()">✕ clear</span><span class="badge" style="--lc:var(${L.c})">${esc(L.id)} · ${esc(L.name)}</span>`;
+  let h=`<span class="clr" onclick="clearSel()">✕ đóng</span><span class="badge" style="--lc:var(${L.c})">${esc(L.id)} · ${esc(L.name)}</span>`;
   if(c.issue) h+=`<span class="ibadge" style="background:${ISSUE_COLORS[c.issue]||'var(--bug)'}">${esc(c.issue)}</span>`;
   h+=`<div class="p-file" style="margin-top:10px">${esc(n.file)}${n.symbols?` · ${n.symbols} symbols`:''}</div>`;
   if(c.character) h+=`<div class="p-char">${esc(c.character)}</div>`;
-  h+=`<div class="p-deg"><span><b>${n.in}</b> used by</span><span><b>${n.out}</b> uses</span></div>`;
+  h+=`<div class="p-deg"><span><b>${n.in}</b> được dùng bởi</span><span><b>${n.out}</b> dùng</span></div>`;
   if(!c.what){ h+=`<div class="warn">Not curated yet. Its description is written by reading the file.</div>`; }
   FIELDS.forEach(([k,label])=>{ if(c[k]) h+=`<div class="p-lbl">${label}</div><div class="p-val">${esc(c[k])}</div>`; });
   if(c.issue && c.issue_note) h+=`<div class="issue"><b>${esc(c.issue)}:</b> ${esc(c.issue_note)}</div>`;
   const g = c.gotchas ? (Array.isArray(c.gotchas)?c.gotchas:[c.gotchas]) : [];
-  if(g.length) h+=`<div class="warn"><b>⚠ Gotchas</b><ul>${g.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`;
-  if(c.protected) h+=`<div class="p-lbl">Protected</div><div class="p-val">${esc(c.protected)}</div>`;
-  if(c.cases) h+=`<div class="p-lbl">Cases</div><div class="p-val">${esc(Array.isArray(c.cases)?c.cases.join('\n'):c.cases)}</div>`;
+  if(g.length) h+=`<div class="warn"><b>⚠ Lưu ý</b><ul>${g.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`;
+  if(c.protected) h+=`<div class="p-lbl">Được bảo vệ</div><div class="p-val">${esc(c.protected)}</div>`;
+  if(c.cases) h+=`<div class="p-lbl">Trường hợp</div><div class="p-val">${esc(Array.isArray(c.cases)?c.cases.join('\n'):c.cases)}</div>`;
   if(c.curated_at) h+=`<div class="p-file" style="margin-top:14px">curated against ${esc(c.curated_at)}</div>`;
-  if(outs.length){ h+=`<div class="p-lbl">Uses (${outs.length})</div>`+outs.sort((a,b)=>b.rels.length-a.rels.length).map(p=>relRow(p,p.t,'→')).join(''); }
-  if(ins.length){ h+=`<div class="p-lbl">Used by (${ins.length})</div>`+ins.map(p=>relRow(p,p.s,'←')).join(''); }
+  if(outs.length){ h+=`<div class="p-lbl">Dùng (${outs.length})</div>`+outs.sort((a,b)=>b.rels.length-a.rels.length).map(p=>relRow(p,p.t,'→')).join(''); }
+  if(ins.length){ h+=`<div class="p-lbl">Được dùng bởi (${ins.length})</div>`+ins.map(p=>relRow(p,p.s,'←')).join(''); }
   document.getElementById('panel').innerHTML=h;
 }
 
@@ -324,7 +324,7 @@ const totalCurated = DATA.nodes.filter(isCurated).length;
 const searchEl = document.getElementById('search');
 const resultsEl = document.getElementById('results');
 const onlyUncEl = document.getElementById('onlyuncurated');
-document.getElementById('searchcount').textContent = `${totalCurated}/${DATA.nodes.length} curated`;
+document.getElementById('searchcount').textContent = `${totalCurated}/${DATA.nodes.length} đã curate`;
 function jumpTo(id){
   const el = nodeEls[id]; if(!el) return;
   Object.values(nodeEls).forEach(e=>e.classList.remove('hit'));
@@ -348,7 +348,7 @@ function runSearch(){
     chip.onclick=(ev)=>{ev.stopPropagation();jumpTo(n.id);};
     resultsEl.appendChild(chip);
   });
-  if(!matches.length) resultsEl.innerHTML='<div class="rfile" style="padding:4px">No results</div>';
+  if(!matches.length) resultsEl.innerHTML='<div class="rfile" style="padding:4px">Không có kết quả</div>';
 }
 searchEl.addEventListener('input', runSearch);
 onlyUncEl.addEventListener('change', runSearch);

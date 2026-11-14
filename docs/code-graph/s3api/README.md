@@ -2,6 +2,8 @@
 
 A file-level map of the SeaweedFS S3 gateway, the catalog APIs that run beside it, and the filer it runs on. The structure comes from the AST and the explanations were written by hand. Open `s3api-graph.html` in a browser. It is self-contained, with no server or network needed.
 
+The node descriptions, lane names and viewer labels are in Vietnamese; identifiers, file names, PR numbers and common technical terms (bucket, object, chunk, entry, handler, policy, and so on) are kept in English. This README stays in English.
+
 ## What is in it
 
 - **238 nodes:**
@@ -111,6 +113,7 @@ Use the **Defects** chips in the viewer to show only flagged nodes.
 - Fourth sync, `917cf534` → `4fc41872` (24 commits; 6 touch the scope's directories: #12600, #12615, #12616, #12622 and #12624, plus #12621, which changed only the etcd store, outside the graph): no in-scope file was added or removed. The AST was extracted again; five `calls` edges appeared (`checkVersionFileWrite` callers and its lookups, `ownerRefusedNonEmpty` → `DeleteEntryError`) and one disappeared, the `lookupFileId` name collision between `s3api_object_handlers_put.go` and `filer_grpc_server.go`. The 20 nodes whose files changed were re-read against their diffs and updated; every other node was already current at `917cf534`.
 - Edges that disappeared in the sync were checked against the code. Four follow refactors: `s3_iam_middleware` → `s3_action_resolver` and `auth_credentials` → `s3api_bucket_handlers` (the action and resource ARN now come from `resolveS3AuthTarget`), `postpolicy` → `s3api_acl_helper` and `postpolicy` → `public_access_block` (the POST Object ACL moved into `preparePostObjectACL`). The fifth, `s3api_object_handlers_put` → `filer_multipart` through `add()`, was a name collision between a local closure and `multipartUploadPage.add`.
 - Edges come from graphify's AST extraction; descriptions and defect flags were curated by hand.
+- Translation: after the fourth sync the whole curation (`curation.json`), the lane names and texts in `meta.json` and the viewer labels were translated to Vietnamese by hand, lane by lane; a script checked that every identifier, file name, PR number and commit hash of the English text survived in each translated field, and that each node kept the same number of gotchas. The defect kinds (`bug`, `dead`, `duplicate`) are unchanged.
 
 ## Regenerating
 
