@@ -1795,62 +1795,62 @@
   "why": "Hệ quả: catalog này quyết định một tên resolve thành table Iceberg hay Lance nào và dữ liệu của nó nằm ở đâu, nên một race bị thua hoặc bỏ rơi dữ liệu hoặc để một thao tác xoá dọn sạch một thư mục mà table khác vẫn trỏ tới. Thiết kế: filer không có transaction nhiều key, nên mọi thao tác là một chuỗi thao tác ghi một entry có kiểm tra so sánh cộng các claim mà thao tác cạnh tranh phải tôn trọng. Đó là lý do create ghi một record ẩn rồi xác nhận parent sau đó, delete claim trước khi quét, và một root được claim rồi kiểm tra lại khi record đã ghi, để trong hai create đua cho một thư mục ít nhất một bên lùi lại (#12473). Table tạo không có location nhận một thư mục riêng để một table cùng tên sau này không thừa hưởng, hay dọn sạch, file của một table đã đổi tên (#12475). Phân quyền che giấu sự tồn tại: caller không được đọc một resource nhận cùng 404 như với resource không tồn tại (authorizeAbsentTarget, canReadEntry), và kiểm tra location chạy sau phân quyền nên chúng cũng không lộ gì. Rename chỉ ở mức catalog vì manifest của Iceberg nhúng path tuyệt đối, nên dữ liệu ở lại và đích giữ MetadataLocation cũ, nơi các lần commit sau có thể tiếp tục ghi vào (#12515). Policy có condition không dùng được bị từ chối thay vì được đánh giá như thể condition vắng mặt (#12389). Tương thích AWS: tên thao tác, dạng JSON, định dạng ARN (mọi partition), quy tắc đặt tên, tiền tố dành riêng và encryption chỉ AES256 phản chiếu AWS S3 Tables. UpdateNamespace, view, RegisterTable, bucket LANCE và trường Format là phần mở rộng của SeaweedFS cho Iceberg REST catalog và vector store."
  },
  "weed/s3api/s3vectors/execute.go": {
-  "character": "In-process entry point for trusted local tooling (the admin console): runs one S3 Vectors operation as a named identity without signing",
+  "character": "Entry point trong process cho công cụ cục bộ được tin cậy (admin console): chạy một thao tác S3 Vectors dưới danh nghĩa một identity có tên mà không cần ký",
   "gotchas": [
-   "The AST shows no in-package caller; its callers live in weed/admin, outside this graph."
+   "AST không cho thấy caller trong package; caller của nó nằm ở weed/admin, ngoài graph này."
   ],
-  "if_broken": "Admin console vector operations fail or bypass checks.",
-  "ux": "The admin UI shows and edits vector buckets with the same rules as the API.",
-  "what": "Execute looks up the operation's handler, marshals the request into an httptest request carrying only the identity name, runs the handler and decodes the response or returns an Error{Code, Message} for status >= 400.",
-  "when": "Admin console vector bucket and index pages (weed/admin/dash/s3vectors_management.go).",
-  "why": "Consequence: the admin console manages vector buckets through this; it must reach exactly the same code path as the API. Design: mirrors s3tables.Manager.Execute: nothing is authenticated, and the identity's grants decide what the operation may do."
+  "if_broken": "Thao tác vector của admin console thất bại hoặc vượt qua kiểm tra.",
+  "ux": "Admin UI hiển thị và sửa vector bucket với cùng quy tắc như API.",
+  "what": "Execute tìm handler của thao tác, marshal request thành một httptest request chỉ mang tên identity, chạy handler và decode response hoặc trả Error{Code, Message} khi status >= 400.",
+  "when": "Các trang vector bucket và index của admin console (weed/admin/dash/s3vectors_management.go).",
+  "why": "Hệ quả: admin console quản lý vector bucket qua đây; nó phải tới đúng cùng đường code như API. Thiết kế: phản chiếu s3tables.Manager.Execute: không có gì được xác thực, và grant của identity quyết định thao tác được làm gì."
  },
  "weed/s3api/s3vectors/handlers.go": {
-  "character": "The S3 Vectors operations: vector buckets (s3tables table buckets of format LANCE), bucket policies with their own evaluator, indexes (catalog entries in the implicit 'vector' namespace) and vector reads, writes and queries forwarded to the VectorService engine",
+  "character": "Các thao tác S3 Vectors: vector bucket (table bucket của s3tables format LANCE), bucket policy với bộ đánh giá riêng, index (catalog entry trong namespace ngầm định 'vector') và đọc, ghi, query vector được chuyển tiếp tới engine VectorService",
   "gotchas": [
-   "A vector bucket whose s3tables policy contains s3vectors statements is governed by that policy until a vector policy is put; PutVectorBucketPolicy then strips those statements.",
-   "authorizeVectorTags reads the bucket record and its policy in two separate lookups.",
-   "An index whose engine create had an unknown outcome stays in the catalog marked initializing; GetIndex and ListIndexes do not hide it, and only a CreateIndex with the same dimension, metric and non-filterable keys clears it."
+   "Một vector bucket có policy s3tables chứa statement s3vectors bị policy đó chi phối cho tới khi đặt một vector policy; PutVectorBucketPolicy khi đó gỡ các statement đó.",
+   "authorizeVectorTags đọc bucket record và policy của nó bằng hai lần lookup riêng.",
+   "Một index có lần create trên engine với kết quả không rõ ở lại trong catalog với dấu initializing; GetIndex và ListIndexes không ẩn nó, và chỉ một CreateIndex với cùng dimension, metric và non-filterable key mới xoá được dấu."
   ],
-  "if_broken": "Vector writes or queries fail, indexes report wrong dimensions, or policies grant the wrong principals.",
-  "ux": "Applications store embeddings and run similarity search through the AWS S3 Vectors SDK.",
-  "what": "The dispatch table maps every operation name to a handler. Buckets: CreateVectorBucket checks s3vectors:CreateVectorBucket (and TagResource for tags) against the handler account, through the IAM authorizer when the gateway has one, and creates a LANCE table bucket; Get/List filter on the vector policy; Delete drops the implicit index namespace when it is the only content, bound to the authorized bucket. Policies: validateVectorPolicy accepts only s3vectors actions and resources and tag condition keys, refuses misspelled Statement/Effect/Condition keys, a null Allow condition, a condition split over several keys, an operator with no key, and values the operator cannot read (s3tables.ConditionValue); Put/Delete rewrite the vector policy xattr with a compare-checked write that also strips s3vectors statements from the s3tables policy. authorizeVectorTags evaluates the action against the vector policy with bucket, index and request tags. Indexes: CreateIndex authorizes, ensures the implicit namespace, writes the catalog record first marked initializing (dimension, metric, non-filterable keys, a createNonce), re-reads it to confirm its own nonce and version token won, creates the engine index, then clears the mark. An initializing record with the same parameters is resumed instead of refused; on a definite engine failure the record is deleted only if nonce and token still match, while an unknown outcome leaves it. Vectors: Put validates dimension and batch size; Get/List/Delete forward to the engine; List emulates segments when the engine cannot; Query checks dimension and non-filterable keys, translates the JSON filter into a SQL expression over json_extract(metadata, ...) and converts squared L2 distances to euclidean. Every authorization records the bucket and index for metrics and the access log.",
-  "when": "Every S3 Vectors operation.",
-  "why": "Consequence: this is the whole vector store API; a wrong authorization opens a bucket's vectors to other principals, and a wrong index record makes every write fail on dimension. Design: the catalog owns names, policies and tags, the engine owns vector data, and every write that spans both puts the catalog record first and rolls back only what this request provably created (nonce plus version token), and only when the engine definitely refused: an Unavailable or other unknown outcome may already have created the engine index. The initializing mark lets a retry of the same request finish instead of hitting 409. The vector policy is a separate document so s3vectors grants never leak into S3 Tables evaluation. Compatibility: operation names, limits (500 per put, 100 keys per get, topK 10000, 16 segments), distance metrics and the filter operators ($eq, $ne, $in, $nin, $exists, $and, $or, ranges) follow AWS S3 Vectors."
+  "if_broken": "Ghi hoặc query vector thất bại, index báo sai dimension, hoặc policy cấp quyền cho nhầm principal.",
+  "ux": "Ứng dụng lưu embedding và chạy similarity search qua AWS S3 Vectors SDK.",
+  "what": "Bảng điều phối ánh xạ mọi tên thao tác tới một handler. Bucket: CreateVectorBucket kiểm tra s3vectors:CreateVectorBucket (và TagResource cho tag) với handler account, qua IAM authorizer khi gateway có, và tạo một table bucket LANCE; Get/List lọc theo vector policy; Delete drop namespace index ngầm định khi nó là nội dung duy nhất, ràng buộc với bucket đã được phân quyền. Policy: validateVectorPolicy chỉ nhận action và resource s3vectors cùng các tag condition key, từ chối key Statement/Effect/Condition viết sai chính tả, một Allow condition null, một condition bị tách qua nhiều key, một operator không có key, và giá trị mà operator không đọc được (s3tables.ConditionValue); Put/Delete viết lại xattr vector policy bằng một lần ghi có kiểm tra so sánh, đồng thời gỡ các statement s3vectors khỏi policy của s3tables. authorizeVectorTags đánh giá action theo vector policy với tag của bucket, index và request. Index: CreateIndex phân quyền, đảm bảo namespace ngầm định, ghi catalog record trước và đánh dấu initializing (dimension, metric, các non-filterable key, một createNonce), đọc lại để xác nhận nonce và version token của chính nó đã thắng, tạo engine index, rồi xoá dấu. Một record initializing có cùng tham số được tiếp tục thay vì bị từ chối; khi engine thất bại dứt khoát, record chỉ bị xoá nếu nonce và token vẫn khớp, còn một kết quả không rõ thì để nguyên. Vector: Put kiểm tra dimension và kích thước batch; Get/List/Delete chuyển tiếp tới engine; List giả lập segment khi engine không làm được; Query kiểm tra dimension và các non-filterable key, dịch JSON filter thành một biểu thức SQL trên json_extract(metadata, ...) và đổi khoảng cách L2 bình phương thành euclidean. Mỗi lần phân quyền ghi nhận bucket và index cho metric và access log.",
+  "when": "Mọi thao tác S3 Vectors.",
+  "why": "Hệ quả: đây là toàn bộ API của vector store; phân quyền sai mở vector của một bucket cho principal khác, và một index record sai khiến mọi thao tác ghi thất bại vì dimension. Thiết kế: catalog sở hữu tên, policy và tag, engine sở hữu dữ liệu vector, và mọi thao tác ghi trải qua cả hai đặt catalog record trước và chỉ rollback những gì request này chứng minh được là đã tạo (nonce cộng version token), và chỉ khi engine từ chối dứt khoát: một Unavailable hay kết quả không rõ khác có thể đã tạo engine index. Dấu initializing cho phép một lần retry của cùng request hoàn tất thay vì gặp 409. Vector policy là một document riêng để grant s3vectors không bao giờ rò sang việc đánh giá của S3 Tables. Tương thích: tên thao tác, giới hạn (500 mỗi lần put, 100 key mỗi lần get, topK 10000, 16 segment), distance metric và các filter operator ($eq, $ne, $in, $nin, $exists, $and, $or, range) theo AWS S3 Vectors."
  },
  "weed/s3api/s3vectors/server.go": {
-  "character": "The S3 Vectors HTTP surface: one handler that dispatches every operation by X-Amz-Target or by path, wrapped in SigV4 authentication and per-operation metrics",
+  "character": "Bề mặt HTTP của S3 Vectors: một handler điều phối mọi thao tác theo X-Amz-Target hoặc theo path, bọc trong xác thực SigV4 và metric theo thao tác",
   "gotchas": [
-   "Authentication failures all answer 403 AccessDenied, including malformed signatures.",
-   "A request without Content-Length reserves the full maximum body size from the byte budget while it waits and runs."
+   "Mọi lỗi xác thực đều trả 403 AccessDenied, kể cả chữ ký sai dạng.",
+   "Một request không có Content-Length giữ chỗ toàn bộ kích thước body tối đa từ ngân sách byte trong lúc nó chờ và chạy."
   ],
-  "if_broken": "Every S3 Vectors call fails, or metrics stop reporting.",
-  "ux": "boto3 / aws s3vectors commands work against SeaweedFS; vector buckets show up in the gateway's per-bucket metrics and access log.",
-  "what": "Server holds a filer client, two s3tables Managers (one that authorizes as the caller, one trusted for bookkeeping such as format lookups and the implicit index namespace), the VectorService client (the discovery client, wrapped by SetDescribe), the authenticator, the region and account id embedded in the ARNs it mints, an optional limiter and two semaphores. RegisterRoutes mounts POST / (operation from X-Amz-Target), POST /{op} and GET/POST/DELETE /tags/{resourceArn}. instrument labels the request with its operation, records in-flight count, latency, status, per-bucket traffic and active time (only for a bucket the request was authorized on) and posts one access-log entry. Auth rejects bodies over S3VectorsMaxRequestBodyBytes, takes a request slot and a share of the byte budget before reading anything (408 RequestTimeout when the wait is cancelled), bounds the body in the context, authenticates with the gateway's S3 authenticator (failure answers 403 AccessDenied) and puts the identity in the context. dispatch hands the request to limitRequest when a limiter is set.",
-  "when": "Process start (command/s3.go wires it with the discovered vector engine, the Lance describe and the gateway's limiter and upload limits) and every S3 Vectors request.",
-  "why": "Consequence: every S3 Vectors call enters here; a dispatch mismatch makes SDK calls fail with 'unknown operation', and unbounded concurrent bodies can exhaust the gateway's memory before authentication. Design: one dispatch table (handlers.go) serves both the JSON-target and the per-path styles AWS SDKs use; the trusted Manager exists because bookkeeping that accompanies an already-authorized operation must not demand catalog read grants the S3 Vectors API does not require. The slot and byte semaphores bound buffering before authentication (#12537); metrics are labelled with the bucket only once authorization named it, so an unauthenticated caller cannot create label series. Compatibility: the request styles, the tagging paths and the ARN form arn:aws:s3vectors:<region>:<account>:bucket/<name>[/index/<name>] follow AWS S3 Vectors."
+  "if_broken": "Mọi lời gọi S3 Vectors thất bại, hoặc metric ngừng báo cáo.",
+  "ux": "boto3 / lệnh aws s3vectors chạy được với SeaweedFS; vector bucket hiện trong metric theo bucket và access log của gateway.",
+  "what": "Server giữ một filer client, hai s3tables Manager (một phân quyền theo caller, một được tin cậy cho việc ghi sổ như lookup format và namespace index ngầm định), VectorService client (discovery client, được SetDescribe bọc), authenticator, region và account id nhúng trong các ARN nó tạo, một limiter tuỳ chọn và hai semaphore. RegisterRoutes gắn POST / (thao tác từ X-Amz-Target), POST /{op} và GET/POST/DELETE /tags/{resourceArn}. instrument gắn nhãn request bằng thao tác của nó, ghi nhận số request đang chạy, độ trễ, status, traffic theo bucket và thời gian hoạt động (chỉ cho bucket mà request đã được phân quyền) và ghi một entry access-log. Auth từ chối body vượt S3VectorsMaxRequestBodyBytes, lấy một request slot và một phần ngân sách byte trước khi đọc bất cứ thứ gì (408 RequestTimeout khi việc chờ bị huỷ), giới hạn body trong context, xác thực bằng S3 authenticator của gateway (thất bại trả 403 AccessDenied) và đặt identity vào context. dispatch giao request cho limitRequest khi có đặt limiter.",
+  "when": "Lúc process khởi động (command/s3.go nối nó với vector engine đã phát hiện, Lance describe và limiter cùng giới hạn upload của gateway) và mọi request S3 Vectors.",
+  "why": "Hệ quả: mọi lời gọi S3 Vectors vào từ đây; điều phối không khớp khiến lời gọi SDK thất bại với 'unknown operation', và các body đồng thời không giới hạn có thể vắt kiệt bộ nhớ gateway trước khi xác thực. Thiết kế: một bảng điều phối (handlers.go) phục vụ cả kiểu JSON-target lẫn kiểu theo path mà SDK của AWS dùng; Manager được tin cậy tồn tại vì việc ghi sổ đi kèm một thao tác đã được phân quyền không được đòi các catalog read grant mà S3 Vectors API không yêu cầu. Slot và byte semaphore giới hạn việc buffer trước khi xác thực (#12537); metric chỉ được gắn nhãn bucket khi phân quyền đã nêu tên nó, nên caller chưa xác thực không tạo được label series. Tương thích: các kiểu request, path tagging và dạng ARN arn:aws:s3vectors:<region>:<account>:bucket/<name>[/index/<name>] theo AWS S3 Vectors."
  },
  "weed/s3api/s3vectors/tagging.go": {
-  "character": "TagResource, UntagResource and ListTagsForResource for vector buckets and indexes, stored as s3tables tags",
+  "character": "TagResource, UntagResource và ListTagsForResource cho vector bucket và index, được lưu thành tag của s3tables",
   "gotchas": [
-   "UntagResource validates the keys only after authorization, so a denied caller gets AccessDenied rather than a validation error."
+   "UntagResource chỉ kiểm tra key sau khi phân quyền, nên caller bị từ chối nhận AccessDenied thay vì lỗi kiểm tra."
   ],
-  "if_broken": "Tag-based access control acts on wrong tags, or tags land on another bucket.",
-  "ux": "aws s3vectors tag-resource / untag-resource / list-tags-for-resource work.",
-  "what": "tagTarget resolves the resourceArn (from the /tags/ path or the body) to bucket and optional index and to the catalog ARN the record is keyed by. authorizeTagging checks the s3vectors action against the vector bucket policy (with request tags for TagResource), binds the catalog calls to the authorized bucket's creation time, and requires an index target to be a LANCE-format entry. TagResource validates at most 50 tags and passes WithMaxTags(50) so the merged total is capped at the compare-checked write. Untag validates each key; List returns the stored tags.",
-  "when": "Tagging calls on vector buckets and indexes.",
-  "why": "Consequence: tags drive tag-conditioned vector bucket policies (aws:ResourceTag, s3vectors:VectorBucketTag), so a tag write can grant or revoke access. Design: tags live in the s3tables records, merged inside the catalog's compare, so concurrent tag writes do not drop each other; the bucket binding keeps a write from landing on a bucket created again under the same name. Compatibility: the 50-tag limit and path forms follow AWS S3 Vectors."
+  "if_broken": "Kiểm soát truy cập theo tag hành động trên sai tag, hoặc tag rơi vào bucket khác.",
+  "ux": "aws s3vectors tag-resource / untag-resource / list-tags-for-resource chạy được.",
+  "what": "tagTarget resolve resourceArn (từ path /tags/ hoặc body) thành bucket và index tuỳ chọn và thành catalog ARN mà record được khoá theo. authorizeTagging kiểm tra action s3vectors với vector bucket policy (kèm request tag cho TagResource), ràng buộc các lời gọi catalog với thời điểm tạo của bucket đã phân quyền, và yêu cầu đích index là một entry format LANCE. TagResource kiểm tra tối đa 50 tag và truyền WithMaxTags(50) để tổng sau khi gộp bị chặn tại lần ghi có kiểm tra so sánh. Untag kiểm tra từng key; List trả tag đã lưu.",
+  "when": "Các lời gọi tagging trên vector bucket và index.",
+  "why": "Hệ quả: tag điều khiển vector bucket policy có điều kiện theo tag (aws:ResourceTag, s3vectors:VectorBucketTag), nên một lần ghi tag có thể cấp hoặc thu hồi quyền. Thiết kế: tag nằm trong record của s3tables, được gộp bên trong phép so của catalog, nên các lần ghi tag đồng thời không làm rơi của nhau; ràng buộc bucket ngăn một lần ghi rơi vào một bucket được tạo lại dưới cùng tên. Tương thích: giới hạn 50 tag và các dạng path theo AWS S3 Vectors."
  },
  "weed/s3api/s3vectors/types.go": {
-  "character": "S3 Vectors wire types plus the JSON/error writers and the bounded body reader",
+  "character": "Các kiểu trên dây của S3 Vectors cùng bộ ghi JSON/lỗi và reader body có giới hạn",
   "gotchas": [
-   "readJSON caches the body on the request info: a handler that reads r.Body directly after the limiter decoded it gets the replayed copy, not the stream."
+   "readJSON cache body trên request info: một handler đọc r.Body trực tiếp sau khi limiter đã decode nó nhận bản sao được phát lại, không phải stream."
   ],
-  "if_broken": "SDKs fail to parse responses or errors.",
-  "ux": "SDK calls decode responses without errors.",
-  "what": "Request and response structs for vector buckets, bucket policies, indexes, vectors (put, get, list with segments, delete, query) and tagging. writeJSON answers application/x-amz-json-1.1 with X-Content-Type-Options: nosniff; writeError answers {__type, code, message, requestId}. readJSON reads at most the body limit, rejects larger bodies, and keeps the bytes in the request's info so the limiter and the handler decode one read.",
-  "when": "Every S3 Vectors request.",
-  "why": "Consequence: AWS SDKs parse these shapes; a renamed field breaks every client. Design: the error carries both __type and code because SDKs read one or the other. Compatibility: field names and limits follow the AWS S3 Vectors API."
+  "if_broken": "SDK parse response hoặc lỗi thất bại.",
+  "ux": "Lời gọi SDK decode response không lỗi.",
+  "what": "Các struct request và response cho vector bucket, bucket policy, index, vector (put, get, list với segment, delete, query) và tagging. writeJSON trả application/x-amz-json-1.1 với X-Content-Type-Options: nosniff; writeError trả {__type, code, message, requestId}. readJSON đọc tối đa giới hạn body, từ chối body lớn hơn, và giữ các byte trong info của request để limiter và handler decode cùng một lần đọc.",
+  "when": "Mọi request S3 Vectors.",
+  "why": "Hệ quả: SDK của AWS parse các dạng này; một trường bị đổi tên làm hỏng mọi client. Thiết kế: lỗi mang cả __type lẫn code vì SDK đọc cái này hoặc cái kia. Tương thích: tên trường và giới hạn theo AWS S3 Vectors API."
  },
  "weed/s3api/stats.go": {
   "character": "Middleware ngoài cùng cho từng route (track) cùng các bộ đếm lưu lượng và độ trễ theo bucket mà handler gọi trực tiếp",
@@ -1877,75 +1877,76 @@
   "why": "Hệ quả: tag là đầu vào cho các điều kiện bucket policy (s3:ExistingObjectTag, s3:RequestObjectTag) và filter lifecycle, nên một parser không đồng ý với policy engine sẽ cấp quyền theo một tập tag nhưng lưu tập khác. Thiết kế: parseTagsHeader bỏ qua segment rỗng đúng như url.ParseQuery, để CopyObject lưu cùng các key mà PutObject và bucket policy thấy. Tương thích AWS: giới hạn và tập ký tự theo AWS (10 mỗi object, 50 mỗi bucket)."
  },
  "weed/worker/tasks/iceberg/": {
-  "character": "The Iceberg maintenance plugin worker, collapsed to one node: it scans table buckets for tables that need work and rewrites their files and metadata directly on the filer — data compaction, position-delete rewrite, snapshot expiry, orphan removal and manifest rewriting",
+  "character": "Plugin worker bảo trì Iceberg, thu gọn thành một node: nó quét các table bucket tìm table cần xử lý và viết lại file cùng metadata của chúng trực tiếp trên filer — data compaction, viết lại position-delete, expire snapshot, gỡ orphan và viết lại manifest",
   "gotchas": [
-   "Detection reads raw table entries, so records an s3tables operation has hidden (an unfinished create) or claimed (a delete or rename in progress) are proposed and processed like any other.",
-   "updateTableMetadataXattr, persistPlanningIndex and recordJobStatus never check ExtendedKeyDeleting, so they write records that a rename or delete has claimed (see issue note).",
-   "A commit that fails for any reason other than a version conflict deletes the metadata file it just wrote, even if the record update may have applied.",
-   "The node is collapsed: compaction, delete rewrite, row lineage and geometry handling live in ~20 files not drawn individually."
+   "Detection đọc table entry thô, nên các record mà một thao tác s3tables đã ẩn (một create chưa xong) hoặc đã claim (một delete hay rename đang diễn ra) được đề xuất và xử lý như mọi record khác.",
+   "updateTableMetadataXattr, persistPlanningIndex và recordJobStatus không bao giờ kiểm tra ExtendedKeyDeleting, nên chúng ghi vào các record mà một rename hay delete đã claim (xem issue note).",
+   "Một commit thất bại vì bất kỳ lý do nào khác version conflict sẽ xoá metadata file nó vừa ghi, kể cả khi lần cập nhật record có thể đã được áp.",
+   "Node bị thu gọn: compaction, viết lại delete, row lineage và xử lý geometry nằm trong ~20 file không được vẽ riêng."
   ],
-  "if_broken": "Small files and snapshots accumulate, storage is not reclaimed, or a maintenance commit corrupts a table or wedges it for catalog writers.",
+  "if_broken": "File nhỏ và snapshot tích tụ, dung lượng không được thu hồi, hoặc một maintenance commit làm hỏng table hay làm nó kẹt với các bên ghi catalog.",
   "issue": "bug",
-  "issue_note": "The worker ignores the s3tables claim protocol. Its record writes (updateTableMetadataXattr in filer_io.go, persistPlanningIndex, recordJobStatus) assert the attribute snapshot they read, which includes an ExtendedKeyDeleting marker if one is present, so they succeed on a record that a RenameTable or DeleteTable has claimed. Probe (s3tablestest MemFiler, worker-style write with the same checks as filer_io.go): a maintenance commit landing between a rename's claim and its source clear makes the rename fail ('table changed during rename') and its release fail too, leaving the source marked Deleting=rename; afterwards UpdateTable answers 409 'table was updated concurrently' and DeleteTable 'table changed during delete' until the same rename is retried. Re-probed at b9866bae, after #12446: still reproduced. A worker-style commit after the rename's claim succeeds, the rename answers 409 and the source stays marked Deleting=rename, after which UpdateTable and DeleteTable answer 409. Re-checked at 917cf534: the worker still reads and writes no claim marker (no reference to ExtendedKeyDeleting or ExtendedKeyMoving under weed/worker/tasks/iceberg); the shared-location skip added in #12473 does not touch this path.",
-  "ux": "Tables stay fast to scan and their storage shrinks after expiry; job status shows in the admin UI and through GetTableMaintenanceJobStatus.",
-  "what": "handler.go registers the 'iceberg_maintenance' job type with the plugin worker framework. Detect (detection.go) walks table buckets and namespaces (bucket/namespace/table wildcard filters, resource-group fairness), reads each table entry's s3tables metadata xattr, skips non-Iceberg entries and decides from snapshot, manifest and small-file thresholds (cached in a planning index stored in the record) which tables get a proposal. A table whose files another catalog record also points at, above, at or under its location (s3tables.CatalogRecordRoots and PathsOverlap; a record sitting only on the root, as one created over a renamed table's old name does, does not count), is never proposed, and remove_orphans re-checks this when it runs, because those operations delete what this table's metadata does not reference (#12473). Execute dials the filer, loads the table's maintenance configuration and current metadata, merges table properties over the worker config (table_config.go) and runs the requested operations in order: compact (compact*.go, schema_evolution.go, sort_strategy.go, row_lineage.go, geometry_*.go: bin-pack small Parquet files per partition and spec), rewrite_position_delete_files (delete_rewrite.go, eqdelete_scope.go), expire_snapshots, remove_orphans (files under metadata/ and data/ that no snapshot, metadata-log entry or statistics file references and that are older than orphan_older_than_hours, default 72) and rewrite_manifests. Each operation commits through commitWithRetry: build the new metadata with iceberg-go, write v{N+1}-<nanos>.metadata.json, then updateTableMetadataXattr (filer_io.go) rewrites the record's metadata and metadataVersion xattrs with a conditional UpdateEntry whose precondition is the whole attribute snapshot; a conflict deletes the file and retries with exponential backoff. recordJobStatus (job_status.go) and persistPlanningIndex (planning_index.go) write the record the same way.",
-  "when": "Periodically, when the admin server schedules iceberg_maintenance detection and assigns proposals to plugin workers.",
-  "why": "Consequence: without maintenance, streaming writers leave thousands of small files and an ever-growing snapshot history, so scans slow down and storage is never reclaimed; a wrong commit here rewrites a table under its writers. Design: the worker bypasses the S3 Tables and Iceberg REST layers and writes the filer directly, using the record's attribute snapshot as the compare-and-swap, so a concurrent catalog commit makes the maintenance commit fail and retry instead of being overwritten. Orphan removal uses an age threshold rather than proving files unreferenced at one instant, the same safety window Iceberg's own orphan removal uses."
+  "issue_note": "Worker bỏ qua giao thức claim của s3tables. Các lần ghi record của nó (updateTableMetadataXattr trong filer_io.go, persistPlanningIndex, recordJobStatus) khẳng định attribute snapshot mà chúng đã đọc, vốn bao gồm marker ExtendedKeyDeleting nếu có, nên chúng thành công trên một record mà RenameTable hay DeleteTable đã claim. Probe (s3tablestest MemFiler, một lần ghi kiểu worker với cùng các kiểm tra như filer_io.go): một maintenance commit rơi vào giữa lúc rename claim và lúc nó xoá nguồn làm rename thất bại ('table changed during rename') và bước release của nó cũng thất bại, để nguồn bị đánh dấu Deleting=rename; sau đó UpdateTable trả 409 'table was updated concurrently' và DeleteTable trả 'table changed during delete' cho tới khi chính rename đó được retry. Probe lại ở b9866bae, sau #12446: vẫn tái hiện được. Một commit kiểu worker sau khi rename claim thành công, rename trả 409 và nguồn vẫn bị đánh dấu Deleting=rename, sau đó UpdateTable và DeleteTable trả 409. Kiểm tra lại ở 917cf534: worker vẫn không đọc hay ghi claim marker nào (không có tham chiếu tới ExtendedKeyDeleting hay ExtendedKeyMoving dưới weed/worker/tasks/iceberg); việc bỏ qua shared-location thêm trong #12473 không chạm vào đường này.",
+  "ux": "Table vẫn scan nhanh và dung lượng của chúng giảm sau khi expire; trạng thái job hiện trong admin UI và qua GetTableMaintenanceJobStatus.",
+  "what": "handler.go đăng ký job type 'iceberg_maintenance' với framework plugin worker. Detect (detection.go) duyệt table bucket và namespace (bộ lọc wildcard bucket/namespace/table, công bằng theo resource-group), đọc xattr metadata s3tables của từng table entry, bỏ qua entry không phải Iceberg và quyết định dựa trên các ngưỡng snapshot, manifest và small-file (cache trong một planning index lưu trong record) table nào nhận proposal. Một table có file mà catalog record khác cũng trỏ tới, ở trên, ngay tại hoặc dưới location của nó (s3tables.CatalogRecordRoots và PathsOverlap; một record chỉ nằm trên root, như record được tạo trên tên cũ của một table đã đổi tên, không được tính), không bao giờ được đề xuất, và remove_orphans kiểm tra lại điều này khi chạy, vì các thao tác đó xoá những gì metadata của table này không tham chiếu (#12473). Execute dial filer, nạp cấu hình maintenance và metadata hiện tại của table, gộp table property lên trên worker config (table_config.go) và chạy các thao tác được yêu cầu theo thứ tự: compact (compact*.go, schema_evolution.go, sort_strategy.go, row_lineage.go, geometry_*.go: bin-pack các file Parquet nhỏ theo partition và spec), rewrite_position_delete_files (delete_rewrite.go, eqdelete_scope.go), expire_snapshots, remove_orphans (file dưới metadata/ và data/ mà không snapshot, metadata-log entry hay statistics file nào tham chiếu và cũ hơn orphan_older_than_hours, mặc định 72) và rewrite_manifests. Mỗi thao tác commit qua commitWithRetry: dựng metadata mới bằng iceberg-go, ghi v{N+1}-<nanos>.metadata.json, rồi updateTableMetadataXattr (filer_io.go) viết lại các xattr metadata và metadataVersion của record bằng một UpdateEntry có điều kiện, với điều kiện tiên quyết là toàn bộ attribute snapshot; một conflict xoá file và retry với backoff luỹ thừa. recordJobStatus (job_status.go) và persistPlanningIndex (planning_index.go) ghi record theo cùng cách.",
+  "when": "Định kỳ, khi admin server lên lịch detection iceberg_maintenance và giao proposal cho plugin worker.",
+  "why": "Hệ quả: không có bảo trì, các bên ghi streaming để lại hàng nghìn file nhỏ và lịch sử snapshot ngày càng dài, nên scan chậm dần và dung lượng không bao giờ được thu hồi; một commit sai ở đây viết lại table ngay dưới chân các bên ghi của nó. Thiết kế: worker bỏ qua các lớp S3 Tables và Iceberg REST và ghi thẳng vào filer, dùng attribute snapshot của record làm compare-and-swap, nên một catalog commit đồng thời khiến maintenance commit thất bại và retry thay vì bị ghi đè. Việc gỡ orphan dùng ngưỡng tuổi thay vì chứng minh file không được tham chiếu tại một thời điểm, cùng cửa sổ an toàn mà orphan removal của chính Iceberg dùng."
  },
  "weed/s3api/s3vectors/describe.go": {
-  "character": "The bridge that fills in where a vector index lives before a request reaches the engine",
-  "what": "SetDescribe wraps the VectorService client in describedClient. For each engine call (CreateIndex, DropIndex, Put/Get/Delete/List/QueryVectors) whose table has an id but no location, it resolves the id through the injected DescribeFn (the Lance catalog's in-process DescribeTableInternal) and sets Location, and sets SseS3 when the vector bucket declares AES256 encryption. describeErr maps catalog errors to the gRPC codes the engine itself would answer: NoSuchTable/Namespace/Bucket to NotFound, AccessDenied to PermissionDenied, anything else to Internal.",
-  "why": "Consequence: the engine opens the Lance dataset by location, so without this every engine call would need its own catalog round trip, and an engine that missed the encryption flag would write the bucket's files unencrypted while the S3 path encrypts them. Design: resolution happens in the gateway, in process, with the already-authorized request, so no unauthenticated HTTP call to the Lance catalog is needed and the engine never needs catalog credentials. Mapping to gRPC codes lets vectorErr translate catalog and engine failures the same way.",
-  "when": "Wired once at startup by command/s3.go and the s3vectors shell command; runs on every S3 Vectors call that reaches the engine.",
-  "ux": "Vector operations reach the right dataset; a missing index answers NotFound like the engine would.",
-  "if_broken": "Engine calls fail or open the wrong dataset, or encrypted vector buckets get unencrypted index files.",
+  "character": "Cầu nối điền vào nơi một vector index nằm trước khi request tới engine",
+  "what": "SetDescribe bọc VectorService client trong describedClient. Với mỗi lời gọi engine (CreateIndex, DropIndex, Put/Get/Delete/List/QueryVectors) có table mang id nhưng không có location, nó resolve id qua DescribeFn được tiêm vào (DescribeTableInternal trong process của Lance catalog) và đặt Location, và đặt SseS3 khi vector bucket khai báo mã hoá AES256. describeErr ánh xạ lỗi catalog sang các gRPC code mà chính engine sẽ trả: NoSuchTable/Namespace/Bucket thành NotFound, AccessDenied thành PermissionDenied, mọi thứ khác thành Internal.",
+  "why": "Hệ quả: engine mở Lance dataset theo location, nên không có nó mọi lời gọi engine đều cần một round trip catalog riêng, và một engine bỏ lỡ cờ encryption sẽ ghi file của bucket không mã hoá trong khi đường S3 mã hoá chúng. Thiết kế: việc resolve diễn ra trong gateway, trong process, với request đã được phân quyền, nên không cần lời gọi HTTP không xác thực nào tới Lance catalog và engine không bao giờ cần catalog credential. Ánh xạ sang gRPC code cho phép vectorErr dịch lỗi catalog và lỗi engine theo cùng một cách.",
+  "when": "Được command/s3.go và lệnh shell s3vectors nối một lần lúc khởi động; chạy ở mọi lời gọi S3 Vectors tới engine.",
+  "ux": "Thao tác vector tới đúng dataset; một index không tồn tại trả NotFound như engine sẽ trả.",
+  "if_broken": "Lời gọi engine thất bại hoặc mở nhầm dataset, hoặc vector bucket có mã hoá nhận index file không mã hoá.",
   "gotchas": [
-   "A table that already carries a Location is passed through unresolved, so the caller-supplied location is trusted.",
-   "The encryption flag is read with a second catalog lookup per call."
+   "Một table đã mang Location được cho qua không resolve, nên location do caller cung cấp được tin.",
+   "Cờ encryption được đọc bằng một lần lookup catalog thứ hai ở mỗi lời gọi."
   ]
  },
  "weed/s3api/s3vectors/discovery.go": {
-  "character": "The client-side load balancer to the vector engine: finds a weed-vector process through the masters and fails over between them",
-  "what": "NewVectorDiscovery returns a VectorService client whose every call first gets a connection from cli. cli starts an asynchronous resolve when due (every 5 s while connected, every 0.5 s while not), waits for it only when there is no client yet, and counts the call against the client so a replaced connection closes only after its last call. resolve asks the masters' ListClusterNodes for 'vector' nodes of the filer group, skips a follower that answers empty, prefers the current worker, avoids the one that last failed, and dials a new one when it changes. Each call is tried twice: an Unavailable error resets the connection (marking that worker failed) and retries once; other errors return at once. CreateIndex returns the first attempt's error when the retry also fails, so an unknown first outcome is not reported as a definite refusal.",
-  "why": "Consequence: without it the gateway would need a fixed engine address and every engine restart would fail vector calls until reconfigured. Design: discovery goes through the master registry the engines register with, so engines can move or scale; the retry is limited to transport failures, and CreateIndex keeps its first error because the index handler rolls back its catalog record only on a definite engine refusal.",
-  "when": "Built once at startup (command/s3.go, and the s3vectors shell command); every S3 Vectors call that reaches the engine.",
-  "ux": "Vector calls keep working across a weed-vector restart, after at most one failed attempt.",
-  "if_broken": "Every vector call fails with 'no weed-vector registered on master', or calls stick to a dead engine.",
+  "character": "Bộ cân bằng tải phía client tới vector engine: tìm một process weed-vector qua các master và failover giữa chúng",
+  "what": "NewVectorDiscovery trả một VectorService client mà mọi lời gọi trước tiên lấy một kết nối từ cli. cli bắt đầu một lần resolve bất đồng bộ khi tới hạn (mỗi 5 s khi đã kết nối, mỗi 0.5 s khi chưa), chỉ đợi nó khi chưa có client nào, và đếm lời gọi vào client để một kết nối bị thay chỉ đóng sau lời gọi cuối của nó. resolve hỏi ListClusterNodes của các master về các node 'vector' của filer group, bỏ qua một follower trả về rỗng, ưu tiên worker hiện tại, tránh worker vừa thất bại, và dial một worker mới khi nó thay đổi. Mỗi lời gọi được thử hai lần: một lỗi Unavailable reset kết nối (đánh dấu worker đó thất bại) và retry một lần; các lỗi khác trả về ngay. CreateIndex trả lỗi của lần thử đầu khi lần retry cũng thất bại, để một kết quả đầu tiên không rõ không bị báo thành một lời từ chối dứt khoát.",
+  "why": "Hệ quả: không có nó, gateway cần một địa chỉ engine cố định và mỗi lần engine restart sẽ làm lời gọi vector thất bại cho tới khi cấu hình lại. Thiết kế: discovery đi qua master registry mà engine đăng ký vào, nên engine có thể dời đi hoặc mở rộng; retry chỉ giới hạn ở lỗi transport, và CreateIndex giữ lỗi đầu tiên vì index handler chỉ rollback catalog record của nó khi engine từ chối dứt khoát.",
+  "when": "Được dựng một lần lúc khởi động (command/s3.go, và lệnh shell s3vectors); mọi lời gọi S3 Vectors tới engine.",
+  "ux": "Lời gọi vector tiếp tục chạy qua một lần restart weed-vector, sau nhiều nhất một lần thử thất bại.",
+  "if_broken": "Mọi lời gọi vector thất bại với 'no weed-vector registered on master', hoặc lời gọi dính vào một engine đã chết.",
   "gotchas": [
-   "Every successful lookup logs each discovered worker at glog level 0, so a busy gateway logs the engine addresses every few seconds.",
-   "Only the first worker that is not the failed one is used; there is no spreading of load across several engines."
+   "Mỗi lần lookup thành công log từng worker phát hiện được ở glog level 0, nên một gateway bận rộn log địa chỉ engine vài giây một lần.",
+   "Chỉ worker đầu tiên không phải worker thất bại được dùng; không có việc phân tải giữa nhiều engine."
   ]
  },
  "weed/s3api/s3vectors/iam.go": {
-  "character": "The hook that lets the gateway's IAM policies take part in S3 Vectors authorization",
-  "what": "checkPermission first asks the authenticator, when it implements IAMAuthorizer, to evaluate the action on the resource: an explicit IAM deny refuses, an IAM allow adds the action to the identity's actions for this check. It then runs the S3 Tables evaluator (owner, identity actions, resource policy with conditions).",
-  "why": "Consequence: without it, an IAM user or STS role granted s3vectors:* by an attached policy would still be refused unless the resource policy also named it, and an IAM deny would be ignored. Design: IAM is folded in as an extra identity action, so the resource-policy rules (and their own denies) still apply on top; the IAM evaluator receives the same policy context, so tag conditions work in IAM policies too.",
-  "when": "Every bucket, index, vector and tagging authorization in handlers.go.",
-  "ux": "S3 Vectors permissions can be granted through IAM policies as on AWS.",
-  "if_broken": "IAM-granted callers are refused, or IAM denies stop applying to vector buckets.",
+  "character": "Hook cho phép IAM policy của gateway tham gia vào phân quyền S3 Vectors",
+  "what": "checkPermission trước tiên hỏi authenticator, khi nó hiện thực IAMAuthorizer, đánh giá action trên resource: một IAM deny tường minh từ chối, một IAM allow thêm action vào các action của identity cho lần kiểm tra này. Rồi nó chạy bộ đánh giá S3 Tables (owner, identity action, resource policy với condition).",
+  "why": "Hệ quả: không có nó, một IAM user hoặc STS role được cấp s3vectors:* qua một attached policy vẫn bị từ chối trừ khi resource policy cũng nêu tên nó, và một IAM deny sẽ bị bỏ qua. Thiết kế: IAM được gộp vào như một identity action bổ sung, nên quy tắc resource-policy (cùng các deny riêng của nó) vẫn áp lên trên; bộ đánh giá IAM nhận cùng policy context, nên tag condition cũng chạy trong IAM policy.",
+  "when": "Mọi lần phân quyền bucket, index, vector và tagging trong handlers.go.",
+  "ux": "Quyền S3 Vectors có thể được cấp qua IAM policy như trên AWS.",
+  "if_broken": "Caller được IAM cấp quyền bị từ chối, hoặc IAM deny ngừng áp dụng cho vector bucket.",
   "gotchas": [
-   "With no IAM authorizer (static identities only) the check is the S3 Tables evaluator alone."
+   "Không có IAM authorizer (chỉ identity tĩnh) thì phép kiểm tra chỉ là bộ đánh giá S3 Tables."
   ]
  },
  "weed/s3api/s3vectors/limits.go": {
-  "character": "Admission control for S3 Vectors: per-bucket rate limits from the gateway and process-wide concurrency and byte budgets",
-  "what": "SetRequestLimits creates the slot semaphore (default 16 concurrent requests) and the byte semaphore (default 8 x the maximum body) that Auth takes from. SetLimiter installs the gateway's limiter. limitRequest decodes just enough of the request to name its target (tag ARN, bucket name or ARN, index name or ARN), records the target, maps the operation to the gateway's read or write action (Get*, List*, QueryVectors read; everything else write), sets mux vars bucket/object so the gateway's per-bucket limits apply, and runs the handler through the limiter. A request the limiter refuses gets its XML error converted to the S3 Vectors JSON error (ThrottlingException by default).",
-  "why": "Consequence: S3 Vectors runs beside the S3 API on the same gateway and must obey the same per-bucket limits (#12514), or vector traffic could starve object traffic and dodge configured quotas. Design: the limiter speaks S3 (XML, bucket/object vars), so the request is translated in and the refusal translated back; the body is decoded once and replayed to the handler.",
-  "when": "Every S3 Vectors request when command/s3.go set a limiter (it always does), after authentication and before the handler.",
-  "ux": "Throttled vector calls get ThrottlingException like on AWS; operators configure one set of limits for both APIs.",
-  "if_broken": "Vector calls bypass bucket limits, or every vector call is refused with a mistranslated error.",
+  "character": "Kiểm soát tiếp nhận cho S3 Vectors: giới hạn tốc độ theo bucket từ gateway và ngân sách đồng thời và byte toàn process",
+  "what": "SetRequestLimits tạo slot semaphore (mặc định 16 request đồng thời) và byte semaphore (mặc định 8 x body tối đa) mà Auth lấy từ đó. SetLimiter cài limiter của gateway. limitRequest decode vừa đủ request để nêu tên đích của nó (tag ARN, tên hoặc ARN bucket, tên hoặc ARN index), ghi nhận đích, ánh xạ thao tác sang action đọc hoặc ghi của gateway (Get*, List*, QueryVectors là đọc; mọi thứ khác là ghi), đặt mux var bucket/object để giới hạn theo bucket của gateway được áp, và chạy handler qua limiter. Một request bị limiter từ chối được đổi lỗi XML của nó thành lỗi JSON của S3 Vectors (mặc định ThrottlingException).",
+  "why": "Hệ quả: S3 Vectors chạy cạnh S3 API trên cùng gateway và phải tuân cùng giới hạn theo bucket (#12514), nếu không traffic vector có thể bỏ đói traffic object và lách các quota đã cấu hình. Thiết kế: limiter nói ngôn ngữ S3 (XML, bucket/object var), nên request được dịch vào và lời từ chối được dịch ngược ra; body được decode một lần và phát lại cho handler.",
+  "when": "Mọi request S3 Vectors khi command/s3.go đặt limiter (nó luôn đặt), sau xác thực và trước handler.",
+  "ux": "Lời gọi vector bị throttle nhận ThrottlingException như trên AWS; người vận hành cấu hình một bộ giới hạn cho cả hai API.",
+  "if_broken": "Lời gọi vector vượt qua giới hạn bucket, hoặc mọi lời gọi vector bị từ chối với một lỗi bị dịch sai.",
   "gotchas": [
-   "A request whose target cannot be resolved answers 400 ValidationException before reaching the handler, so the handler's own validation message is not the one the client sees.",
-   "The index name is passed to the gateway limiter as the object key, so object-key based limit rules also match index names."
+   "Một request không resolve được đích trả 400 ValidationException trước khi tới handler, nên thông điệp kiểm tra của chính handler không phải là thứ client thấy.",
+   "Tên index được truyền cho limiter của gateway như object key, nên các rule giới hạn dựa trên object key cũng khớp với tên index."
   ]
  },
  "weed/s3api/s3vectors/operations.go": {
-  "character": "The sorted list of S3 Vectors operation names",
-  "what": "Operations returns the keys of the dispatch table, sorted.",
-  "why": "Consequence: the admin console's policy-action suggestions and the s3vectors shell command validate names against it, so a new handler shows up in both without editing either. Design: derived from the dispatch table instead of a second list that could drift.",
-  "when": "Admin console policy editor and the weed shell s3vectors command.",
-  "ux": "Operators see every supported s3vectors action when writing policies.",
-  "if_broken": "The shell refuses valid operations or the console suggests missing ones."
+  "character": "Danh sách đã sắp xếp các tên thao tác S3 Vectors",
+  "what": "Operations trả các key của bảng điều phối, đã sắp xếp.",
+  "why": "Hệ quả: các gợi ý policy-action của admin console và lệnh shell s3vectors kiểm tra tên theo nó, nên một handler mới hiện ra ở cả hai mà không phải sửa bên nào. Thiết kế: suy ra từ bảng điều phối thay vì một danh sách thứ hai có thể bị lệch.",
+  "when": "Trình sửa policy của admin console và lệnh weed shell s3vectors.",
+  "ux": "Người vận hành thấy mọi action s3vectors được hỗ trợ khi viết policy.",
+  "if_broken": "Shell từ chối thao tác hợp lệ hoặc console gợi ý thiếu thao tác.",
+  "gotchas": []
  },
  "weed/s3api/s3api_object_handlers_list_prefetch.go": {
   "character": "Đọc trước cho listing đệ quy: giữ nhiều lần đọc thư mục song song theo đúng thứ tự mà phép duyệt listing sẽ đi vào",
@@ -1971,417 +1972,417 @@
   ]
  },
  "weed/pb/filer.proto": {
-  "character": "The filer's wire contract: the SeaweedFiler gRPC service and every message the gateway, mounts, shell and peer filers exchange with it. The node stands for the generated Go (filer.pb.go, filer_grpc.pb.go, filer_vtproto.pb.go), which is not drawn file by file",
-  "what": "Declares the SeaweedFiler service: entry lookup (single and batched LookupDirectoryEntries, up to 4096 paths, with per-item read fences, one deduplicated volume location map and exact-fid read tokens), ListEntries (stream; snapshot_ts_ns is a listing time the filer stamps and echoes for event replay, not a store snapshot; omit_chunks), Create/Update/Delete/TouchAccessTime/AppendToEntry, ObjectTransaction(Batch), AtomicRenameEntry and StreamRenameEntry, StreamMutateEntry (one ordered bidirectional stream per mount), PosixLock, volume assignment and lookup, collections, statistics, Ping, GetFilerConfiguration, TraverseBfsMetadata, Subscribe(Local)Metadata, ListMetadataSubscribers, KvGet/KvPut, CacheRemoteObjectToLocalCluster, the distributed lock RPCs (Lock, Unlock, FindLockOwner, TransferLocks, ReplicateLock) and the mount peer registry (MountRegister, MountList). Core types: Entry (chunks, FuseAttributes, extended map, inline content, remote entry, hard link id, quota, worm_enforced_at_ts_ns, commit_ts_ns), FileChunk (fid, offset, size, modified_ts_ns, cipher key, compression, manifest flag, per-chunk SSE type and metadata), EventNotification and SubscribeMetadataResponse (batched events, log file refs for direct reads, flushed watermark, mutation_ts_ns). WriteCondition is a list of AND-ed clauses (IF_NOT_EXISTS, IF_EXISTS, IF_ETAG_MATCH / NOT_MATCH with weak comparison, IF_(UN)MODIFIED_SINCE, IF_EXTENDED_NOT_EQUAL, IF_EXTENDED_TIME_ELAPSED with a gate key, IF_CHUNKS_EQUAL, IF_ENTRY_EQUAL, IF_OBJECT_EXISTS: present and not a plain directory without an object of its own, #12624) checked under the filer's per-path lock. ObjectMutation (PUT, DELETE, PATCH_EXTENDED, RECOMPUTE_LATEST with a mechanical Recompute: scan a directory, pick the first or last child by name, copy chosen fields into a pointer entry) is what ObjectTransaction applies in order under one lock, forwarded one hop to the ring owner named by route_key, deduplicated by request_id. FilerError gives stable machine codes; FilerConf.PathConf is the per-prefix storage rule (collection, replication, TTL, disk type, fsync, read-only, placement, name length, WORM).",
-  "why": "Consequence: every S3 write the gateway commits, every listing, every lock and every metadata subscription crosses this contract, so a field's meaning here is the meaning on both sides. Design: the filer is kept free of S3 semantics; conditions, the version recompute and the object-lock clauses are generic comparisons the caller composes, so the gateway can express If-Match, legal hold, retention with governance bypass and 'latest version' pointers without the filer knowing what they mean. Log positions (log_ts_ns with the stamping filer's signature) let a reader know which metadata events a response already reflects.",
-  "when": "Compiled into every component that talks to a filer; the gateway's calls go through filer_pb helpers and S3ApiServer.withFilerClient.",
-  "ux": "Invisible to S3 clients; it decides which conditional writes, locks and listings the gateway can offer.",
-  "if_broken": "A renumbered or retyped field silently corrupts entries between mixed-version components; a dropped condition kind turns a conditional write into an unconditional one.",
+  "character": "Hợp đồng trên dây của filer: gRPC service SeaweedFiler và mọi message mà gateway, mount, shell và các filer peer trao đổi với nó. Node đại diện cho Go được sinh ra (filer.pb.go, filer_grpc.pb.go, filer_vtproto.pb.go), không được vẽ theo từng file",
+  "what": "Khai báo service SeaweedFiler: lookup entry (đơn lẻ và LookupDirectoryEntries theo lô, tới 4096 path, với read fence theo từng mục, một map volume location đã khử trùng và read token theo fid chính xác), ListEntries (stream; snapshot_ts_ns là thời điểm listing mà filer đóng dấu và trả lại để phát lại event, không phải store snapshot; omit_chunks), Create/Update/Delete/TouchAccessTime/AppendToEntry, ObjectTransaction(Batch), AtomicRenameEntry và StreamRenameEntry, StreamMutateEntry (một stream hai chiều có thứ tự cho mỗi mount), PosixLock, gán và lookup volume, collection, thống kê, Ping, GetFilerConfiguration, TraverseBfsMetadata, Subscribe(Local)Metadata, ListMetadataSubscribers, KvGet/KvPut, CacheRemoteObjectToLocalCluster, các RPC distributed lock (Lock, Unlock, FindLockOwner, TransferLocks, ReplicateLock) và mount peer registry (MountRegister, MountList). Kiểu lõi: Entry (chunk, FuseAttributes, extended map, inline content, remote entry, hard link id, quota, worm_enforced_at_ts_ns, commit_ts_ns), FileChunk (fid, offset, size, modified_ts_ns, cipher key, compression, manifest flag, SSE type và metadata theo chunk), EventNotification và SubscribeMetadataResponse (event theo lô, tham chiếu log file để đọc trực tiếp, flushed watermark, mutation_ts_ns). WriteCondition là danh sách các mệnh đề nối AND (IF_NOT_EXISTS, IF_EXISTS, IF_ETAG_MATCH / NOT_MATCH với phép so yếu, IF_(UN)MODIFIED_SINCE, IF_EXTENDED_NOT_EQUAL, IF_EXTENDED_TIME_ELAPSED với một gate key, IF_CHUNKS_EQUAL, IF_ENTRY_EQUAL, IF_OBJECT_EXISTS: có mặt và không phải một thư mục thường không có object riêng, #12624) được kiểm tra dưới per-path lock của filer. ObjectMutation (PUT, DELETE, PATCH_EXTENDED, RECOMPUTE_LATEST với một Recompute máy móc: quét một thư mục, chọn con đầu hoặc cuối theo tên, copy các trường đã chọn vào một pointer entry) là thứ ObjectTransaction áp theo thứ tự dưới một lock, được chuyển tiếp một bước tới ring owner nêu trong route_key, khử trùng theo request_id. FilerError cho các mã máy ổn định; FilerConf.PathConf là quy tắc lưu trữ theo prefix (collection, replication, TTL, disk type, fsync, read-only, placement, độ dài tên, WORM).",
+  "why": "Hệ quả: mọi thao tác ghi S3 mà gateway commit, mọi listing, mọi lock và mọi metadata subscription đều đi qua hợp đồng này, nên nghĩa của một trường ở đây là nghĩa ở cả hai phía. Thiết kế: filer được giữ không có ngữ nghĩa S3; condition, phép recompute version và các mệnh đề object-lock là các phép so chung mà caller tự ghép, nên gateway biểu diễn được If-Match, legal hold, retention với governance bypass và con trỏ 'latest version' mà filer không cần biết chúng nghĩa là gì. Vị trí log (log_ts_ns kèm chữ ký của filer đóng dấu) cho reader biết response đã phản ánh những metadata event nào.",
+  "when": "Được compile vào mọi thành phần nói chuyện với filer; lời gọi của gateway đi qua các helper filer_pb và S3ApiServer.withFilerClient.",
+  "ux": "Vô hình với client S3; nó quyết định gateway cung cấp được những thao tác ghi có điều kiện, lock và listing nào.",
+  "if_broken": "Một trường bị đánh số lại hay đổi kiểu âm thầm làm hỏng entry giữa các thành phần khác phiên bản; một loại condition bị bỏ biến thao tác ghi có điều kiện thành không điều kiện.",
   "gotchas": [
-   "UpdateEntryResponse has no error or error_code field, unlike CreateEntryResponse: an update failure, including PRECONDITION_FAILED, arrives only as a gRPC status, and filer_pb.UpdateEntryWithResponse passes the response through without inspecting it.",
-   "FilerError values are documented as stable: never reorder or reuse numbers. LookupDirectoryEntries was declared last on purpose to keep generated message indices stable.",
-   "KeepConnectedRequest/Response and LocateBrokerRequest/Response are still declared but no RPC of the service uses them.",
-   "IF_EXTENDED_TIME_ELAPSED compares against the filer's clock, not the gateway's; retention enforcement therefore depends on the filer host's time.",
-   "ObjectMutation entries are meant to be metadata-scoped: data-bearing chunks are uploaded before the transaction, so a failed transaction leaves their cleanup to the caller."
+   "UpdateEntryResponse không có trường error hay error_code, khác với CreateEntryResponse: một lần update thất bại, kể cả PRECONDITION_FAILED, chỉ tới dưới dạng gRPC status, và filer_pb.UpdateEntryWithResponse cho response đi qua mà không kiểm tra.",
+   "Các giá trị FilerError được ghi là ổn định: không bao giờ sắp xếp lại hay dùng lại số. LookupDirectoryEntries cố ý được khai báo cuối cùng để giữ ổn định chỉ số của message được sinh ra.",
+   "KeepConnectedRequest/Response và LocateBrokerRequest/Response vẫn được khai báo nhưng không RPC nào của service dùng chúng.",
+   "IF_EXTENDED_TIME_ELAPSED so với đồng hồ của filer, không phải của gateway; vì vậy việc thực thi retention phụ thuộc vào giờ của host filer.",
+   "Các entry ObjectMutation được dự định chỉ trong phạm vi metadata: các chunk mang dữ liệu được upload trước transaction, nên một transaction thất bại để việc dọn chúng cho caller."
   ]
  },
  "weed/pb/filer_pb/entry_scrub.go": {
-  "character": "A one-function log-safety helper for Entry",
-  "what": "ScrubCipherKeys returns a deep copy of an entry with every chunk's CipherKey cleared (nil for a nil entry).",
-  "why": "Consequence: entries are logged and serialized to JSON in error paths, and a chunk's cipher key is enough to decrypt its needle. Design: a clone, so the live entry keeps its keys.",
-  "when": "Before logging or marshaling an entry for humans: s3api bucket_metadata.go and the mount's manifest-resolution warning.",
-  "ux": "None directly; keeps keys out of logs.",
-  "if_broken": "Per-chunk encryption keys appear in logs or debug JSON.",
+  "character": "Một helper an toàn log một hàm cho Entry",
+  "what": "ScrubCipherKeys trả một bản deep copy của entry với CipherKey của mọi chunk bị xoá (nil cho entry nil).",
+  "why": "Hệ quả: entry được log và serialize thành JSON trên các đường lỗi, và cipher key của một chunk đủ để giải mã needle của nó. Thiết kế: một bản clone, để entry đang sống giữ key của nó.",
+  "when": "Trước khi log hoặc marshal một entry cho người đọc: bucket_metadata.go của s3api và cảnh báo resolve manifest của mount.",
+  "ux": "Không có trực tiếp; giữ key ngoài log.",
+  "if_broken": "Encryption key theo chunk xuất hiện trong log hoặc debug JSON.",
   "gotchas": [
-   "Only CipherKey is scrubbed; per-chunk SseMetadata (which for SSE-S3 holds a wrapped key and IV) is left as is."
+   "Chỉ CipherKey được xoá; SseMetadata theo chunk (với SSE-S3 giữ một wrapped key và IV) để nguyên."
   ]
  },
  "weed/pb/filer_pb/listing_options.go": {
-  "character": "A context flag that asks listings for attributes only",
-  "what": "WithChunksOmitted marks a context so a listing over gRPC sets ListEntriesRequest.omit_chunks and a listing from a local store skips building chunk lists; ChunksOmitted reads the mark. DoSeaweedListWithSnapshot copies it into every request.",
-  "why": "Consequence: chunk lists are the largest part of a listing response, and a FUSE readdir only needs names, modes and sizes. Design: a context value rather than a new parameter, so the many list helpers need no new signatures.",
-  "when": "weed mount's readdir paths.",
-  "ux": "Faster directory listings in mounts.",
-  "if_broken": "Either listings stay heavy, or a caller that writes entries back gets entries without chunks and drops file data.",
+  "character": "Một context flag yêu cầu listing chỉ trả attribute",
+  "what": "WithChunksOmitted đánh dấu một context để một listing qua gRPC đặt ListEntriesRequest.omit_chunks và một listing từ local store bỏ qua việc dựng danh sách chunk; ChunksOmitted đọc dấu đó. DoSeaweedListWithSnapshot copy nó vào mọi request.",
+  "why": "Hệ quả: danh sách chunk là phần lớn nhất của một listing response, và một readdir FUSE chỉ cần tên, mode và kích thước. Thiết kế: một context value thay vì một tham số mới, để nhiều helper list không cần chữ ký mới.",
+  "when": "Các đường readdir của weed mount.",
+  "ux": "Directory listing nhanh hơn trong mount.",
+  "if_broken": "Hoặc listing vẫn nặng, hoặc một caller ghi entry trở lại nhận entry không có chunk và làm rơi dữ liệu file.",
   "gotchas": [
-   "Only a caller that reads attributes and nothing else may set it: an entry from such a listing that is cached, written back or deleted with data loses its chunks (author comment)."
+   "Chỉ caller đọc attribute và không gì khác mới được đặt nó: một entry từ listing như vậy mà được cache, ghi lại hoặc xoá kèm dữ liệu sẽ mất chunk của nó (comment của tác giả)."
   ]
  },
  "weed/pb/filer_pb/filer_pb_helper.go": {
-  "character": "Methods on the generated Entry/FileChunk types plus thin RPC wrappers that turn filer responses into Go errors and classify metadata events",
-  "what": "Entry helpers: IsInRemoteOnly (no chunks but a remote size), IsDirectoryKeyObject (a directory that also carries an object: mime, chunks, content, remote data or the prefix-object mark), IsPrefixObject / MarkPrefixObject (a file turned into the directory that stores it so keys can nest under it, marked with SeaweedFSPrefixObject and given dir mode bits), GetExpiryTime / IsExpired (S3-lifecycle entries marked SeaweedFSExpiresS3 expire from mtime, ordinary TTL entries from crtime), IsOlderDir. FileId conversion between the string and structured forms; BeforeEntrySerialization / AfterEntryDeserialization move chunk ids into the compact Fid field for storage and back. CreateEntry(WithResponse) maps a response's FilerError code to a sentinel (ErrEntryNameTooLong, ErrParentIsFile, ErrExistingIsDirectory/File, ErrEntryAlreadyExists, ErrReadOnly, ErrPreconditionFailed) so callers use errors.Is; LookupEntry turns codes.NotFound, or the not-found text on codes.Unknown, into ErrNotFound; AssignVolumeResponseError wraps a coded failure. SnapshotExtended builds an expected_extended precondition that also asserts listed keys are absent. IsCreate/IsUpdate/IsDelete/IsRename classify events (a rename is an old+new pair whose directory or name changed), the MetadataEvent* functions give source and target paths, and MetadataEventMatchesSubscription decides whether an event's source or target path falls under a subscription's prefix, prefixes or exact directories. FilerConf_PathConf.Key makes path rules usable in a ptrie.",
-  "why": "Consequence: the gateway branches on filer errors (an O_EXCL collision, a failed precondition, a read-only bucket over quota) and on a miss versus a transport failure; string matching on error text was fragile across the gRPC boundary. Design: the filer sends a stable code and the client rebuilds the sentinel. Prefix objects let one key be both an object and the parent of nested keys, which a filesystem otherwise forbids.",
-  "when": "Everywhere a component calls the filer; the event classifiers in every metadata subscriber (s3api caches, mounts, replication, the empty-folder cleaner).",
-  "ux": "S3 clients see correct 404s, 409s and 412s instead of 500s; nested keys under an existing object work.",
-  "if_broken": "Misses are treated as failures (or failures as misses, which would let a write proceed over an entry it could not read), and subscribers apply renames as creates.",
+  "character": "Các method trên các kiểu Entry/FileChunk được sinh ra cùng các wrapper RPC mỏng biến response của filer thành lỗi Go và phân loại metadata event",
+  "what": "Helper của Entry: IsInRemoteOnly (không có chunk nhưng có remote size), IsDirectoryKeyObject (một thư mục cũng mang một object: mime, chunk, content, remote data hoặc dấu prefix-object), IsPrefixObject / MarkPrefixObject (một file biến thành thư mục lưu nó để key lồng được bên dưới, đánh dấu bằng SeaweedFSPrefixObject và nhận mode bit của thư mục), GetExpiryTime / IsExpired (entry S3-lifecycle đánh dấu SeaweedFSExpiresS3 hết hạn tính từ mtime, entry TTL thường tính từ crtime), IsOlderDir. Chuyển FileId giữa dạng chuỗi và dạng có cấu trúc; BeforeEntrySerialization / AfterEntryDeserialization dời chunk id vào trường Fid gọn để lưu và ngược lại. CreateEntry(WithResponse) ánh xạ mã FilerError của response thành một sentinel (ErrEntryNameTooLong, ErrParentIsFile, ErrExistingIsDirectory/File, ErrEntryAlreadyExists, ErrReadOnly, ErrPreconditionFailed) để caller dùng errors.Is; LookupEntry biến codes.NotFound, hoặc text not-found trên codes.Unknown, thành ErrNotFound; AssignVolumeResponseError bọc một thất bại có mã. SnapshotExtended dựng một điều kiện tiên quyết expected_extended cũng khẳng định các key được liệt kê vắng mặt. IsCreate/IsUpdate/IsDelete/IsRename phân loại event (một rename là cặp old+new có thư mục hoặc tên thay đổi), các hàm MetadataEvent* cho path nguồn và đích, và MetadataEventMatchesSubscription quyết định path nguồn hay đích của một event có nằm dưới prefix, các prefix hay các thư mục chính xác của một subscription không. FilerConf_PathConf.Key làm path rule dùng được trong một ptrie.",
+  "why": "Hệ quả: gateway rẽ nhánh theo lỗi filer (va chạm O_EXCL, điều kiện tiên quyết thất bại, bucket read-only vì vượt quota) và theo miss so với lỗi transport; khớp chuỗi trên text lỗi từng mong manh qua ranh giới gRPC. Thiết kế: filer gửi một mã ổn định và client dựng lại sentinel. Prefix object cho phép một key vừa là object vừa là cha của các key lồng nhau, điều mà filesystem vốn cấm.",
+  "when": "Ở mọi nơi một thành phần gọi filer; các bộ phân loại event trong mọi metadata subscriber (cache của s3api, mount, replication, empty-folder cleaner).",
+  "ux": "Client S3 thấy đúng 404, 409 và 412 thay vì 500; key lồng dưới một object có sẵn hoạt động.",
+  "if_broken": "Miss bị coi là thất bại (hoặc thất bại bị coi là miss, điều sẽ cho một thao tác ghi đè lên một entry mà nó không đọc được), và subscriber áp rename như create.",
   "gotchas": [
-   "LookupEntry treats a not-found message only on codes.Unknown (or a non-status error) as a miss; the same text on another code is a failed read on purpose.",
-   "GetExpiryTime dereferences entry.Attributes without a nil check; IsExpired guards it, direct callers must.",
-   "UpdateEntryWithResponse returns the response unexamined: UpdateEntryResponse carries no error code, so a failed condition shows up only as the gRPC error.",
-   "metadataEventMatchesPath matches every path when pathPrefix is empty (strings.HasPrefix with \"\"), whatever pathPrefixes or directories say; a subscription that means 'only these directories' must pass a non-empty prefix it never matches.",
-   "IsOlderDir counts a directory as old once its crtime is more than 3 seconds in the past."
+   "LookupEntry chỉ coi thông điệp not-found là miss khi đi kèm codes.Unknown (hoặc một lỗi không phải status); cùng text đó trên mã khác cố ý là một lần đọc thất bại.",
+   "GetExpiryTime dereference entry.Attributes không kiểm tra nil; IsExpired có chặn, caller trực tiếp phải tự chặn.",
+   "UpdateEntryWithResponse trả response không kiểm tra: UpdateEntryResponse không mang mã lỗi, nên một condition thất bại chỉ hiện ra dưới dạng lỗi gRPC.",
+   "metadataEventMatchesPath khớp mọi path khi pathPrefix rỗng (strings.HasPrefix với \"\"), bất kể pathPrefixes hay directories nói gì; một subscription có ý 'chỉ các thư mục này' phải truyền một prefix không rỗng mà nó không bao giờ khớp.",
+   "IsOlderDir coi một thư mục là cũ một khi crtime của nó đã qua hơn 3 giây."
   ]
  },
  "weed/pb/filer_pb/filer_client.go": {
-  "character": "The FilerClient interface and the generic entry operations built on it: get, paginated list with a snapshot boundary, exists, mkdir, mkfile, remove",
-  "what": "FilerClient is anything with WithFilerClient(streaming, fn), AdjustedUrl and GetDataCenter. GetEntry returns an entry with the log position and signature the filer stamped. ReadDirAllEntriesWithSnapshot pages a whole directory 10,000 entries at a time; the first page's snapshot_ts_ns (in a response, or in the stream trailer for an empty listing) is sent back on every later page so the whole walk reports one listing time, and a full page that does not advance its cursor is an error. DoSeaweedListWithSnapshot asks for limit+1 entries to know which one is last, holds each entry back one step so fn learns isLast, and carries OmitChunks from the context. Exists compares the entry's directory flag. Mkdir / MkdirExclusive (O_EXCL; a taken name is returned after the failover callback, so it is not counted against the filer) and MkFile build entries owned by the process uid/gid. Remove / DoRemoveRequest delete and treat a not-found answer as success.",
-  "why": "Consequence: a cache built from a listing (a mount's directory cache) must replay the metadata events that happened after the listing and only those, so it needs one listing time for the whole walk. Design: the filer only stamps and echoes that time (filer_grpc_server.go ListEntries passes nothing to the store), so later pages still read live data; the snapshot travels in a trailer for empty pages because older consumers would read a snapshot-only response as an entry. MkdirExclusive returns the collision outside the callback because failover helpers retry a callback error on the next filer.",
-  "when": "s3api (bucket and directory creation, listings, removes), shell commands, mounts, replication sinks and admin tools.",
-  "ux": "Consistent directory listings and idempotent deletes.",
-  "if_broken": "Listings loop forever or drop entries; deletes fail on already-missing entries; exclusive creates are retried across filers until they appear to succeed.",
+  "character": "Interface FilerClient và các thao tác entry chung dựng trên nó: get, list phân trang với ranh giới snapshot, exists, mkdir, mkfile, remove",
+  "what": "FilerClient là bất cứ thứ gì có WithFilerClient(streaming, fn), AdjustedUrl và GetDataCenter. GetEntry trả một entry kèm vị trí log và chữ ký mà filer đã đóng dấu. ReadDirAllEntriesWithSnapshot phân trang toàn bộ thư mục 10,000 entry mỗi lần; snapshot_ts_ns của trang đầu (trong một response, hoặc trong stream trailer với listing rỗng) được gửi lại ở mọi trang sau để toàn bộ lượt duyệt báo cùng một thời điểm listing, và một trang đầy mà không tiến cursor là lỗi. DoSeaweedListWithSnapshot xin limit+1 entry để biết entry nào là cuối, giữ lại mỗi entry một bước để fn biết isLast, và mang OmitChunks từ context. Exists so cờ thư mục của entry. Mkdir / MkdirExclusive (O_EXCL; một tên đã bị chiếm được trả về sau failover callback, nên không bị tính cho filer) và MkFile dựng entry thuộc uid/gid của process. Remove / DoRemoveRequest xoá và coi câu trả lời not-found là thành công.",
+  "why": "Hệ quả: một cache dựng từ listing (directory cache của mount) phải phát lại đúng các metadata event xảy ra sau listing và chỉ những event đó, nên nó cần một thời điểm listing cho cả lượt duyệt. Thiết kế: filer chỉ đóng dấu và trả lại thời điểm đó (ListEntries trong filer_grpc_server.go không truyền gì xuống store), nên các trang sau vẫn đọc dữ liệu sống; snapshot đi trong trailer cho trang rỗng vì consumer cũ sẽ đọc một response chỉ có snapshot thành một entry. MkdirExclusive trả va chạm bên ngoài callback vì các helper failover retry lỗi callback trên filer kế tiếp.",
+  "when": "s3api (tạo bucket và thư mục, listing, xoá), lệnh shell, mount, replication sink và công cụ admin.",
+  "ux": "Directory listing nhất quán và thao tác xoá idempotent.",
+  "if_broken": "Listing lặp vô tận hoặc rơi entry; thao tác xoá thất bại với entry đã mất sẵn; create độc quyền bị retry qua các filer cho tới khi có vẻ thành công.",
   "gotchas": [
-   "DoRemoveRequest treats any error whose text contains the not-found message as success and then returns a nil response; RemoveWithResponse callers must nil-check it.",
-   "MkFile and Mkdir stamp OS_UID/OS_GID of the calling process, not of an S3 identity.",
-   "A first listing that returns no entries and comes from a filer without the trailer reports snapshot 0, which callers such as CompleteDirectoryBuild read as 'no server snapshot' (author comment).",
-   "snapshot_ts_ns is not a store snapshot: the filer stamps time.Now() on the first page and echoes the caller's value afterwards, so entries created, renamed or deleted between pages can still be skipped or repeated."
+   "DoRemoveRequest coi mọi lỗi có text chứa thông điệp not-found là thành công rồi trả response nil; caller của RemoveWithResponse phải kiểm tra nil.",
+   "MkFile và Mkdir đóng dấu OS_UID/OS_GID của process gọi, không phải của một S3 identity.",
+   "Một listing đầu tiên không trả entry nào và đến từ filer không có trailer báo snapshot 0, thứ mà các caller như CompleteDirectoryBuild đọc là 'không có server snapshot' (comment của tác giả).",
+   "snapshot_ts_ns không phải store snapshot: filer đóng dấu time.Now() ở trang đầu và trả lại giá trị của caller sau đó, nên entry được tạo, đổi tên hoặc xoá giữa các trang vẫn có thể bị bỏ sót hoặc lặp lại."
   ]
  },
  "weed/pb/filer_pb/filer_client_bfs.go": {
-  "character": "Client-side breadth-first tree walk and the consumer of the filer's server-side BFS metadata stream",
-  "what": "TraverseBfs walks a tree with 5 workers sharing a queue: each worker lists one directory fully (ReadDirAllEntries), calls fn for every entry and enqueues subdirectories. A visited set drops a directory delivered twice, the first error cancels the walk and is returned, and idle workers poll the queue every 50 ms. StreamBfs reads a TraverseBfsMetadata stream and calls fn with each entry's directory, entry and per-path commit timestamp.",
-  "why": "Consequence: a directory listed twice (a page-boundary race with a concurrent rename, or a store whose order misbehaves) would make the walk re-list the same subtree, possibly without end. Design: a pending counter, not channel closure, decides when the walk is done, because workers both consume and produce work.",
-  "when": "TraverseBfs: shell and maintenance walks. StreamBfs: filer.go's metadata catch-up from a peer (loading a snapshot of another filer's tree).",
-  "ux": "None directly.",
-  "if_broken": "Tree walks hang, repeat subtrees or stop early without an error.",
+  "character": "Duyệt cây theo chiều rộng phía client và consumer của BFS metadata stream phía server của filer",
+  "what": "TraverseBfs duyệt một cây với 5 worker dùng chung một hàng đợi: mỗi worker list trọn một thư mục (ReadDirAllEntries), gọi fn cho mọi entry và đưa các thư mục con vào hàng đợi. Một tập visited bỏ thư mục được giao hai lần, lỗi đầu tiên huỷ lượt duyệt và được trả về, và worker rảnh hỏi hàng đợi mỗi 50 ms. StreamBfs đọc một stream TraverseBfsMetadata và gọi fn với thư mục, entry và commit timestamp theo path của từng entry.",
+  "why": "Hệ quả: một thư mục bị list hai lần (race ở ranh giới trang với một rename đồng thời, hoặc một store có thứ tự trục trặc) sẽ khiến lượt duyệt list lại cùng cây con, có thể không bao giờ dứt. Thiết kế: một bộ đếm pending, không phải việc đóng channel, quyết định khi nào lượt duyệt xong, vì worker vừa tiêu thụ vừa sinh ra việc.",
+  "when": "TraverseBfs: các lượt duyệt của shell và bảo trì. StreamBfs: việc bắt kịp metadata từ một peer của filer.go (nạp snapshot cây của filer khác).",
+  "ux": "Không có trực tiếp.",
+  "if_broken": "Duyệt cây treo, lặp lại cây con hoặc dừng sớm mà không báo lỗi.",
   "gotchas": [
-   "StreamBfs's olderThanTsNs is only logged; it is not sent in the request, so any time filtering is up to fn.",
-   "fn runs concurrently from five goroutines and must be safe for that."
+   "olderThanTsNs của StreamBfs chỉ được log; nó không được gửi trong request, nên mọi việc lọc theo thời gian tuỳ vào fn.",
+   "fn chạy đồng thời từ năm goroutine và phải an toàn với điều đó."
   ]
  },
  "weed/pb/filer_pb/filer_client_dfs.go": {
-  "character": "A resumable depth-first tree walk that reports how far it got",
-  "what": "TraverseDfs walks under a path in listing order, 1024 entries per page. Files before the next directory are passed to fn concurrently (up to 5 at a time, visitDfsRun), and progress receives each file only once every entry before it is done; a directory is reported after its whole subtree. Given resumeAfter (a path previously reported), the walk starts inclusively at each component of that path, skipping what was done and descending into the directory it stopped in. A full page that does not advance is an error.",
-  "why": "Consequence: a long metadata backup interrupted midway would otherwise start over. Design: depth-first in listing order makes one path a complete checkpoint: everything before it, and the subtree of a directory it names, is done.",
-  "when": "weed filer.meta.backup (command/filer_meta_backup.go), the only caller.",
-  "ux": "A restarted filer.meta.backup resumes where it stopped.",
-  "if_broken": "Backups restart from the beginning, skip entries after a resume, or hang on a store whose ordering does not advance.",
+  "character": "Một lượt duyệt cây theo chiều sâu có thể tiếp tục và báo đã đi được bao xa",
+  "what": "TraverseDfs duyệt dưới một path theo thứ tự listing, 1024 entry mỗi trang. Các file trước thư mục kế tiếp được giao cho fn đồng thời (tới 5 cùng lúc, visitDfsRun), và progress nhận mỗi file chỉ khi mọi entry trước nó đã xong; một thư mục được báo sau toàn bộ cây con của nó. Khi có resumeAfter (một path đã báo trước đó), lượt duyệt bắt đầu bao gồm tại từng thành phần của path đó, bỏ qua những gì đã xong và đi xuống thư mục nơi nó đã dừng. Một trang đầy mà không tiến là lỗi.",
+  "why": "Hệ quả: một lần metadata backup dài bị gián đoạn giữa chừng nếu không sẽ phải bắt đầu lại. Thiết kế: chiều sâu theo thứ tự listing làm một path thành một checkpoint trọn vẹn: mọi thứ trước nó, và cây con của thư mục nó nêu tên, đều đã xong.",
+  "when": "weed filer.meta.backup (command/filer_meta_backup.go), caller duy nhất.",
+  "ux": "Một filer.meta.backup được khởi động lại tiếp tục từ chỗ nó đã dừng.",
+  "if_broken": "Backup bắt đầu lại từ đầu, bỏ sót entry sau khi tiếp tục, hoặc treo trên một store có thứ tự không tiến.",
   "gotchas": [
-   "progress is called unconditionally; a nil progress callback panics.",
-   "fn may run concurrently for the files of one directory."
+   "progress được gọi vô điều kiện; một progress callback nil sẽ panic.",
+   "fn có thể chạy đồng thời cho các file của một thư mục."
   ]
  },
  "weed/pb/filer_pb/filer_pb_event_scan.go": {
-  "character": "A hand-written protobuf scanner that reads only the fields the subscription matcher needs from a logged metadata event",
-  "what": "ScanMetadataEventSkeleton walks a marshaled SubscribeMetadataResponse with protowire and keeps directory, ts_ns and, from the event notification, the old and new entry names and new_parent_path, skipping every other field (chunk lists above all). It returns ok=false on any malformed input or on a repeated message field (which protobuf would merge), telling the caller to fall back to a full unmarshal. Entry names follow proto's last-occurrence-wins rule.",
-  "why": "Consequence: a metadata subscriber that watches one prefix makes the filer test every logged event against it; unmarshaling whole entries with their chunk lists just to read two names dominated that cost. Design: decode only the matcher's inputs, and fully decode only events that match.",
-  "when": "filer_grpc_server_sub_meta.go, when replaying persisted log entries for a subscription.",
-  "ux": "Lower filer CPU for many narrow subscribers (mounts, S3 gateways).",
-  "if_broken": "Subscribers miss events (a field misread) or the filer burns CPU decoding every event in full.",
+  "character": "Một bộ quét protobuf viết tay chỉ đọc những trường mà bộ khớp subscription cần từ một metadata event đã log",
+  "what": "ScanMetadataEventSkeleton duyệt một SubscribeMetadataResponse đã marshal bằng protowire và giữ directory, ts_ns và, từ event notification, tên entry cũ và mới cùng new_parent_path, bỏ qua mọi trường khác (trên hết là danh sách chunk). Nó trả ok=false với mọi input sai dạng hoặc với một trường message lặp lại (thứ mà protobuf sẽ gộp), báo caller rơi về unmarshal đầy đủ. Tên entry theo quy tắc last-occurrence-wins của proto.",
+  "why": "Hệ quả: một metadata subscriber theo dõi một prefix khiến filer kiểm tra mọi event đã log với nó; unmarshal cả entry cùng danh sách chunk chỉ để đọc hai cái tên chiếm phần lớn chi phí đó. Thiết kế: chỉ decode input của bộ khớp, và chỉ decode đầy đủ các event khớp.",
+  "when": "filer_grpc_server_sub_meta.go, khi phát lại các log entry đã lưu cho một subscription.",
+  "ux": "CPU của filer thấp hơn khi có nhiều subscriber hẹp (mount, S3 gateway).",
+  "if_broken": "Subscriber bỏ lỡ event (một trường bị đọc sai) hoặc filer đốt CPU decode đầy đủ mọi event.",
   "gotchas": [
-   "The skeleton's entries carry only names; nothing but the matcher may consume it, and a matching event must still be fully unmarshaled before it is sent."
+   "Các entry của skeleton chỉ mang tên; không gì ngoài bộ khớp được dùng nó, và một event khớp vẫn phải được unmarshal đầy đủ trước khi gửi đi."
   ]
  },
  "weed/server/filer_grpc_server.go": {
-  "character": "The filer's core gRPC handlers: entry lookup and listing, create/update/delete/append, ObjectTransaction and its batch, volume assignment and collections",
-  "what": "LookupDirectoryEntry reads through fencedFindEntry, which stamps a log position under the path's shared lock so the answer reflects every event at or below it. ListEntries streams StreamListDirectoryEntries pages up to the limit (default DirListingLimit), drops chunks for omit_chunks after stamping FileSize, sends a listing time (the caller's snapshot_ts_ns or now) on the first entry and in the trailer. CreateEntry, UpdateEntry and DeleteEntry first forward to the key's ring write owner when the request is exclusive or conditional (O_EXCL, WriteCondition, expected_extended), then take the per-path exclusive lock, stamp the log fence, evaluate preconditions on the current entry, diff chunks against the old entry (cleanupChunks: MinusChunks, CompactFileChunks to drop covered chunks, MaybeManifestize), apply the storage rule (read-only prefixes reject, rule TTL fills a missing one) and commit, deleting garbage chunks only after a successful write and returning the metadata event. ObjectTransaction forwards to the owner of route_key (one hop, is_moved), locks lock_key, replays a recorded outcome for a repeated request_id, checks the request condition (against condition_key, with the condition_alt_key fallback that resolves the latest version through the .versions pointer and treats a bare implicit directory as absent), then applies each mutation in order with its own optional condition: PUT, DELETE (optionally removing an emptied parent), PATCH_EXTENDED (set/remove keys, replace content, touch mtime) and RECOMPUTE_LATEST (applyRecomputeLatest: scan the directory, pick the first or last child by name, copy mapped keys, size, mtime and name into the pointer, demote the previous child). ObjectTransactionBatch runs independent transactions in sequence. AppendToEntry appends chunks at the current end under a cluster short-lived lock plus the path lock. AssignVolume resolves the path's storage rule and asks the master, returning the replica holders and the rule's fsync. Also LookupVolume, CollectionList, DeleteCollection.",
-  "why": "Consequence: the S3 gateway's conditional PUT, versioned writes, delete markers, multipart completion and object-lock guards all commit through these handlers, so their atomicity is the gateway's atomicity. Design: the store's insert is an upsert, so a check-then-write is only atomic under one lock; routing every exclusive or conditional write of a key to one ring owner makes that owner's per-path lock the cluster-wide serialization point without a distributed lock round trip. Outcomes of a transaction are replayed rather than re-run on a retried request_id, because a re-run could write a stale mutation over whatever superseded it. Read-only and other verdicts are returned in the response body with a code, since clients treat gRPC errors as transport failures and fail over.",
-  "when": "Every gateway write and lookup via S3ApiServer.withFilerClient; routed writes from s3api_object_routed_write.go and s3api_object_versioned_finalize.go; mounts and shell for the plain calls.",
-  "ux": "S3 clients get atomic If-Match / If-None-Match, consistent latest-version answers and WORM guards; mounts get ordered metadata.",
-  "if_broken": "Conditional writes race and both succeed, versions or delete markers are lost, chunks still referenced by a live entry are deleted, or a retry applies a transaction twice.",
+  "character": "Các gRPC handler lõi của filer: lookup và listing entry, create/update/delete/append, ObjectTransaction cùng bản batch của nó, gán volume và collection",
+  "what": "LookupDirectoryEntry đọc qua fencedFindEntry, hàm đóng dấu một vị trí log dưới shared lock của path để câu trả lời phản ánh mọi event tại hoặc trước vị trí đó. ListEntries stream các trang StreamListDirectoryEntries tới giới hạn (mặc định DirListingLimit), bỏ chunk khi omit_chunks sau khi đã đóng dấu FileSize, gửi một thời điểm listing (snapshot_ts_ns của caller hoặc now) trên entry đầu tiên và trong trailer. CreateEntry, UpdateEntry và DeleteEntry trước tiên chuyển tiếp tới ring write owner của key khi request là độc quyền hoặc có điều kiện (O_EXCL, WriteCondition, expected_extended), rồi lấy per-path exclusive lock, đóng dấu log fence, đánh giá điều kiện tiên quyết trên entry hiện tại, so chunk với entry cũ (cleanupChunks: MinusChunks, CompactFileChunks để bỏ các chunk bị phủ, MaybeManifestize), áp quy tắc lưu trữ (prefix read-only từ chối, TTL của rule điền vào khi thiếu) và commit, chỉ xoá các chunk rác sau một lần ghi thành công và trả về metadata event. ObjectTransaction chuyển tiếp tới owner của route_key (một bước, is_moved), lock lock_key, phát lại kết quả đã ghi nhận cho một request_id lặp lại, kiểm tra điều kiện của request (theo condition_key, với fallback condition_alt_key resolve latest version qua con trỏ .versions và coi một thư mục ngầm định trần là vắng mặt), rồi áp từng mutation theo thứ tự với điều kiện tuỳ chọn riêng của nó: PUT, DELETE (tuỳ chọn gỡ parent đã rỗng), PATCH_EXTENDED (đặt/xoá key, thay content, chạm mtime) và RECOMPUTE_LATEST (applyRecomputeLatest: quét thư mục, chọn con đầu hoặc cuối theo tên, copy các key đã ánh xạ, size, mtime và tên vào con trỏ, hạ con trước đó). ObjectTransactionBatch chạy tuần tự các transaction độc lập. AppendToEntry nối chunk ở cuối hiện tại dưới một cluster short-lived lock cộng path lock. AssignVolume resolve quy tắc lưu trữ của path và hỏi master, trả các bên giữ replica và fsync của rule. Ngoài ra LookupVolume, CollectionList, DeleteCollection.",
+  "why": "Hệ quả: conditional PUT, versioned write, delete marker, complete multipart và guard object-lock của S3 gateway đều commit qua các handler này, nên tính nguyên tử của chúng là tính nguyên tử của gateway. Thiết kế: insert của store là upsert, nên kiểm-rồi-ghi chỉ nguyên tử dưới một lock; route mọi thao tác ghi độc quyền hoặc có điều kiện của một key tới một ring owner khiến per-path lock của owner đó thành điểm tuần tự hoá toàn cluster mà không cần round trip distributed lock. Kết quả của transaction được phát lại thay vì chạy lại với request_id được retry, vì chạy lại có thể ghi một mutation cũ đè lên thứ đã thay thế nó. Read-only và các phán quyết khác được trả trong response body kèm mã, vì client coi lỗi gRPC là lỗi transport và failover.",
+  "when": "Mọi thao tác ghi và lookup của gateway qua S3ApiServer.withFilerClient; các thao tác ghi được route từ s3api_object_routed_write.go và s3api_object_versioned_finalize.go; mount và shell cho các lời gọi thường.",
+  "ux": "Client S3 nhận If-Match / If-None-Match nguyên tử, câu trả lời latest-version nhất quán và guard WORM; mount nhận metadata có thứ tự.",
+  "if_broken": "Các thao tác ghi có điều kiện đua nhau và cùng thành công, version hoặc delete marker bị mất, chunk vẫn được entry sống tham chiếu bị xoá, hoặc một lần retry áp transaction hai lần.",
   "gotchas": [
-   "ObjectTransaction serializes but does not roll back: mutations apply one by one, and a failure at mutation i leaves mutations 0..i-1 applied (failed_mutation tells the caller which).",
-   "The request_id replay record lives in this filer's memory for 2 minutes and at most 10,000 unexpired entries; a filer restart, or a full table (the new record is then dropped), turns a retry into a re-application.",
-   "RECOMPUTE_LATEST with descending order lists the whole scanned directory under the object's lock on every call, since the store has no reverse listing; a key with many versions pays that on each versioned write and delete.",
-   "Plain (unconditional) creates and updates are not forwarded and run under the local filer's lock only.",
-   "UpdateEntry reports a failed condition as codes.FailedPrecondition and a missing entry as codes.NotFound, never in the response body; CreateEntry reports PRECONDITION_FAILED in the body.",
-   "DeleteEntry with expected_extended fails as FailedPrecondition when the entry is missing, even if every expected value asserts absence.",
-   "LookupDirectoryEntry returns the raw ErrNotFound, which crosses gRPC as codes.Unknown with its text; filer_pb.LookupEntry relies on that text.",
-   "AppendToEntry commits with context.Background(), so the caller's deadline and metadata event sink do not reach the store write.",
-   "AssignVolume returns a master assignment failure as text only, without an error_code; only the read-only verdict is coded."
+   "ObjectTransaction tuần tự hoá nhưng không rollback: mutation được áp lần lượt, và một thất bại ở mutation i để lại các mutation 0..i-1 đã áp (failed_mutation báo cho caller biết cái nào).",
+   "Bản ghi phát lại request_id sống trong bộ nhớ của filer này trong 2 phút và tối đa 10,000 entry chưa hết hạn; một lần restart filer, hoặc bảng đầy (bản ghi mới khi đó bị bỏ), biến một lần retry thành một lần áp lại.",
+   "RECOMPUTE_LATEST với thứ tự giảm dần list toàn bộ thư mục được quét dưới lock của object ở mỗi lần gọi, vì store không có listing ngược; một key có nhiều version trả chi phí đó ở mỗi versioned write và delete.",
+   "Create và update thường (không điều kiện) không được chuyển tiếp và chỉ chạy dưới lock của filer cục bộ.",
+   "UpdateEntry báo condition thất bại bằng codes.FailedPrecondition và entry không tồn tại bằng codes.NotFound, không bao giờ trong response body; CreateEntry báo PRECONDITION_FAILED trong body.",
+   "DeleteEntry với expected_extended thất bại thành FailedPrecondition khi entry không tồn tại, kể cả khi mọi giá trị mong đợi đều khẳng định vắng mặt.",
+   "LookupDirectoryEntry trả ErrNotFound thô, vượt qua gRPC dưới dạng codes.Unknown kèm text của nó; filer_pb.LookupEntry dựa vào text đó.",
+   "AppendToEntry commit với context.Background(), nên deadline và metadata event sink của caller không tới được lần ghi store.",
+   "AssignVolume trả lỗi gán của master chỉ dưới dạng text, không có error_code; chỉ phán quyết read-only có mã."
   ]
  },
  "weed/server/filer_grpc_server_condition.go": {
-  "character": "Evaluation of WriteCondition clauses against the current entry, with an ETag that mirrors the S3 gateway's",
-  "what": "writeConditionSatisfied ANDs the clauses. IF_NOT_EXISTS / IF_EXISTS test presence, IF_OBJECT_EXISTS also refuses a plain directory that holds no object of its own (for If-Match: * on a null version, #12624); IF_ETAG_MATCH holds when the entry exists and its ETag is in the set, IF_ETAG_NOT_MATCH when it is absent or in none (RFC 7232 strong comparison unless allow_weak, which ignores W/ on both sides); IF_UNMODIFIED_SINCE / IF_MODIFIED_SINCE compare mtime in whole seconds and hold for an absent entry; IF_EXTENDED_NOT_EQUAL holds unless the key equals the blocking value; IF_EXTENDED_TIME_ELAPSED holds unless the stored unix-second deadline is still in the future (only when the optional gate key equals the gate value, which expresses governance bypass), and an unparseable deadline blocks; IF_CHUNKS_EQUAL compares chunk fids as multisets; IF_ENTRY_EQUAL compares serialized entries with chunks matched by fid. An unknown kind fails closed. storedEntryETag uses the stored S3 ETag attribute, then the remote ETag while the entry still holds the remote bytes, then Md5, then the chunk ETag (empty for an empty object).",
-  "why": "Consequence: object-lock, conditional PUT/DELETE and the chunk-preserving read-modify-write all reduce to these comparisons; a guard that evaluated open would delete a locked object or resurrect deleted needles. Design: generic primitives keep S3 out of the filer; fail-closed defaults (unknown kind, malformed deadline) favour blocking a write over letting it through.",
-  "when": "Under the path lock in CreateEntry, UpdateEntry, ObjectTransaction and its per-mutation guards.",
-  "ux": "412 PreconditionFailed and object-lock refusals that match AWS.",
-  "if_broken": "Conditional writes pass that should fail (overwrites, deleted locked versions) or fail that should pass.",
+  "character": "Đánh giá các mệnh đề WriteCondition trên entry hiện tại, với một ETag phản chiếu ETag của S3 gateway",
+  "what": "writeConditionSatisfied nối AND các mệnh đề. IF_NOT_EXISTS / IF_EXISTS kiểm tra sự có mặt, IF_OBJECT_EXISTS còn từ chối một thư mục thường không giữ object riêng (cho If-Match: * trên null version, #12624); IF_ETAG_MATCH đúng khi entry tồn tại và ETag của nó nằm trong tập, IF_ETAG_NOT_MATCH khi nó vắng mặt hoặc không nằm trong tập nào (so mạnh RFC 7232 trừ khi allow_weak, thứ bỏ qua W/ ở cả hai bên); IF_UNMODIFIED_SINCE / IF_MODIFIED_SINCE so mtime theo giây tròn và đúng với entry vắng mặt; IF_EXTENDED_NOT_EQUAL đúng trừ khi key bằng giá trị chặn; IF_EXTENDED_TIME_ELAPSED đúng trừ khi hạn chót unix-second đã lưu vẫn còn ở tương lai (chỉ khi gate key tuỳ chọn bằng gate value, thứ biểu diễn governance bypass), và một hạn chót không parse được thì chặn; IF_CHUNKS_EQUAL so chunk fid như multiset; IF_ENTRY_EQUAL so các entry đã serialize với chunk khớp theo fid. Loại không biết thì fail closed. storedEntryETag dùng attribute S3 ETag đã lưu, rồi remote ETag khi entry vẫn giữ byte remote, rồi Md5, rồi chunk ETag (rỗng cho object rỗng).",
+  "why": "Hệ quả: object-lock, PUT/DELETE có điều kiện và đọc-sửa-ghi giữ nguyên chunk đều quy về các phép so này; một guard đánh giá thành mở sẽ xoá một object bị lock hoặc làm sống lại needle đã xoá. Thiết kế: các primitive chung giữ S3 ngoài filer; mặc định fail-closed (loại không biết, hạn chót sai dạng) ưu tiên chặn một thao tác ghi hơn là cho qua.",
+  "when": "Dưới path lock trong CreateEntry, UpdateEntry, ObjectTransaction và các guard theo mutation của nó.",
+  "ux": "412 PreconditionFailed và các lời từ chối object-lock khớp với AWS.",
+  "if_broken": "Thao tác ghi có điều kiện lẽ ra phải thất bại lại qua (ghi đè, xoá version bị lock) hoặc lẽ ra qua lại thất bại.",
   "gotchas": [
-   "storedEntryETag must stay in step with the gateway's ETag precedence; a divergence makes If-Match fail on objects whose ETag the client just read.",
-   "Retention deadlines are compared with the filer's clock.",
-   "IF_ENTRY_EQUAL with no expected entry holds only when the entry is absent."
+   "storedEntryETag phải giữ đồng bộ với thứ tự ưu tiên ETag của gateway; lệch nhau khiến If-Match thất bại trên object mà client vừa đọc ETag.",
+   "Hạn chót retention được so với đồng hồ của filer.",
+   "IF_ENTRY_EQUAL không có expected entry chỉ đúng khi entry vắng mặt."
   ]
  },
  "weed/server/filer_grpc_server_route.go": {
-  "character": "Route-by-key plumbing for the filer side: who owns a key's writes, forwarding to it, and verifying a forwarded hop",
-  "what": "writeOwner asks the DLM lock ring for a key's write owner ('' when this filer owns it or there is no ring; a previous owner keeps the key through the cooling-off window of a ring change). forwardToWriteOwner sends the request to the owner and never re-sends it elsewhere on failure. entryRouteKey prefixes the path with the gateway's ObjectWriteRouteKeyPrefix so CreateEntry and an ObjectTransaction of the same object reach the same owner. checkMovedMarker accepts an is_moved request on a non-owner only when it arrived from a ring member's IP (movedFromPeer, with member hostnames resolved in parallel and cached for 5 minutes per membership), else answers PermissionDenied.",
-  "why": "Consequence: a forwarded request lost in transit and one the owner never saw look the same (Unavailable), so a retry on another filer could apply a committed write twice; an unreachable owner may also be partitioned rather than down. Design: fail the request and let the ring hand the key on after the cooling-off window, which bounds the outage. The is_moved marker is caller-controlled, so it is trusted only from ring members, to stop a client from forcing a conditional write under a non-owner's lock.",
-  "when": "Every forwarded CreateEntry, UpdateEntry, DeleteEntry and ObjectTransaction.",
-  "ux": "During an owner outage, writes to its keys fail until the ring moves on.",
-  "if_broken": "Two filers both apply a key's conditional writes (lost atomicity), or forwards loop between filers that disagree on the ring.",
+  "character": "Phần ống nước route-by-key phía filer: ai sở hữu thao tác ghi của một key, chuyển tiếp tới nó, và xác minh một bước được chuyển tiếp",
+  "what": "writeOwner hỏi DLM lock ring về write owner của một key ('' khi filer này sở hữu nó hoặc không có ring; owner trước giữ key qua cửa sổ cooling-off của một lần đổi ring). forwardToWriteOwner gửi request tới owner và không bao giờ gửi lại nơi khác khi thất bại. entryRouteKey thêm ObjectWriteRouteKeyPrefix của gateway vào đầu path để CreateEntry và một ObjectTransaction của cùng object tới cùng owner. checkMovedMarker chỉ chấp nhận một request is_moved trên một filer không phải owner khi nó tới từ IP của một thành viên ring (movedFromPeer, với hostname của thành viên được resolve song song và cache 5 phút cho mỗi membership), ngược lại trả PermissionDenied.",
+  "why": "Hệ quả: một request được chuyển tiếp bị mất trên đường và một request mà owner chưa từng thấy trông giống nhau (Unavailable), nên một lần retry trên filer khác có thể áp hai lần một thao tác ghi đã commit; một owner không liên lạc được cũng có thể bị phân vùng chứ không phải đã chết. Thiết kế: làm request thất bại và để ring chuyển key đi sau cửa sổ cooling-off, điều giới hạn thời gian gián đoạn. Marker is_moved do caller kiểm soát, nên nó chỉ được tin khi đến từ thành viên ring, để ngăn client ép một thao tác ghi có điều kiện chạy dưới lock của một filer không phải owner.",
+  "when": "Mọi CreateEntry, UpdateEntry, DeleteEntry và ObjectTransaction được chuyển tiếp.",
+  "ux": "Trong lúc owner gián đoạn, thao tác ghi vào key của nó thất bại cho tới khi ring chuyển đi.",
+  "if_broken": "Hai filer cùng áp các thao tác ghi có điều kiện của một key (mất tính nguyên tử), hoặc việc chuyển tiếp lặp giữa các filer bất đồng về ring.",
   "gotchas": [
-   "movedFromPeer checks the peer IP only: any process on a ring member's host (for example an S3 gateway co-located with a filer) can send an accepted is_moved.",
-   "A failed DNS lookup of a member is not cached, so the next forwarded request resolves again."
+   "movedFromPeer chỉ kiểm tra IP của peer: bất kỳ process nào trên host của một thành viên ring (ví dụ một S3 gateway chạy cùng chỗ với filer) đều gửi được một is_moved được chấp nhận.",
+   "Một lần lookup DNS thất bại của một thành viên không được cache, nên request được chuyển tiếp kế tiếp lại resolve."
   ]
  },
  "weed/server/filer_grpc_server_admin.go": {
-  "character": "Cluster-facing informational RPCs of the filer: statistics, ping and its configuration",
-  "what": "Statistics relays the master's capacity numbers (total, used, file count and their single-copy logical forms), asking with the filer's default replication when the caller names none, so free space is sized by the copies this filer's writes will make. Ping answers a self-probe for an empty target and otherwise only pings a peer the filer already knows: a filer the meta aggregator follows, a volume server the master client reports, or a configured or discovered master; it returns the start, remote and stop times. GetFilerConfiguration returns masters, default collection and replication, max chunk MB, the buckets directory, cipher flag, signature, metrics push settings, version and filer group.",
-  "why": "Consequence: an unrestricted Ping would make the filer an arbitrary outbound dialer for anyone who can reach its gRPC port. Design: target allow-list from state the filer already holds, all O(1) lookups. GetFilerConfiguration is how clients (the S3 gateway, mounts, shell) learn the buckets path, cipher mode and signature instead of being configured twice.",
-  "when": "S3 gateway startup (GetFilerConfiguration for DirBuckets, cipher and filer group), weed shell cluster.check and volume tools (Ping, Statistics), mounts.",
-  "ux": "Correct free-space numbers in df-style views; health checks that reach only cluster members.",
-  "if_broken": "The gateway uses the wrong buckets path or cipher setting, capacity is misreported by a factor of the replica count, or Ping becomes an SSRF primitive.",
+  "character": "Các RPC thông tin hướng cluster của filer: thống kê, ping và cấu hình của nó",
+  "what": "Statistics chuyển tiếp các số liệu dung lượng của master (total, used, số file và dạng logic một bản sao của chúng), hỏi với default replication của filer khi caller không nêu, để dung lượng trống được tính theo số bản sao mà thao tác ghi của filer này sẽ tạo. Ping trả lời một lần tự dò với target rỗng và ngược lại chỉ ping một peer mà filer đã biết: một filer mà meta aggregator theo dõi, một volume server mà master client báo, hoặc một master được cấu hình hay phát hiện; nó trả thời điểm bắt đầu, remote và dừng. GetFilerConfiguration trả master, default collection và replication, max chunk MB, thư mục buckets, cờ cipher, chữ ký, thiết lập metrics push, phiên bản và filer group.",
+  "why": "Hệ quả: một Ping không giới hạn sẽ biến filer thành một bộ dial ra ngoài tuỳ ý cho bất kỳ ai tới được cổng gRPC của nó. Thiết kế: allow-list target từ trạng thái mà filer đã giữ, mọi lookup là O(1). GetFilerConfiguration là cách client (S3 gateway, mount, shell) biết buckets path, chế độ cipher và chữ ký thay vì phải cấu hình hai lần.",
+  "when": "Lúc S3 gateway khởi động (GetFilerConfiguration cho DirBuckets, cipher và filer group), weed shell cluster.check và các công cụ volume (Ping, Statistics), mount.",
+  "ux": "Số liệu dung lượng trống đúng trong các view kiểu df; health check chỉ tới được thành viên cluster.",
+  "if_broken": "Gateway dùng sai buckets path hay thiết lập cipher, dung lượng bị báo sai theo hệ số số replica, hoặc Ping trở thành một công cụ SSRF.",
   "gotchas": [
-   "Ping to a master dials with context.Background(), so the caller's deadline bounds only the Ping RPC, not the connection setup."
+   "Ping tới một master dial bằng context.Background(), nên deadline của caller chỉ chặn RPC Ping, không chặn việc thiết lập kết nối."
   ]
  },
  "weed/server/filer_grpc_server_kv.go": {
-  "character": "The filer store's key-value side door over gRPC",
-  "what": "KvGet reads a raw key from the filer store (a missing key is an empty value, not an error); KvPut writes it, and an empty value deletes the key. Store errors come back in the response's error string.",
-  "why": "Design: small cluster state that is not a file (sync offsets, checkpoints, tool state) lives in the same store as the metadata, so it is as durable and replicated as the store itself.",
-  "when": "filer.sync / replication offsets, filer.remote.sync and other tools that persist a cursor.",
-  "ux": "None directly.",
-  "if_broken": "Sync tools lose their checkpoint and replay or skip changes.",
+  "character": "Cửa phụ key-value của filer store qua gRPC",
+  "what": "KvGet đọc một key thô từ filer store (key không tồn tại là giá trị rỗng, không phải lỗi); KvPut ghi nó, và giá trị rỗng xoá key. Lỗi store trả về trong chuỗi error của response.",
+  "why": "Thiết kế: trạng thái cluster nhỏ không phải file (offset sync, checkpoint, trạng thái công cụ) nằm trong cùng store với metadata, nên nó bền và được replicate như chính store.",
+  "when": "Offset của filer.sync / replication, filer.remote.sync và các công cụ khác lưu một cursor.",
+  "ux": "Không có trực tiếp.",
+  "if_broken": "Công cụ sync mất checkpoint và phát lại hoặc bỏ qua thay đổi.",
   "gotchas": [
-   "There is no way to store an empty value: KvPut with an empty value is a delete.",
-   "The RPCs carry no per-key authorization; access is whatever the filer's gRPC transport security allows."
+   "Không có cách lưu giá trị rỗng: KvPut với giá trị rỗng là thao tác xoá.",
+   "Các RPC không mang phân quyền theo key; quyền truy cập là bất cứ gì bảo mật transport gRPC của filer cho phép."
   ]
  },
  "weed/server/filer_grpc_server_mount_peer.go": {
-  "character": "gRPC face of the mount peer registry used for peer-to-peer chunk sharing",
-  "what": "MountRegister records or refreshes a mount's advertised peer address with its data center, rack and TTL; MountList returns the live entries with their last-seen times. runMountPeerRegistrySweeper evicts expired entries every 60 s (List also evicts lazily).",
-  "why": "Consequence: mounts that read the same data can fetch chunks from each other instead of from volume servers, which needs a shared view of who is alive. Design: a soft-state registry with TTL heartbeats; each mount builds its rendezvous-hash view from MountList.",
-  "when": "weed mount with peer chunk sharing enabled: periodic register and list.",
-  "ux": "Lower volume-server load and faster repeated reads across mounts.",
-  "if_broken": "Mounts stop sharing chunks (more volume reads) or keep sending requests to departed peers.",
+  "character": "Mặt gRPC của mount peer registry dùng cho chia sẻ chunk peer-to-peer",
+  "what": "MountRegister ghi nhận hoặc làm mới địa chỉ peer được quảng bá của một mount cùng data center, rack và TTL; MountList trả các entry còn sống kèm thời điểm thấy lần cuối. runMountPeerRegistrySweeper loại các entry hết hạn mỗi 60 s (List cũng loại một cách lười biếng).",
+  "why": "Hệ quả: các mount đọc cùng dữ liệu có thể lấy chunk từ nhau thay vì từ volume server, việc cần một cái nhìn chung về ai còn sống. Thiết kế: một registry soft-state với heartbeat TTL; mỗi mount dựng view rendezvous-hash của nó từ MountList.",
+  "when": "weed mount bật chia sẻ chunk peer: đăng ký và list định kỳ.",
+  "ux": "Tải volume server thấp hơn và đọc lặp lại nhanh hơn giữa các mount.",
+  "if_broken": "Mount ngừng chia sẻ chunk (đọc volume nhiều hơn) hoặc tiếp tục gửi request tới các peer đã rời đi.",
   "gotchas": [
-   "The advertised peer_addr and the TTL are taken from the request as given; the filer does not check them against the caller's address."
+   "peer_addr được quảng bá và TTL được lấy nguyên từ request; filer không đối chiếu chúng với địa chỉ của caller."
   ]
  },
  "weed/server/filer_grpc_server_subscribers.go": {
-  "character": "Registry record and listing RPC for this filer's connected metadata subscribers",
-  "what": "metadataSubscriber holds one connected subscriber (name '<type>@<address>', type, address, path prefix, client id and epoch, connect time), created on subscribe and removed on disconnect under knownListenersLock. ListMetadataSubscribers returns them, optionally filtered by client type, sorted by name then prefix, each tagged with this filer's address.",
-  "why": "Design: an admin view of who is following metadata (mounts, S3 gateways, filer.sync, peer filers) without scraping logs. Each filer knows only its own subscribers, so a cluster view queries every filer.",
-  "when": "The admin UI and shell tools listing subscribers.",
-  "ux": "Operators can see which mounts and gateways are connected.",
-  "if_broken": "The admin page shows stale or missing subscribers.",
+  "character": "Bản ghi registry và RPC liệt kê các metadata subscriber đang kết nối với filer này",
+  "what": "metadataSubscriber giữ một subscriber đang kết nối (tên '<type>@<address>', type, address, path prefix, client id và epoch, thời điểm kết nối), được tạo khi subscribe và gỡ khi ngắt kết nối dưới knownListenersLock. ListMetadataSubscribers trả chúng, tuỳ chọn lọc theo client type, sắp theo tên rồi prefix, mỗi cái được gắn địa chỉ của filer này.",
+  "why": "Thiết kế: một view admin về ai đang theo dõi metadata (mount, S3 gateway, filer.sync, filer peer) mà không cần cào log. Mỗi filer chỉ biết subscriber của chính nó, nên một view toàn cluster phải hỏi mọi filer.",
+  "when": "Admin UI và các công cụ shell liệt kê subscriber.",
+  "ux": "Người vận hành thấy được mount và gateway nào đang kết nối.",
+  "if_broken": "Trang admin hiện subscriber cũ hoặc thiếu.",
   "gotchas": []
  },
  "weed/server/filer_grpc_server_batch_lookup.go": {
-  "character": "The batched exact-path lookup RPC: up to 4096 entries in one call, with their volume locations and read tokens",
-  "what": "LookupDirectoryEntries validates the batch (1 to 4096 requests, absolute directories, a plain name without '/', '.', '..' or NUL), looks the paths up with up to 32 workers through fencedFindEntry (each result keeps its own log fence), keeping request order. A miss is found=false, a lookup error is an error on that item. It then collects the volume ids of every found entry's chunks and resolves them in one deduplicated master lookup: from the cache, or authoritatively when the caller set unavailable_volume_is_miss. A volume with no locations marks every entry that uses it with an error, except that for a cache caller an authoritative 'master does not serve it' turns the entry into a miss. When volume read guarding is on, each chunk fid gets a short-lived read JWT in read_auth.",
-  "why": "Consequence: clients that resolve many small objects (mount caches, gateways) paid one RPC per path and then one volume lookup per entry. Design: one bounded RPC and one location map; per-item fences so a cache can order each result against the metadata events it has seen. DeletedVids is a best-effort invalidation hint, so a cache that treats an unknown volume as a miss must confirm with the master rather than its own cache. Exact-fid tokens let a data-plane client read just these needles instead of holding a service credential for all of them.",
-  "when": "Mounts and other cache clients resolving many paths at once.",
-  "ux": "Faster cold reads of many small files.",
-  "if_broken": "Caches serve entries whose volumes are gone, or misses that are really transient master failures.",
+  "character": "RPC lookup path chính xác theo lô: tới 4096 entry trong một lời gọi, kèm volume location và read token của chúng",
+  "what": "LookupDirectoryEntries kiểm tra lô (1 tới 4096 request, thư mục tuyệt đối, một tên trần không có '/', '.', '..' hay NUL), lookup các path với tới 32 worker qua fencedFindEntry (mỗi kết quả giữ log fence riêng), giữ thứ tự request. Một miss là found=false, một lỗi lookup là lỗi trên mục đó. Rồi nó gom volume id của chunk của mọi entry tìm thấy và resolve chúng trong một lần master lookup đã khử trùng: từ cache, hoặc một cách có thẩm quyền khi caller đặt unavailable_volume_is_miss. Một volume không có location đánh dấu lỗi mọi entry dùng nó, ngoại trừ với caller kiểu cache thì câu trả lời có thẩm quyền 'master không phục vụ nó' biến entry thành miss. Khi bật volume read guarding, mỗi chunk fid nhận một read JWT sống ngắn trong read_auth.",
+  "why": "Hệ quả: client resolve nhiều object nhỏ (cache của mount, gateway) từng trả một RPC cho mỗi path rồi một lần volume lookup cho mỗi entry. Thiết kế: một RPC có giới hạn và một location map; fence theo mục để cache sắp thứ tự từng kết quả so với các metadata event nó đã thấy. DeletedVids là gợi ý vô hiệu hoá best-effort, nên một cache coi volume không biết là miss phải xác nhận với master thay vì cache của chính nó. Token theo fid chính xác cho client data-plane chỉ đọc đúng các needle này thay vì giữ service credential cho tất cả.",
+  "when": "Mount và các client cache khác resolve nhiều path cùng lúc.",
+  "ux": "Đọc nguội nhiều file nhỏ nhanh hơn.",
+  "if_broken": "Cache phục vụ entry có volume đã mất, hoặc miss mà thực ra là lỗi master tạm thời.",
   "gotchas": [
-   "Locations and read tokens cover the entry's own chunks; for a manifest chunk that is the manifest needle's volume, not the volumes of the data chunks the manifest lists."
+   "Location và read token bao phủ chunk của chính entry; với manifest chunk đó là volume của manifest needle, không phải volume của các data chunk mà manifest liệt kê."
   ]
  },
  "weed/server/filer_grpc_server_dlm.go": {
-  "character": "The distributed lock manager's gRPC face: lock, unlock and owner lookup with one-hop forwarding, plus primary-to-backup replication and hand-off on ring changes",
-  "what": "DistributedLock asks the local DLM to take or renew a named lock until now + seconds_to_lock; when the ring says another filer is the lock's host it forwards once (is_moved, checked with checkMovedMarker) and returns that filer's token, owner, generation and error, plus lock_host_moved_to. DistributedUnlock and FindLockOwner forward the same way; an unknown lock is NotFound. ReplicateLock applies a primary's insert or unlock on this backup, ordered by generation and seq. TransferLocks inserts locks handed over by another filer. OnDlmChangeSnapshot, run on every ring change, promotes backup locks this filer now owns and re-replicates them, transfers primary locks to their new primary before demoting them (keeping them if the transfer fails), and hands off locks it no longer holds any role for. SetupDlmReplication installs the replication callback (3 s timeout, failures only logged).",
-  "why": "Consequence: the S3 gateway's object write lock, AppendToEntry and other cluster-wide mutual exclusion depend on a lock surviving the loss of the filer holding it. Design: each lock has a primary and a backup on the consistent-hash ring, replication is asynchronous with sequence numbers so stale mutations are rejected, and a primary demotes only after a successful hand-off.",
-  "when": "cluster.LockClient users: the S3 gateway's distributed object write lock (the fallback path when route-by-key is unavailable), AppendToEntry, shell and admin exclusive operations.",
-  "ux": "Concurrent writers to one key serialize; a filer restart does not drop held locks.",
-  "if_broken": "Two holders of the same lock (lost writes), or locks that never release and block writers until expiry.",
+  "character": "Mặt gRPC của distributed lock manager: lock, unlock và lookup owner với chuyển tiếp một bước, cùng replication từ primary sang backup và bàn giao khi ring thay đổi",
+  "what": "DistributedLock nhờ DLM cục bộ lấy hoặc gia hạn một lock có tên tới now + seconds_to_lock; khi ring nói một filer khác là host của lock, nó chuyển tiếp một lần (is_moved, kiểm tra bằng checkMovedMarker) và trả token, owner, generation và lỗi của filer đó, cộng lock_host_moved_to. DistributedUnlock và FindLockOwner chuyển tiếp theo cùng cách; một lock không biết là NotFound. ReplicateLock áp một insert hoặc unlock của primary lên backup này, sắp thứ tự theo generation và seq. TransferLocks chèn các lock được filer khác bàn giao. OnDlmChangeSnapshot, chạy ở mọi lần thay đổi ring, nâng các backup lock mà filer này giờ sở hữu và replicate lại chúng, chuyển primary lock tới primary mới trước khi hạ chúng (giữ lại nếu chuyển thất bại), và bàn giao các lock mà nó không còn vai trò nào. SetupDlmReplication cài replication callback (timeout 3 s, lỗi chỉ được log).",
+  "why": "Hệ quả: object write lock của S3 gateway, AppendToEntry và các loại loại trừ lẫn nhau toàn cluster khác phụ thuộc vào việc một lock sống sót khi mất filer đang giữ nó. Thiết kế: mỗi lock có một primary và một backup trên consistent-hash ring, replication là bất đồng bộ với số thứ tự để mutation cũ bị từ chối, và một primary chỉ hạ cấp sau khi bàn giao thành công.",
+  "when": "Người dùng cluster.LockClient: distributed object write lock của S3 gateway (đường fallback khi route-by-key không có sẵn), AppendToEntry, các thao tác độc quyền của shell và admin.",
+  "ux": "Các bên ghi đồng thời vào một key được tuần tự hoá; một lần restart filer không làm rơi các lock đang giữ.",
+  "if_broken": "Hai bên cùng giữ một lock (mất thao tác ghi), hoặc lock không bao giờ nhả và chặn bên ghi cho tới khi hết hạn.",
   "gotchas": [
-   "TransferLocks and ReplicateLock take no is_moved or peer check: any client that reaches the filer's gRPC port can insert a lock with any token and owner.",
-   "seconds_to_lock comes from the request without an upper bound.",
-   "Replication to the backup is fire-and-forget; a lock acquired just before its primary dies may not exist on the backup that is promoted."
+   "TransferLocks và ReplicateLock không kiểm tra is_moved hay peer: bất kỳ client nào tới được cổng gRPC của filer đều chèn được một lock với token và owner bất kỳ.",
+   "seconds_to_lock lấy từ request không có cận trên.",
+   "Replication sang backup là bắn-rồi-quên; một lock lấy ngay trước khi primary của nó chết có thể không tồn tại trên backup được nâng lên."
   ]
  },
  "weed/server/filer_grpc_server_posix_lock.go": {
-  "character": "Advisory POSIX and flock locks for weed mount, held in the owner filer's memory with leases, warm-up and a cooling-window probe",
-  "what": "PosixLock resolves the inode key's primary on the DLM ring and forwards to it once; the owner applies the operation to its in-memory table: TRY_LOCK (grant or report the conflict), UNLOCK, GET_LK, RELEASE_POSIX_OWNER (on flush), RELEASE_FLOCK_OWNER (on release) and KEEP_ALIVE (renew the mount session's lease, or re-assert its full set of held locks so a new owner can rebuild). A sweeper reaps sessions without a keepalive for 15 s. For 10 s after start, and while a ring change's previous owner may still hold locks (it is asked with a cooling_probe GET_LK under a 2 s deadline), a grant that cannot be confirmed safe is deferred: the client sees EAGAIN or retries, never a double grant.",
-  "why": "Consequence: applications on different mounts (databases, build tools) rely on fcntl/flock to exclude each other; a double grant corrupts their files. Design: one authority per inode (the ring owner) with soft state rebuilt from client re-assertions after restart or ownership change, preferring a deferred grant over an unsafe one. Blocking waits (SetLkw) are polled by the mount, so the filer never parks an RPC.",
-  "when": "weed mount with -posixLock: every fcntl/flock call and the session keepalive.",
-  "ux": "Cross-mount advisory locking that behaves like a local filesystem's, with brief EAGAINs around filer restarts.",
-  "if_broken": "Two mounts both hold a write lock on the same range, or locks of a dead mount are never released.",
+  "character": "Advisory lock POSIX và flock cho weed mount, giữ trong bộ nhớ của owner filer với lease, warm-up và một lần dò trong cửa sổ cooling",
+  "what": "PosixLock resolve primary của inode key trên DLM ring và chuyển tiếp tới nó một lần; owner áp thao tác lên bảng trong bộ nhớ của nó: TRY_LOCK (cấp hoặc báo xung đột), UNLOCK, GET_LK, RELEASE_POSIX_OWNER (khi flush), RELEASE_FLOCK_OWNER (khi release) và KEEP_ALIVE (gia hạn lease của mount session, hoặc khẳng định lại toàn bộ tập lock đang giữ để owner mới dựng lại được). Một sweeper thu gom session không có keepalive trong 15 s. Trong 10 s sau khi khởi động, và khi owner trước của một lần thay đổi ring có thể vẫn giữ lock (được hỏi bằng một cooling_probe GET_LK với deadline 2 s), một lần cấp không xác nhận được là an toàn sẽ bị hoãn: client thấy EAGAIN hoặc retry, không bao giờ bị cấp hai lần.",
+  "why": "Hệ quả: ứng dụng trên các mount khác nhau (database, công cụ build) dựa vào fcntl/flock để loại trừ nhau; cấp hai lần làm hỏng file của chúng. Thiết kế: một thẩm quyền cho mỗi inode (ring owner) với soft state dựng lại từ các lần khẳng định lại của client sau restart hoặc đổi ownership, ưu tiên một lần cấp bị hoãn hơn một lần cấp không an toàn. Việc chờ chặn (SetLkw) được mount hỏi định kỳ, nên filer không bao giờ giữ một RPC đứng chờ.",
+  "when": "weed mount với -posixLock: mọi lời gọi fcntl/flock và keepalive của session.",
+  "ux": "Advisory locking giữa các mount hoạt động như filesystem cục bộ, với vài EAGAIN ngắn quanh lúc restart filer.",
+  "if_broken": "Hai mount cùng giữ write lock trên cùng range, hoặc lock của một mount đã chết không bao giờ được nhả.",
   "gotchas": [
-   "Lock state is memory only; correctness after a restart depends on every mount re-asserting its locks within the warm-up window.",
-   "The owner is the ring primary (GetPrimary), not writeOwner's choice that keeps the previous owner through the cooling window; the cooling probe covers that gap instead."
+   "Trạng thái lock chỉ nằm trong bộ nhớ; tính đúng sau restart phụ thuộc vào việc mọi mount khẳng định lại lock của chúng trong cửa sổ warm-up.",
+   "Owner là ring primary (GetPrimary), không phải lựa chọn của writeOwner vốn giữ owner trước qua cửa sổ cooling; lần dò cooling lấp khoảng trống đó thay vào."
   ]
  },
  "weed/server/filer_grpc_server_traverse_meta.go": {
-  "character": "The server side of TraverseBfsMetadata: stream every entry under a directory, as a breadth-first walk or from one store snapshot",
-  "what": "TraverseBfsMetadata finds the start directory, skips paths under excluded prefixes (matched on a path-component boundary through a ptrie), and by default sends the start entry and then walks breadth first, listing 1024 entries per page (iterateDirectory) and queuing only directory paths; each response carries the path's commit timestamp (EntryCommitTsNs, falling back to mtime). When the request metadata asks for snapshot mode and the store implements filer.EntryScanner, it streams the store's snapshot scan instead (any order, entry_ts_ns 0) and says so in the response header; a store that declines before yielding anything falls back to the walk.",
-  "why": "Consequence: a peer filer bootstrapping or an fs.meta.save export reads a whole tree, and holding queued entries with their chunk lists exhausted the filer's memory on large trees. Design: queue paths, stream entries. Snapshot mode gives a consistent image where the store can provide one; the walk gives the per-path timestamps consumers that replay events need.",
-  "when": "filer.go peer bootstrap (StreamBfs from the meta aggregator, excluding the system log directory), weed shell fs.meta.save, the admin file browser's metadata export.",
-  "ux": "Metadata exports and new-filer bootstrap complete on large namespaces.",
-  "if_broken": "Bootstraps run the filer out of memory, or exports leak excluded subtrees (the admin export excludes /etc for read-only roles).",
+  "character": "Phía server của TraverseBfsMetadata: stream mọi entry dưới một thư mục, theo lượt duyệt chiều rộng hoặc từ một store snapshot",
+  "what": "TraverseBfsMetadata tìm thư mục bắt đầu, bỏ qua các path dưới prefix bị loại trừ (khớp trên ranh giới thành phần path qua một ptrie), và theo mặc định gửi entry bắt đầu rồi duyệt theo chiều rộng, list 1024 entry mỗi trang (iterateDirectory) và chỉ xếp hàng các path thư mục; mỗi response mang commit timestamp của path (EntryCommitTsNs, rơi về mtime). Khi metadata của request yêu cầu snapshot mode và store hiện thực filer.EntryScanner, nó stream bản quét snapshot của store thay vào (thứ tự tuỳ ý, entry_ts_ns 0) và nói vậy trong response header; một store từ chối trước khi trả ra gì thì rơi về lượt duyệt.",
+  "why": "Hệ quả: một filer peer khởi động hoặc một lần export fs.meta.save đọc cả một cây, và giữ các entry đang xếp hàng cùng danh sách chunk của chúng từng làm cạn bộ nhớ filer trên cây lớn. Thiết kế: xếp hàng path, stream entry. Snapshot mode cho một hình ảnh nhất quán nơi store cung cấp được; lượt duyệt cho các timestamp theo path mà consumer phát lại event cần.",
+  "when": "Bootstrap peer của filer.go (StreamBfs từ meta aggregator, loại trừ thư mục system log), weed shell fs.meta.save, export metadata của file browser trong admin.",
+  "ux": "Export metadata và bootstrap filer mới hoàn tất được trên namespace lớn.",
+  "if_broken": "Bootstrap làm filer hết bộ nhớ, hoặc export làm lộ các cây con bị loại trừ (export của admin loại /etc với role read-only).",
   "gotchas": [
-   "An excluded prefix with a trailing slash excludes nothing below it: the component-boundary check needs the character after the prefix to be '/'. Callers pass prefixes without one.",
-   "The walk is not a snapshot: entries changed during it may appear in their old or new form."
+   "Một prefix bị loại trừ có dấu gạch chéo cuối không loại trừ được gì bên dưới: kiểm tra ranh giới thành phần cần ký tự sau prefix là '/'. Caller truyền prefix không có dấu đó.",
+   "Lượt duyệt không phải snapshot: entry thay đổi trong lúc duyệt có thể hiện ra ở dạng cũ hoặc mới."
   ]
  },
  "weed/server/filer_grpc_server_stream_mutate.go": {
-  "character": "The StreamMutateEntry bidirectional stream: one ordered pipe for a mount's creates, updates, deletes and renames",
-  "what": "StreamMutateEntry receives requests in a loop and runs each in its own goroutine (at most 1024 outstanding per stream) after admission by the per-stream mutateScheduler (64 concurrent, path-ordered). Each request is handled by the ordinary CreateEntry, UpdateEntry, DeleteEntry or StreamRenameEntry and answered with its request_id; renames go through renameStreamProxy, which forwards each rename event as a non-final message and then a final is_last message. Sends are serialized by syncStream's mutex. A failed operation carries its error text and an errno; an unknown request type answers EINVAL so the client's waiter is released. The first failed Send ends the stream after in-flight work drains.",
-  "why": "Consequence: a FUSE mount issues many small metadata mutations; one RPC each cost a round trip and gave no ordering between them. Design: one stream per mount keeps arrival order per path while letting unrelated paths run in parallel, and the receive loop blocks only on the outstanding cap, so a conflicted path cannot stall receipt of unrelated ones.",
-  "when": "weed mount's metadata write path.",
-  "ux": "Faster file creation and rename in mounts, with POSIX-ordered results.",
-  "if_broken": "Mount operations are applied out of order (a rename before the create it depends on) or hang waiting for a response that never comes.",
+  "character": "Stream hai chiều StreamMutateEntry: một đường ống có thứ tự cho create, update, delete và rename của một mount",
+  "what": "StreamMutateEntry nhận request trong một vòng lặp và chạy mỗi request trong goroutine riêng (tối đa 1024 đang chờ trên mỗi stream) sau khi được mutateScheduler theo stream tiếp nhận (64 đồng thời, có thứ tự theo path). Mỗi request được CreateEntry, UpdateEntry, DeleteEntry hoặc StreamRenameEntry thông thường xử lý và trả lời kèm request_id của nó; rename đi qua renameStreamProxy, chuyển tiếp từng rename event thành message không-cuối rồi một message is_last cuối cùng. Các lần Send được mutex của syncStream tuần tự hoá. Một thao tác thất bại mang text lỗi và một errno; một loại request không biết trả EINVAL để waiter của client được giải phóng. Lần Send thất bại đầu tiên kết thúc stream sau khi công việc đang chạy đã xong.",
+  "why": "Hệ quả: một FUSE mount phát nhiều metadata mutation nhỏ; mỗi cái một RPC tốn một round trip và không có thứ tự giữa chúng. Thiết kế: một stream cho mỗi mount giữ thứ tự đến theo path trong khi cho các path không liên quan chạy song song, và vòng nhận chỉ chặn ở giới hạn số request đang chờ, nên một path bị xung đột không làm kẹt việc nhận các path không liên quan.",
+  "when": "Đường ghi metadata của weed mount.",
+  "ux": "Tạo file và rename trong mount nhanh hơn, với kết quả có thứ tự POSIX.",
+  "if_broken": "Thao tác của mount được áp sai thứ tự (một rename trước create mà nó phụ thuộc) hoặc treo chờ một response không bao giờ tới.",
   "gotchas": [
-   "Every create, update and delete failure is reported as EIO, whatever the cause (a missing entry, an existing name, a failed precondition); only renames map 'not found', 'not empty' and 'not directory' text to ENOENT, ENOTEMPTY and ENOTDIR.",
-   "The proxy's RecvMsg fails on purpose: a rename must never read from the shared stream."
+   "Mọi lỗi create, update và delete đều được báo là EIO, bất kể nguyên nhân (entry không tồn tại, tên đã có, điều kiện tiên quyết thất bại); chỉ rename ánh xạ text 'not found', 'not empty' và 'not directory' thành ENOENT, ENOTEMPTY và ENOTDIR.",
+   "RecvMsg của proxy cố ý thất bại: một rename không bao giờ được đọc từ stream dùng chung."
   ]
  },
  "weed/server/filer_grpc_server_stream_mutate_scheduler.go": {
-  "character": "Path-keyed admission control for StreamMutateEntry, with subtree barriers, ported from filer.sync's MetadataProcessor",
-  "what": "classifyMutation gives each request its path(s) and kind: a file event, a barrier directory event (directory create, every delete, every rename with both old and new paths) or a non-barrier directory attribute update; malformed requests become a barrier at '/'. Admit queues the waiter on each of its paths and admits it only when it heads every queue it joined, conflicts with nothing active (a barrier blocks its path and every descendant; a file conflicts with a file at the same path; a barrier waits for active descendants to drain) and the 64-slot limit allows. Done releases the slot and promotes newly admissible heads.",
-  "why": "Consequence: two requests for the same path on one stream must apply in arrival order, and a directory rename must not interleave with writes inside it. Design: per-path FIFO queues on top of the conflict rules, so even a condition broadcast cannot reorder same-path requests; attribute-only directory updates do not serialize their subtree.",
-  "when": "Every request on a StreamMutateEntry stream.",
-  "ux": "None directly; it is why mount operations on one stream appear in order.",
-  "if_broken": "Out-of-order mutations, or a stream that deadlocks when a waiter is never promoted.",
+  "character": "Kiểm soát tiếp nhận theo path cho StreamMutateEntry, với các barrier cây con, port từ MetadataProcessor của filer.sync",
+  "what": "classifyMutation cho mỗi request (các) path và loại của nó: một file event, một barrier directory event (tạo thư mục, mọi delete, mọi rename với cả path cũ và mới) hoặc một cập nhật attribute thư mục không phải barrier; request sai dạng thành một barrier ở '/'. Admit xếp waiter vào hàng đợi của từng path của nó và chỉ tiếp nhận khi nó đứng đầu mọi hàng đợi nó đã vào, không xung đột với gì đang chạy (một barrier chặn path của nó và mọi con cháu; một file xung đột với file cùng path; một barrier đợi các con cháu đang chạy xong) và giới hạn 64 slot cho phép. Done nhả slot và đẩy lên các đầu hàng vừa đủ điều kiện tiếp nhận.",
+  "why": "Hệ quả: hai request cho cùng path trên một stream phải được áp theo thứ tự đến, và một directory rename không được đan xen với các thao tác ghi bên trong nó. Thiết kế: hàng đợi FIFO theo path đặt trên các quy tắc xung đột, nên kể cả một condition broadcast cũng không sắp xếp lại được các request cùng path; cập nhật thư mục chỉ đổi attribute không tuần tự hoá cây con của nó.",
+  "when": "Mọi request trên một stream StreamMutateEntry.",
+  "ux": "Không có trực tiếp; nó là lý do các thao tác mount trên một stream hiện ra theo thứ tự.",
+  "if_broken": "Mutation sai thứ tự, hoặc một stream deadlock khi một waiter không bao giờ được đẩy lên.",
   "gotchas": [
-   "Ordering is per stream only; two mounts writing the same path are serialized by the filer's path lock, not by this scheduler.",
-   "Every delete is a barrier because the request does not say whether it targets a directory, so a delete waits for all active work under its path."
+   "Thứ tự chỉ trong phạm vi mỗi stream; hai mount ghi cùng path được tuần tự hoá bởi path lock của filer, không bởi scheduler này.",
+   "Mọi delete là barrier vì request không nói nó nhắm vào thư mục hay không, nên một delete đợi mọi công việc đang chạy dưới path của nó."
   ]
  },
  "weed/server/filer_grpc_server_rename.go": {
-  "character": "Rename of a file or a whole directory tree inside one store transaction, with deferred chunk and remote-object cleanup",
-  "what": "AtomicRenameEntry and StreamRenameEntry check CanRename, lock the old and new paths (in path order, descendants unlocked), open a store transaction, and call moveEntry. moveSelfEntry refuses a file over a directory and the reverse, deletes an existing target (events suppressed), inserts the new entry with the same attributes, chunks, extended attributes and hard-link data, then for a directory moves every child recursively 1024 at a time (moveFolderSubEntries) and deletes the old entry. Chunks of an overwritten target are deleted only after the commit; metadata events are queued and published after the commit. Remote-only entries are copied on the remote first, or, over a remote-only target, after the commit with the new entry reading the old key (ExtRemoteRenameSourceKey) until the copy lands; old remote objects are deleted after the commit only when no remote-only entry has taken their path. AtomicRenameEntry can refuse an existing target (fail_if_target_exists, under the path locks). StreamRenameEntry follows POSIX for directories: the target must be an empty directory; it streams each child's move event to the caller.",
-  "why": "Consequence: a rename that failed halfway and had already deleted the target's chunks would leave live metadata pointing at freed needles. Design: everything destructive (chunk deletes, remote deletes, events) waits for the commit, and a failed rename releases its commit stamps so the delivered and flushed watermarks are not pinned below it. Path locks are held through notification so a fenced lookup never sees renamed state under an earlier fence.",
-  "when": "S3 object rename extensions and s3tables moves (AtomicRenameEntry), mounts (StreamRenameEntry, also via StreamMutateEntry), shell mv.",
-  "ux": "mv in a mount and rename APIs behave atomically on transactional stores.",
-  "if_broken": "Renamed trees lose children, overwritten targets leave orphaned or prematurely freed chunks, or remote-mounted objects are deleted while still referenced.",
+  "character": "Đổi tên một file hoặc cả một cây thư mục bên trong một store transaction, với việc dọn chunk và remote object được hoãn lại",
+  "what": "AtomicRenameEntry và StreamRenameEntry kiểm tra CanRename, lock path cũ và mới (theo thứ tự path, con cháu không bị lock), mở một store transaction, và gọi moveEntry. moveSelfEntry từ chối file đè lên thư mục và ngược lại, xoá đích có sẵn (không phát event), chèn entry mới với cùng attribute, chunk, extended attribute và dữ liệu hard-link, rồi với thư mục thì dời đệ quy mọi con 1024 cái một lần (moveFolderSubEntries) và xoá entry cũ. Chunk của một đích bị ghi đè chỉ bị xoá sau commit; metadata event được xếp hàng và phát sau commit. Entry chỉ-ở-remote được copy trên remote trước, hoặc, khi đè lên một đích chỉ-ở-remote, sau commit với entry mới đọc key cũ (ExtRemoteRenameSourceKey) cho tới khi bản copy tới nơi; remote object cũ chỉ bị xoá sau commit khi không có entry chỉ-ở-remote nào đã chiếm path của chúng. AtomicRenameEntry có thể từ chối đích có sẵn (fail_if_target_exists, dưới các path lock). StreamRenameEntry theo POSIX với thư mục: đích phải là thư mục rỗng; nó stream move event của từng con cho caller.",
+  "why": "Hệ quả: một rename thất bại giữa chừng mà đã xoá chunk của đích sẽ để metadata sống trỏ tới needle đã giải phóng. Thiết kế: mọi thứ mang tính phá huỷ (xoá chunk, xoá remote, event) đợi commit, và một rename thất bại nhả các commit stamp của nó để watermark delivered và flushed không bị ghim bên dưới nó. Path lock được giữ qua bước notification để một lookup có fence không bao giờ thấy trạng thái đã rename dưới một fence sớm hơn.",
+  "when": "Phần mở rộng rename object S3 và các thao tác dời của s3tables (AtomicRenameEntry), mount (StreamRenameEntry, cũng qua StreamMutateEntry), shell mv.",
+  "ux": "mv trong mount và các rename API hoạt động nguyên tử trên store có transaction.",
+  "if_broken": "Cây được đổi tên mất con, đích bị ghi đè để lại chunk mồ côi hoặc bị giải phóng sớm, hoặc remote-mount object bị xoá khi vẫn còn được tham chiếu.",
   "gotchas": [
-   "On stores without transactions (BeginTransaction is a no-op: the LevelDB and most KV stores), a directory rename that fails midway leaves some children moved and some not.",
-   "A directory rename copies and deletes every descendant entry: its cost is proportional to the subtree size, and descendants are not locked while it runs.",
-   "StreamRenameEntry sends each move event to the caller before the commit, so a client can see events for a rename that is then rolled back.",
-   "AtomicRenameEntry has no empty-target-directory check; moving a directory over a non-empty one fails only because the target delete is not recursive."
+   "Trên store không có transaction (BeginTransaction là no-op: LevelDB và phần lớn KV store), một directory rename thất bại giữa chừng để một số con đã dời và một số chưa.",
+   "Một directory rename copy và xoá mọi entry con cháu: chi phí tỷ lệ với kích thước cây con, và con cháu không bị lock khi nó chạy.",
+   "StreamRenameEntry gửi từng move event cho caller trước commit, nên client có thể thấy event của một rename rồi sau đó bị rollback.",
+   "AtomicRenameEntry không kiểm tra thư mục đích rỗng; dời một thư mục đè lên thư mục không rỗng chỉ thất bại vì thao tác xoá đích không đệ quy."
   ],
   "issue": "bug",
-  "issue_note": "StreamRenameEntry leaks the store transaction when a directory is renamed onto a non-empty directory. It calls BeginTransaction, then for a directory source checks the target and, on 'is not empty', returns the error without RollbackTransaction (filer_grpc_server_rename.go, the ListDirectoryEntries check after FindEntry(targetDir)); the 'is not directory' branch just above does roll back. On the SQL stores BeginTransaction opens a *sql.Tx with BeginTx on a context the wrapper has detached from cancellation (filerstore_wrapper.go: context.WithoutCancel), so database/sql never rolls it back: each such rename holds one pooled connection until the filer restarts. A mount where users repeatedly 'mv dir existing-nonempty-dir' (or a tool retrying it) drains the pool, after which every store call waits for a connection. The emptiness check also lists with context.Background() rather than the transaction context, so on SQL stores it reads outside the transaction. Found by reading at 917cf534; not reproduced. The fix is a RollbackTransaction before that return."
+  "issue_note": "StreamRenameEntry làm rò store transaction khi một thư mục được rename đè lên một thư mục không rỗng. Nó gọi BeginTransaction, rồi với nguồn là thư mục thì kiểm tra đích và, khi 'is not empty', trả lỗi mà không gọi RollbackTransaction (filer_grpc_server_rename.go, bước kiểm tra ListDirectoryEntries sau FindEntry(targetDir)); nhánh 'is not directory' ngay phía trên thì có rollback. Trên SQL store, BeginTransaction mở một *sql.Tx bằng BeginTx trên một context mà wrapper đã tách khỏi việc huỷ (filerstore_wrapper.go: context.WithoutCancel), nên database/sql không bao giờ rollback nó: mỗi lần rename như vậy giữ một kết nối trong pool cho tới khi filer restart. Một mount nơi user liên tục 'mv dir existing-nonempty-dir' (hoặc một công cụ retry việc đó) làm cạn pool, sau đó mọi lời gọi store đều phải đợi kết nối. Bước kiểm tra rỗng cũng list bằng context.Background() thay vì context của transaction, nên trên SQL store nó đọc bên ngoài transaction. Tìm ra bằng cách đọc code ở 917cf534; chưa tái hiện. Cách sửa là một RollbackTransaction trước lần return đó."
  },
  "weed/server/filer_grpc_server_remote.go": {
-  "character": "CacheRemoteObjectToLocalCluster: pull a remote-mounted object into local volume needles and point its entry at them",
-  "what": "The handler rejects an entry larger than the caller's max_size before joining a singleflight per path, runs the download on a context detached from the caller (a caller that leaves gets ctx.Err() while the download continues), and retries with its own flight when a shared flight failed only on a co-caller's tighter size bound. doCacheRemoteObjectToLocalCluster returns the entry as is when it is not remote-only or already has chunks; otherwise it resolves the mount mapping and remote conf freshly from /etc/remote, picks a chunk size aiming at about 32 chunks (5 MiB floor, the filer's max MB cap, at most 1000 chunks), and for each chunk assigns a needle and asks the volume server to FetchAndWriteNeedle the byte range straight from the remote (8 chunks in parallel by default, capped at 1024; per-chunk multipart download concurrency passed through). On failure it deletes the needles already written, triggers remote-cache eviction on capacity errors, and, when the remote confirms the object is gone, prunes the entry with a conditional ObjectTransaction (IF_ENTRY_EQUAL, keep remote) unless it is a version file, hard link, inline-content entry or under an active object lock. On success it re-reads the entry under the path lock, discards the download if the entry changed meanwhile, else stores the chunks with last_local_sync_ts_ns and publishes an update event.",
-  "why": "Consequence: reading a remote-mounted object through the gateway needs its bytes local, and many readers of one cold object would otherwise each start a download. Design: the volume servers fetch directly from the remote, so data never passes through the filer; the detached context keeps a long download from being thrown away (and its needles deleted) every time an impatient caller times out. Not-found sentinels are re-coded as codes.NotFound because a raw error crosses gRPC as Unknown.",
-  "when": "The S3 gateway when GetObject or CopyObject hits a remote-only entry (s3api cacheRemoteObjectForCopy and the read path), the filer HTTP read path, weed shell remote.cache.",
-  "ux": "The first read of a remote-mounted object is slow or answered 503 + Retry-After by the gateway; later reads are local.",
-  "if_broken": "Cold objects never become readable, downloads leak needles on every retry, or a concurrent overwrite is clobbered by a stale cached copy.",
+  "character": "CacheRemoteObjectToLocalCluster: kéo một object remote-mount vào các needle volume cục bộ và trỏ entry của nó tới chúng",
+  "what": "Handler từ chối một entry lớn hơn max_size của caller trước khi tham gia một singleflight theo path, chạy việc tải trên một context tách khỏi caller (caller bỏ đi nhận ctx.Err() trong khi việc tải vẫn tiếp tục), và retry với flight riêng khi một flight dùng chung chỉ thất bại vì cận kích thước chặt hơn của một co-caller. doCacheRemoteObjectToLocalCluster trả entry nguyên vẹn khi nó không phải chỉ-ở-remote hoặc đã có chunk; ngược lại nó resolve mount mapping và remote conf mới từ /etc/remote, chọn kích thước chunk nhắm khoảng 32 chunk (sàn 5 MiB, chặn bởi max MB của filer, tối đa 1000 chunk), và với mỗi chunk gán một needle và nhờ volume server FetchAndWriteNeedle byte range thẳng từ remote (mặc định 8 chunk song song, chặn ở 1024; độ đồng thời tải multipart theo chunk được truyền qua). Khi thất bại nó xoá các needle đã ghi, kích hoạt eviction remote-cache khi lỗi dung lượng, và, khi remote xác nhận object đã mất, tỉa entry bằng một ObjectTransaction có điều kiện (IF_ENTRY_EQUAL, giữ remote) trừ khi nó là version file, hard link, entry có inline content hoặc đang dưới object lock. Khi thành công nó đọc lại entry dưới path lock, bỏ bản tải nếu entry đã đổi trong lúc đó, ngược lại lưu chunk với last_local_sync_ts_ns và phát một update event.",
+  "why": "Hệ quả: đọc một object remote-mount qua gateway cần byte của nó ở cục bộ, và nhiều reader của một object nguội nếu không sẽ mỗi người bắt đầu một lần tải. Thiết kế: volume server tải thẳng từ remote, nên dữ liệu không bao giờ đi qua filer; context tách rời giữ cho một lần tải dài không bị vứt đi (và needle của nó bị xoá) mỗi khi một caller sốt ruột timeout. Sentinel not-found được mã hoá lại thành codes.NotFound vì lỗi thô vượt qua gRPC dưới dạng Unknown.",
+  "when": "S3 gateway khi GetObject hoặc CopyObject chạm vào một entry chỉ-ở-remote (cacheRemoteObjectForCopy của s3api và đường đọc), đường đọc HTTP của filer, weed shell remote.cache.",
+  "ux": "Lần đọc đầu tiên của một object remote-mount chậm hoặc được gateway trả 503 + Retry-After; các lần đọc sau là cục bộ.",
+  "if_broken": "Object nguội không bao giờ đọc được, việc tải làm rò needle ở mỗi lần retry, hoặc một lần ghi đè đồng thời bị một bản cache cũ đè lên.",
   "gotchas": [
-   "The commit takes this filer's path lock, not the key's ring owner's, and writes with Store.UpdateEntry directly.",
-   "After the first failed chunk the other workers keep downloading; their needles are deleted only once all finish."
+   "Bước commit lấy path lock của filer này, không phải của ring owner của key, và ghi trực tiếp bằng Store.UpdateEntry.",
+   "Sau chunk thất bại đầu tiên các worker khác vẫn tiếp tục tải; needle của chúng chỉ bị xoá khi tất cả đã xong."
   ]
  },
  "weed/server/filer_grpc_server_sub_meta.go": {
-  "character": "Metadata subscription streams: replay a filer's persisted metadata log and then follow its in-memory log, for one filer or aggregated across peers, with gap detection and watermark holds",
-  "what": "SubscribeMetadata serves the aggregated stream (this filer's events merged with every peer's, through the MetaAggregator's log buffer) once peers exist; a single filer, or one whose peers have not appeared yet, serves the local stream and ends it with errAggregationUpgrade when a peer arrives so the client reconnects for the aggregated one. SubscribeLocalMetadata serves only this filer's events. Each stream registers the client (client_id and epoch: a newer epoch replaces, a duplicate is refused), then loops: read the persisted log from disk from the cursor (or, for clients that read volume chunks themselves, send LogFileChunkRefs in batches of 64 and only the chunks not sent before), then follow the in-memory buffer until it is exhausted, and repeat. Events pass the path filter twice: a cheap skeleton scan before unmarshaling (filer_pb_event_scan.go) and the full match after; events from the subscriber's own signature are dropped, the filer's signature is appended, the system log directory is never sent, and after 1000 filtered events an empty event carries the timestamp forward. pipelinedSender decouples reading from gRPC sends (1024 buffered) and, for clients that support batching, packs up to 256 events per Send when they are more than 2 minutes behind. Idle heartbeats (5 s, or a 200 ms delivery claim on a filer with peers) and flush reports tell caught-up clients how far delivery and flushing have reached. When the in-memory buffer has evicted the range after the cursor and the disk does not hold it yet, the subscriber parks (gapStallReporter, metrics) and gives up after 15 minutes, skipping the gap with an error log. The aggregated stream also holds reads at the peers' low delivery and flush watermarks so an event from a slower peer cannot be skipped past, with a settled-horizon escape when a peer's watermark stalls.",
-  "why": "Consequence: S3 gateways (IAM, bucket config and circuit-breaker caches), mounts, filer.sync, backup and replication all learn about changes only through this stream; a skipped event is a stale cache or an unreplicated file, a duplicated one is usually harmless. Design: a subscriber resumes from a timestamp, so the server must prove a range is either on disk or still in memory before moving the cursor past it, and with several filers it must not deliver beyond the slowest peer's watermark. Giving up after a bounded stall trades completeness for liveness when a peer is dead, and the skip is counted and logged.",
-  "when": "Long-lived streams from every metadata follower; the S3 gateway subscribes to /etc/ at startup (s3api_server.go subscribeMetaEvents).",
-  "ux": "Changes made through one gateway or filer show up in the others' caches within moments; a stalled peer delays them by up to its watermark horizon.",
-  "if_broken": "Caches and replicas silently miss changes (stale IAM credentials, bucket policies, circuit-breaker limits), or followers spin re-reading the same log files.",
+  "character": "Các stream metadata subscription: phát lại metadata log đã lưu của một filer rồi theo dõi log trong bộ nhớ của nó, cho một filer hoặc gộp qua các peer, với phát hiện khoảng trống và giữ watermark",
+  "what": "SubscribeMetadata phục vụ stream gộp (event của filer này trộn với của mọi peer, qua log buffer của MetaAggregator) một khi có peer; một filer đơn lẻ, hoặc một filer có peer chưa xuất hiện, phục vụ stream cục bộ và kết thúc nó bằng errAggregationUpgrade khi một peer tới để client kết nối lại lấy stream gộp. SubscribeLocalMetadata chỉ phục vụ event của filer này. Mỗi stream đăng ký client (client_id và epoch: một epoch mới hơn thay thế, một bản trùng bị từ chối), rồi lặp: đọc persisted log từ đĩa kể từ cursor (hoặc, với client tự đọc volume chunk, gửi LogFileChunkRefs theo lô 64 và chỉ các chunk chưa gửi trước đó), rồi theo dõi buffer trong bộ nhớ cho tới khi cạn, và lặp lại. Event đi qua bộ lọc path hai lần: một lần quét skeleton rẻ trước khi unmarshal (filer_pb_event_scan.go) và lần khớp đầy đủ sau đó; event từ chữ ký của chính subscriber bị bỏ, chữ ký của filer được nối thêm, thư mục system log không bao giờ được gửi, và sau 1000 event bị lọc thì một event rỗng mang timestamp tiến lên. pipelinedSender tách việc đọc khỏi gRPC send (buffer 1024) và, với client hỗ trợ batching, gói tới 256 event mỗi lần Send khi chúng trễ hơn 2 phút. Heartbeat lúc rảnh (5 s, hoặc một tuyên bố delivery 200 ms trên filer có peer) và báo cáo flush cho client đã bắt kịp biết delivery và flush đã tới đâu. Khi buffer trong bộ nhớ đã loại khoảng sau cursor và đĩa chưa giữ nó, subscriber đứng chờ (gapStallReporter, metric) và bỏ cuộc sau 15 phút, nhảy qua khoảng trống kèm một dòng log lỗi. Stream gộp cũng giữ việc đọc ở watermark delivery và flush thấp của các peer để một event từ peer chậm hơn không bị bỏ qua, với một lối thoát settled-horizon khi watermark của một peer đứng lại.",
+  "why": "Hệ quả: S3 gateway (cache IAM, bucket config và circuit-breaker), mount, filer.sync, backup và replication đều chỉ biết thay đổi qua stream này; một event bị bỏ sót là cache cũ hoặc một file chưa replicate, một event bị trùng thường vô hại. Thiết kế: subscriber tiếp tục từ một timestamp, nên server phải chứng minh một khoảng hoặc nằm trên đĩa hoặc vẫn trong bộ nhớ trước khi dời cursor qua nó, và với nhiều filer nó không được giao vượt watermark của peer chậm nhất. Bỏ cuộc sau một lần đứng chờ có giới hạn đổi tính đầy đủ lấy tính sống khi một peer đã chết, và việc nhảy qua được đếm và log.",
+  "when": "Các stream sống lâu từ mọi metadata follower; S3 gateway subscribe /etc/ lúc khởi động (subscribeMetaEvents trong s3api_server.go).",
+  "ux": "Thay đổi làm qua một gateway hay filer hiện ra trong cache của các bên khác trong chốc lát; một peer bị kẹt làm chúng trễ tới bằng watermark horizon của nó.",
+  "if_broken": "Cache và replica âm thầm bỏ lỡ thay đổi (IAM credential, bucket policy, giới hạn circuit-breaker cũ), hoặc follower quay vòng đọc lại cùng các log file.",
   "gotchas": [
-   "A subscriber with client_id 0 is never registered, and hasClient answers false for it, so the loop ends such a stream at its first liveness check; followers must send a non-zero id.",
-   "After 15 minutes parked on an unprovable gap the stream skips the range: events a peer flushes into it later are never delivered to that subscriber.",
-   "The local stream negates client_id (req.ClientId = -req.ClientId) so a client's local and aggregated subscriptions do not collide in the registry.",
-   "Filtering is by path only; a subscriber that wants a narrow set of events still costs the filer a skeleton scan of every logged event."
+   "Subscriber có client_id 0 không bao giờ được đăng ký, và hasClient trả false cho nó, nên vòng lặp kết thúc stream như vậy ở lần kiểm tra liveness đầu tiên; follower phải gửi id khác 0.",
+   "Sau 15 phút đứng chờ trên một khoảng trống không chứng minh được, stream nhảy qua khoảng đó: event mà một peer flush vào đó về sau không bao giờ được giao cho subscriber đó.",
+   "Stream cục bộ đổi dấu client_id (req.ClientId = -req.ClientId) để subscription cục bộ và gộp của một client không đụng nhau trong registry.",
+   "Việc lọc chỉ theo path; một subscriber muốn một tập event hẹp vẫn khiến filer tốn một lần quét skeleton cho mọi event đã log."
   ]
  },
  "weed/filer/filer.go": {
-  "character": "The Filer core: construction and peer bootstrap, the entry create / update / find paths with parent-directory creation and lazy TTL expiry, and the empty-parent cleanup",
-  "what": "NewFiler wires the master client, deletion queue and its durable ledger, filer conf, remote storage, the DLM, the persisted-log cache, remote-deletion tombstones, the entry lock table and the local metadata log buffer (flushed every minute; metadata-log chunks optionally sent to their own collection). MaybeBootstrapFromOnePeer copies the oldest peer's whole tree through StreamBfs; AggregateFromPeers sets the DLM ring (thereafter fed by the master's LockRingUpdates), creates the empty-folder cleaner on the same ring and the MetaAggregator, subscribing to itself first and then to each peer. ListExistingPeerUpdates prefers the leader's list, polling it briefly when empty. SetStore wraps the store and loads or creates the store signature. CreateEntry refuses '/', over-long names and dot segments, clears directory TTLs, then either inserts a new entry (stable inode, commit stamp) and creates missing parents afterwards (ensureParentDirectoryEntry: validates a bucket name under /buckets, promotes a file in the way to a prefix-object directory keeping its data), or, unless O_EXCL, updates the existing one (a prefix object landing on a directory keeps the directory's mode, owner and xattr- keys); it then publishes the event and deletes chunks the new entry no longer uses. UpdateEntry keeps crtime and inode, refuses a file/directory type change with sentinels, and clears a remote entry's sync stamp when local content changed. FindEntry serves '/' from a constant, expires TTL'd files on read, and falls back to a lazy remote fetch. doListDirectoryEntries expires TTL'd files while listing (after the listing, to avoid store deadlocks), then may remove now-empty parents (DeleteEmptyParentDirectories, never at or above bucket level). EnsureDirectoryEntry and DirectoryAttributes let the empty-folder cleaner restore a directory it removed without widening its mode. Shutdown drains the log buffer, the aggregator and the deletion ledger before closing the store.",
-  "why": "Consequence: every S3 object, version file, bucket and mount file is an entry written through CreateEntry, so its parent creation, prefix-object promotion and chunk cleanup decide whether nested keys coexist and whether data is freed correctly. Design: the entry is inserted before its parents, because a parent checked first can be removed by the empty-folder cleaner before the entry lands and nothing would look again; a failed parent creation leaves the entry in place unannounced rather than delete by path what a concurrent create may own. TTL expiry is lazy, on read and list, so no sweeper has to scan the namespace.",
-  "when": "Every metadata mutation and lookup on the filer; startup and peer membership changes.",
-  "ux": "S3 keys like a and a/b can both exist; expired objects disappear on access; empty folders under buckets vanish when their last expiring file goes.",
-  "if_broken": "Nested keys overwrite or hide each other, parents are missing, chunks are freed under live entries, or expired data lingers.",
+  "character": "Lõi Filer: khởi tạo và bootstrap từ peer, các đường create / update / find entry với việc tạo thư mục cha và hết hạn TTL lười, và việc dọn thư mục cha rỗng",
+  "what": "NewFiler nối master client, deletion queue và ledger bền của nó, filer conf, remote storage, DLM, persisted-log cache, tombstone remote-deletion, bảng entry lock và local metadata log buffer (flush mỗi phút; chunk metadata-log tuỳ chọn được gửi tới collection riêng). MaybeBootstrapFromOnePeer copy cả cây của peer lâu đời nhất qua StreamBfs; AggregateFromPeers đặt DLM ring (sau đó được LockRingUpdates của master nuôi), tạo empty-folder cleaner trên cùng ring và MetaAggregator, subscribe chính mình trước rồi tới từng peer. ListExistingPeerUpdates ưu tiên danh sách của leader, hỏi nó một lúc khi rỗng. SetStore bọc store và nạp hoặc tạo store signature. CreateEntry từ chối '/', tên quá dài và đoạn dấu chấm, xoá TTL của thư mục, rồi hoặc chèn một entry mới (inode ổn định, commit stamp) và tạo các cha còn thiếu sau đó (ensureParentDirectoryEntry: kiểm tra tên bucket dưới /buckets, nâng một file cản đường thành thư mục prefix-object giữ nguyên dữ liệu), hoặc, trừ khi O_EXCL, cập nhật entry có sẵn (một prefix object rơi vào một thư mục giữ mode, owner và các key xattr- của thư mục); rồi nó phát event và xoá các chunk mà entry mới không còn dùng. UpdateEntry giữ crtime và inode, từ chối đổi loại file/thư mục bằng sentinel, và xoá sync stamp của remote entry khi nội dung cục bộ đã đổi. FindEntry phục vụ '/' từ một hằng số, làm hết hạn file có TTL khi đọc, và rơi về fetch remote lười. doListDirectoryEntries làm hết hạn file có TTL khi list (sau listing, để tránh deadlock store), rồi có thể gỡ các cha vừa rỗng (DeleteEmptyParentDirectories, không bao giờ ở hoặc trên cấp bucket). EnsureDirectoryEntry và DirectoryAttributes cho empty-folder cleaner khôi phục một thư mục nó đã gỡ mà không nới mode. Shutdown xả log buffer, aggregator và deletion ledger trước khi đóng store.",
+  "why": "Hệ quả: mọi S3 object, version file, bucket và file của mount đều là entry được ghi qua CreateEntry, nên việc tạo cha, nâng prefix-object và dọn chunk của nó quyết định các key lồng nhau có cùng tồn tại được không và dữ liệu có được giải phóng đúng không. Thiết kế: entry được chèn trước các cha của nó, vì một cha được kiểm tra trước có thể bị empty-folder cleaner gỡ trước khi entry tới và không gì nhìn lại nữa; một lần tạo cha thất bại để entry tại chỗ không thông báo thay vì xoá theo path thứ mà một create đồng thời có thể sở hữu. Hết hạn TTL là lười, khi đọc và list, nên không sweeper nào phải quét namespace.",
+  "when": "Mọi metadata mutation và lookup trên filer; lúc khởi động và khi membership của peer thay đổi.",
+  "ux": "Key S3 như a và a/b đều tồn tại được; object hết hạn biến mất khi truy cập; thư mục rỗng dưới bucket biến mất khi file hết hạn cuối cùng của nó đi.",
+  "if_broken": "Key lồng nhau ghi đè hoặc che nhau, thiếu cha, chunk bị giải phóng dưới entry sống, hoặc dữ liệu hết hạn còn lưu lại.",
   "gotchas": [
-   "Expiry on read or list deletes from the store without a metadata event for plain-TTL entries (Store.DeleteOneEntry): peers and subscribers such as mount caches only learn when they expire it themselves.",
-   "DeleteEmptyParentDirectories removes directories through doDeleteEntryMetaAndData, which publishes events only for files, so those directory deletes are never announced either; it also ignores a bucket's allow-empty-folders setting.",
-   "ensureParentDirectoryEntry validates bucket names only when the second path component is literally 'buckets', not DirBucketsPath, and checks the lenient VerifyS3BucketName.",
-   "A read through FindEntry can delete an entry (expiry), including under the shared lock fencedFindEntry holds.",
-   "CreateEntry on '/' is a silent no-op."
+   "Hết hạn khi đọc hay list xoá khỏi store mà không có metadata event cho entry TTL thường (Store.DeleteOneEntry): peer và subscriber như cache của mount chỉ biết khi chúng tự làm hết hạn nó.",
+   "DeleteEmptyParentDirectories gỡ thư mục qua doDeleteEntryMetaAndData, hàm chỉ phát event cho file, nên các lần xoá thư mục đó cũng không bao giờ được thông báo; nó cũng bỏ qua thiết lập allow-empty-folders của bucket.",
+   "ensureParentDirectoryEntry chỉ kiểm tra tên bucket khi thành phần path thứ hai đúng là 'buckets', không phải DirBucketsPath, và kiểm tra bằng VerifyS3BucketName dễ dãi.",
+   "Một lần đọc qua FindEntry có thể xoá một entry (hết hạn), kể cả dưới shared lock mà fencedFindEntry giữ.",
+   "CreateEntry trên '/' là một no-op âm thầm."
   ]
  },
  "weed/filer/filer_delete_entry.go": {
-  "character": "Entry and subtree deletion: children first, remote objects and tombstones, chunk and hard-link cleanup, and bucket collection drops",
-  "what": "DeleteEntryMetaAndData finds the entry (honouring an if-not-modified-after cutoff), and for a directory deletes its children first (doBatchDeleteFolderMetaAndData: lists 1024 at a time, refuses a non-recursive delete of a non-empty folder with ErrNonEmptyFolder, recurses into subdirectories, deletes each file's remote object unless the delete is metadata-only, publishes a delete event per file, collects chunks, then sweeps the store with DeleteFolderChildren and publishes the directory's event). Deleting a bucket may skip the listing when the store can drop a whole bucket, and drops the bucket's collection through the master when nothing else can route into it (bucketCollection checks the filer group name, storage rules, the metadata-log collections and sibling buckets), within 15 s that outlive the caller. Chunks are deleted after the metadata, except for a hard link with other links left. Recursive deletes tombstone the directory and each child for remote lazy reads before deleting. WithKeepRemoteObject makes a delete metadata-only (marked in the event so remote sync daemons leave the object too); deleting an empty folder under a remote mount is made metadata-only automatically, since its remote prefix may still hold unread objects. DeleteEntryError and IsNonEmptyFolderError restore the non-empty sentinel from response text.",
-  "why": "Consequence: S3 DeleteObject, DeleteBucket, lifecycle and mount rm all end here; deleting chunks before metadata would leave entries pointing at freed needles, and dropping a collection another path still writes to destroys that data. Design: metadata first, chunks after; collection drop only when provably exclusive, with listing failures keeping it.",
-  "when": "DeleteEntry RPC and HTTP deletes, ObjectTransaction DELETE mutations, rename target replacement, bucket deletion.",
-  "ux": "Deleting a bucket frees its volumes quickly when it owns its collection; rm -r in mounts works on large trees.",
-  "if_broken": "Deleted objects' data is never reclaimed, data is reclaimed while still referenced, or a bucket delete removes volumes shared with other buckets.",
+  "character": "Xoá entry và cây con: con trước, remote object và tombstone, dọn chunk và hard-link, và drop collection của bucket",
+  "what": "DeleteEntryMetaAndData tìm entry (tôn trọng mốc if-not-modified-after), và với thư mục thì xoá các con trước (doBatchDeleteFolderMetaAndData: list 1024 mỗi lần, từ chối xoá không đệ quy một thư mục không rỗng bằng ErrNonEmptyFolder, đệ quy vào thư mục con, xoá remote object của từng file trừ khi thao tác xoá chỉ là metadata, phát một delete event cho mỗi file, gom chunk, rồi quét store bằng DeleteFolderChildren và phát event của thư mục). Xoá một bucket có thể bỏ qua listing khi store drop được cả một bucket, và drop collection của bucket qua master khi không gì khác có thể route vào nó (bucketCollection kiểm tra tên filer group, storage rule, các collection metadata-log và các bucket anh em), trong 15 s sống lâu hơn caller. Chunk bị xoá sau metadata, ngoại trừ hard link còn link khác. Xoá đệ quy đặt tombstone cho thư mục và từng con cho remote lazy read trước khi xoá. WithKeepRemoteObject biến thao tác xoá thành chỉ metadata (được đánh dấu trong event để các daemon remote sync cũng để yên object); xoá một thư mục rỗng dưới remote mount tự động thành chỉ metadata, vì remote prefix của nó có thể vẫn giữ object chưa đọc. DeleteEntryError và IsNonEmptyFolderError khôi phục sentinel non-empty từ text của response.",
+  "why": "Hệ quả: DeleteObject, DeleteBucket của S3, lifecycle và rm của mount đều kết thúc ở đây; xoá chunk trước metadata sẽ để entry trỏ tới needle đã giải phóng, và drop một collection mà path khác vẫn ghi vào sẽ huỷ dữ liệu đó. Thiết kế: metadata trước, chunk sau; chỉ drop collection khi chứng minh được là độc quyền, và listing thất bại thì giữ nó lại.",
+  "when": "RPC DeleteEntry và thao tác xoá HTTP, mutation DELETE của ObjectTransaction, thay đích khi rename, xoá bucket.",
+  "ux": "Xoá một bucket giải phóng volume của nó nhanh khi nó sở hữu collection riêng; rm -r trong mount chạy được trên cây lớn.",
+  "if_broken": "Dữ liệu của object đã xoá không bao giờ được thu hồi, dữ liệu bị thu hồi khi vẫn được tham chiếu, hoặc xoá một bucket gỡ volume dùng chung với bucket khác.",
   "gotchas": [
-   "doDeleteEntryMetaAndData publishes no event for a directory; only doBatchDeleteFolderMetaAndData does. A caller that deletes a directory through it alone (DeleteEmptyParentDirectories, the lazy remote path) leaves subscribers unaware.",
-   "With ignoreRecursiveError a failed remote delete is logged and the walk continues, so metadata can be gone while the remote object remains.",
-   "The non-empty check looks only at the first page of the first listing; children that race in afterwards are not swept by a non-recursive delete."
+   "doDeleteEntryMetaAndData không phát event cho thư mục; chỉ doBatchDeleteFolderMetaAndData mới phát. Một caller chỉ xoá thư mục qua nó (DeleteEmptyParentDirectories, đường remote lười) để subscriber không hay biết.",
+   "Với ignoreRecursiveError, một lần xoá remote thất bại được log và lượt duyệt tiếp tục, nên metadata có thể đã mất trong khi remote object vẫn còn.",
+   "Kiểm tra non-empty chỉ nhìn trang đầu của lần listing đầu; các con đua vào sau đó không bị một thao tác xoá không đệ quy quét."
   ]
  },
  "weed/filer/filer_rename.go": {
-  "character": "Rename preconditions shared by both rename RPCs",
-  "what": "CanRename refuses moving a directory into itself or a descendant, renaming a bucket directory, and any move whose source and target lie in different buckets (or between a bucket and a non-bucket path). DetectBucket returns the bucket a path is under, or ''.",
-  "why": "Consequence: each bucket maps to its own collection, so a cross-bucket rename would leave an entry in one bucket pointing at chunks in another bucket's collection, which a later bucket delete would drop. Design: refuse rather than copy data.",
-  "when": "AtomicRenameEntry and StreamRenameEntry, before taking locks.",
-  "ux": "mv across buckets in a mount fails; S3 has no cross-bucket rename anyway.",
-  "if_broken": "Objects whose chunks vanish when another bucket is deleted, or a bucket renamed out from under its collection.",
+  "character": "Các điều kiện tiên quyết cho rename dùng chung bởi cả hai RPC rename",
+  "what": "CanRename từ chối dời một thư mục vào chính nó hoặc con cháu của nó, đổi tên một thư mục bucket, và mọi thao tác dời có nguồn và đích nằm ở các bucket khác nhau (hoặc giữa một bucket và một path không phải bucket). DetectBucket trả bucket mà một path nằm dưới, hoặc ''.",
+  "why": "Hệ quả: mỗi bucket ánh xạ tới collection riêng, nên một rename chéo bucket sẽ để một entry trong bucket này trỏ tới chunk trong collection của bucket kia, thứ mà một lần xoá bucket sau đó sẽ drop. Thiết kế: từ chối thay vì copy dữ liệu.",
+  "when": "AtomicRenameEntry và StreamRenameEntry, trước khi lấy lock.",
+  "ux": "mv chéo bucket trong mount thất bại; S3 vốn không có rename chéo bucket.",
+  "if_broken": "Object có chunk biến mất khi một bucket khác bị xoá, hoặc một bucket bị đổi tên tách khỏi collection của nó.",
   "gotchas": [
-   "The checks run before the rename takes its path locks; the entry can change between CanRename and the move."
+   "Các kiểm tra chạy trước khi rename lấy path lock; entry có thể thay đổi giữa CanRename và thao tác dời."
   ]
  },
  "weed/filer/filer_search.go": {
-  "character": "Directory listing with a name prefix, glob include/exclude patterns and expired-entry skipping",
-  "what": "ListDirectoryEntries reads limit+1 entries to report hasMore; CountDirectoryEntries counts up to a limit. StreamListDirectoryEntries trims a trailing slash, turns the literal head of a glob into a store prefix, and re-lists to make up for entries filtered out by the pattern (filepath.Match on the rest) or the exclude pattern, and doListValidEntries re-lists to make up for expired entries skipped, so a caller still gets up to limit live, matching entries.",
-  "why": "Design: stores only list by name prefix, so pattern filtering happens here, and the make-up loops keep the page size honest without the store knowing about TTLs or globs.",
-  "when": "Every directory listing: the ListEntries RPC, the filer HTTP directory view (?namePattern=, ?namePatternExclude=), renames and deletes walking a tree.",
-  "ux": "Filer UI and API listings with patterns.",
-  "if_broken": "Short pages that clients take for the end of a directory, or listings that loop.",
+  "character": "Directory listing với name prefix, glob pattern include/exclude và bỏ qua entry hết hạn",
+  "what": "ListDirectoryEntries đọc limit+1 entry để báo hasMore; CountDirectoryEntries đếm tới một giới hạn. StreamListDirectoryEntries cắt dấu gạch chéo cuối, biến phần đầu literal của một glob thành store prefix, và list lại để bù cho các entry bị pattern lọc ra (filepath.Match trên phần còn lại) hoặc bị exclude pattern lọc, và doListValidEntries list lại để bù cho các entry hết hạn bị bỏ qua, nên caller vẫn nhận tới limit entry còn sống và khớp.",
+  "why": "Thiết kế: store chỉ list theo name prefix, nên lọc theo pattern diễn ra ở đây, và các vòng bù giữ kích thước trang trung thực mà store không cần biết về TTL hay glob.",
+  "when": "Mọi directory listing: RPC ListEntries, view thư mục HTTP của filer (?namePattern=, ?namePatternExclude=), rename và delete duyệt một cây.",
+  "ux": "Listing có pattern trên UI và API của filer.",
+  "if_broken": "Trang ngắn mà client tưởng là hết thư mục, hoặc listing lặp vô tận.",
   "gotchas": [
-   "A namePattern without '*' or '?' is ignored: splitPattern returns an empty prefix and an empty rest, so the listing is unfiltered.",
-   "A prefix and a namePattern are documented as mutually exclusive; a pattern's literal head replaces the prefix."
+   "Một namePattern không có '*' hay '?' bị bỏ qua: splitPattern trả prefix rỗng và phần còn lại rỗng, nên listing không được lọc.",
+   "Prefix và namePattern được ghi là loại trừ nhau; phần đầu literal của pattern thay thế prefix."
   ]
  },
  "weed/filer/read_write.go": {
-  "character": "Helpers that read and write small files kept inside the filer, through a filer client",
-  "what": "ReadEntry looks an entry up and writes its inline content, or streams its chunks from volume servers, into a buffer. ReadInsideFiler returns an entry's inline content only. SaveInsideFiler creates the entry with inline content, or updates it, stamping size, mtime and the content MD5 on every write, and skips the write when content and MD5 already match.",
-  "why": "Consequence: configuration lives in small filer files (/etc/iam, /etc/s3, filer.conf, circuit breaker, remote mounts), read and written by many components. Design: the MD5 is restamped on every write so the entry's ETag describes what is stored, since conditional writers key IF_ETAG_MATCH off it.",
-  "when": "The S3 gateway's config loads (ReadInsideFiler for IAM, circuit breaker, bucket policies), shell commands saving configs, filer conf loading.",
-  "ux": "None directly.",
-  "if_broken": "Config changes do not persist, or a conditional writer accepts a stale ETag and overwrites a newer config.",
+  "character": "Các helper đọc và ghi file nhỏ giữ bên trong filer, qua một filer client",
+  "what": "ReadEntry lookup một entry và ghi inline content của nó, hoặc stream chunk của nó từ volume server, vào một buffer. ReadInsideFiler chỉ trả inline content của một entry. SaveInsideFiler tạo entry với inline content, hoặc cập nhật nó, đóng dấu size, mtime và MD5 của content ở mọi lần ghi, và bỏ qua lần ghi khi content và MD5 đã khớp.",
+  "why": "Hệ quả: cấu hình nằm trong các file filer nhỏ (/etc/iam, /etc/s3, filer.conf, circuit breaker, remote mount), được nhiều thành phần đọc và ghi. Thiết kế: MD5 được đóng dấu lại ở mọi lần ghi để ETag của entry mô tả đúng thứ được lưu, vì các bên ghi có điều kiện dựa IF_ETAG_MATCH vào nó.",
+  "when": "Việc nạp config của S3 gateway (ReadInsideFiler cho IAM, circuit breaker, bucket policy), các lệnh shell lưu config, nạp filer conf.",
+  "ux": "Không có trực tiếp.",
+  "if_broken": "Thay đổi config không được lưu bền, hoặc một bên ghi có điều kiện chấp nhận một ETag cũ và ghi đè một config mới hơn.",
   "gotchas": [
-   "SaveInsideFiler is a lookup then an unconditional create or update: two concurrent writers race and the last write wins.",
-   "ReadInsideFiler returns only inline content; an entry whose content was written as chunks reads as empty."
+   "SaveInsideFiler là một lookup rồi một create hoặc update không điều kiện: hai bên ghi đồng thời đua nhau và lần ghi cuối thắng.",
+   "ReadInsideFiler chỉ trả inline content; một entry có content được ghi thành chunk đọc ra rỗng."
   ]
  },
  "weed/filer/zip_extract.go": {
-  "character": "Safety limits for extracting a zip archive uploaded to the filer",
-  "what": "SpoolZipReader buffers an uploaded archive for random access: in memory up to 32 MiB, else in a temp file, never more than the caller's limit (default 5 GiB), failing with ErrZipTooLarge one byte past it. CheckZipLimits caps members at 100,000 and the declared uncompressed total at 1 TiB. SanitizeZipMemberName maps a member to a relative filer path, refusing symlinks, devices, pipes, sockets, absolute paths, empty, '.', '..' or NUL segments and anything filepath.IsLocal rejects.",
-  "why": "Consequence: an uploaded archive is attacker-controlled; without these limits it could fill the filer's disk, fan out to millions of entries or write outside the target directory. Design: errors are typed so handlers answer 4xx for oversized input.",
-  "when": "The filer HTTP extract path (POST/PUT with extraction requested, filer_server_handlers_extract.go), including the S3 gateway's zip-extract upload.",
-  "ux": "Uploading a zip with extraction creates its files under the target directory.",
-  "if_broken": "Path traversal out of the target directory, or disk and memory exhaustion from one upload.",
+  "character": "Các giới hạn an toàn khi giải nén một file zip được upload lên filer",
+  "what": "SpoolZipReader buffer một archive được upload để truy cập ngẫu nhiên: trong bộ nhớ tới 32 MiB, nếu không thì trong một file tạm, không bao giờ vượt giới hạn của caller (mặc định 5 GiB), thất bại với ErrZipTooLarge ngay khi vượt một byte. CheckZipLimits giới hạn member ở 100,000 và tổng kích thước chưa nén khai báo ở 1 TiB. SanitizeZipMemberName ánh xạ một member thành filer path tương đối, từ chối symlink, device, pipe, socket, path tuyệt đối, đoạn rỗng, '.', '..' hay NUL và mọi thứ filepath.IsLocal từ chối.",
+  "why": "Hệ quả: một archive được upload do kẻ tấn công kiểm soát; không có các giới hạn này nó có thể lấp đầy đĩa của filer, toả ra hàng triệu entry hoặc ghi ra ngoài thư mục đích. Thiết kế: lỗi có kiểu để handler trả 4xx cho input quá cỡ.",
+  "when": "Đường extract HTTP của filer (POST/PUT có yêu cầu giải nén, filer_server_handlers_extract.go), kể cả upload zip-extract của S3 gateway.",
+  "ux": "Upload một zip có giải nén tạo các file của nó dưới thư mục đích.",
+  "if_broken": "Path traversal ra khỏi thư mục đích, hoặc cạn đĩa và bộ nhớ từ một lần upload.",
   "gotchas": [
-   "The 1 TiB cap is checked against sizes the archive declares; actual expansion is bounded by archive/zip's own size checks while reading."
+   "Giới hạn 1 TiB được kiểm tra với kích thước mà archive khai báo; việc giãn nở thực tế được chặn bởi các kiểm tra kích thước riêng của archive/zip trong lúc đọc."
   ]
  },
  "weed/filer/copy_params.go": {
-  "character": "Names of the query parameters and headers of the filer's server-side copy endpoint",
-  "what": "Constants for the copy request (cp.from, overwrite, dataOnly, a request id, and the expected source and destination inode, mtime and size) and the response headers that confirm the copy committed and echo its request id.",
-  "why": "Design: one definition shared by the filer handler and its client so the names cannot drift; the expected-attribute parameters let the client make the copy conditional on both files being what it last saw.",
-  "when": "weed mount's copy_file_range (weedfs_file_copy_range.go) and the filer's copy handler (filer_server_handlers_copy.go).",
-  "ux": "Server-side copies in mounts (cp --reflink-style copy_file_range) avoid moving data through the client.",
-  "if_broken": "Copies fail or overwrite a file that changed since the client looked.",
+  "character": "Tên các query parameter và header của endpoint copy phía server của filer",
+  "what": "Các hằng số cho request copy (cp.from, overwrite, dataOnly, một request id, và inode, mtime và size mong đợi của nguồn và đích) và các response header xác nhận lần copy đã commit và trả lại request id của nó.",
+  "why": "Thiết kế: một định nghĩa dùng chung bởi handler của filer và client của nó để tên không thể lệch nhau; các tham số attribute mong đợi cho client làm lần copy có điều kiện là cả hai file vẫn đúng như lần cuối nó thấy.",
+  "when": "copy_file_range của weed mount (weedfs_file_copy_range.go) và copy handler của filer (filer_server_handlers_copy.go).",
+  "ux": "Copy phía server trong mount (copy_file_range kiểu cp --reflink) tránh chuyển dữ liệu qua client.",
+  "if_broken": "Copy thất bại hoặc ghi đè một file đã thay đổi kể từ lúc client xem.",
   "gotchas": []
  },
  "weed/filer/filer_buckets.go": {
-  "character": "The one test for whether an entry is an S3 bucket directory",
-  "what": "IsBucket is true for a directory directly under DirBucketsPath whose name does not start with '.'.",
-  "why": "Design: buckets are just top-level directories under the buckets path; dot-names there (.system and similar) are internal.",
-  "when": "Deletes (collection drop, metrics cleanup), CanRename, bucket listing.",
-  "ux": "None directly.",
-  "if_broken": "Deleting a bucket keeps its collection, or deleting an internal directory drops a collection.",
+  "character": "Phép kiểm tra duy nhất xem một entry có phải thư mục S3 bucket không",
+  "what": "IsBucket đúng với một thư mục nằm ngay dưới DirBucketsPath có tên không bắt đầu bằng '.'.",
+  "why": "Thiết kế: bucket chỉ là các thư mục cấp cao nhất dưới buckets path; tên có dấu chấm ở đó (.system và tương tự) là nội bộ.",
+  "when": "Thao tác xoá (drop collection, dọn metric), CanRename, liệt kê bucket.",
+  "ux": "Không có trực tiếp.",
+  "if_broken": "Xoá bucket giữ lại collection của nó, hoặc xoá một thư mục nội bộ làm drop một collection.",
   "gotchas": []
  },
  "weed/filer/filer_hardlink.go": {
-  "character": "The hard-link id format",
-  "what": "NewHardLinkId returns 16 random bytes followed by the marker byte 0x01; HardLinkId is that 17-byte value.",
-  "why": "Design: entries that are links share one id, under which the store keeps the shared inode record; the marker distinguishes these keys in the store's key space.",
-  "when": "Mounts creating hard links; the store's hard-link indirection (filerstore_hardlink.go).",
-  "ux": "ln in a mount.",
-  "if_broken": "Links stop sharing data, or link records collide with other KV keys.",
+  "character": "Định dạng hard-link id",
+  "what": "NewHardLinkId trả 16 byte ngẫu nhiên theo sau là byte marker 0x01; HardLinkId là giá trị 17 byte đó.",
+  "why": "Thiết kế: các entry là link dùng chung một id, dưới đó store giữ bản ghi inode dùng chung; marker phân biệt các key này trong không gian key của store.",
+  "when": "Mount tạo hard link; lớp gián tiếp hard-link của store (filerstore_hardlink.go).",
+  "ux": "ln trong mount.",
+  "if_broken": "Link ngừng chia sẻ dữ liệu, hoặc bản ghi link đụng với các KV key khác.",
   "gotchas": []
  },
  "weed/filer/filer_inode.go": {
-  "character": "Stable inode assignment for new entries",
-  "what": "ensureEntryInode leaves a set inode alone; otherwise it fills a missing crtime and derives the inode the way weed mount does: from the hard-link id for links (so all links share one inode), else from the path and creation time.",
-  "why": "Consequence: the mount and the filer must agree on inode numbers without a reverse index. Design: derive rather than allocate.",
-  "when": "CreateEntry and parent-directory creation for every new entry; UpdateEntry when an old entry had none.",
-  "ux": "Stable inode numbers in mounts.",
-  "if_broken": "Inodes change under applications, or hard links report different inodes.",
+  "character": "Gán inode ổn định cho entry mới",
+  "what": "ensureEntryInode để nguyên inode đã đặt; ngược lại nó điền crtime còn thiếu và dẫn xuất inode theo cách weed mount làm: từ hard-link id với link (để mọi link dùng chung một inode), nếu không thì từ path và thời điểm tạo.",
+  "why": "Hệ quả: mount và filer phải thống nhất số inode mà không cần index ngược. Thiết kế: dẫn xuất thay vì cấp phát.",
+  "when": "CreateEntry và việc tạo thư mục cha cho mọi entry mới; UpdateEntry khi entry cũ chưa có.",
+  "ux": "Số inode ổn định trong mount.",
+  "if_broken": "Inode thay đổi dưới chân ứng dụng, hoặc hard link báo inode khác nhau.",
   "gotchas": [
-   "Two entries created at the same path within the same second get the same inode."
+   "Hai entry được tạo ở cùng path trong cùng một giây nhận cùng inode."
   ]
  },
  "weed/filer/entry.go": {
