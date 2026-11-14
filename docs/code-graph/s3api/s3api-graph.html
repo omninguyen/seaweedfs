@@ -262,7 +262,7 @@ function paintPaths(id){
 }
 function emptyPanelHTML(){
   const top = [...DATA.nodes].sort((a,b)=>b.in-a.in).slice(0,3)
-    .map(n=>`<b>${esc(displayLabel(n))}</b> (in ${n.in})`).join(', ');
+    .map(n=>`<b>${esc(displayLabel(n))}</b> (${n.in} cạnh vào)`).join(', ');
   const hint = top ? `<br><br>Các node được phụ thuộc nhiều nhất: ${top}.` : '';
   return `<div class="p-empty">Chọn một node để xem vai trò của nó và làm nổi các kết nối.${hint}</div>`;
 }
@@ -303,7 +303,7 @@ function renderPanel(n,outs,ins){
   const c=cur(n), L=layerOf(n.layer);
   let h=`<span class="clr" onclick="clearSel()">✕ đóng</span><span class="badge" style="--lc:var(${L.c})">${esc(L.id)} · ${esc(L.name)}</span>`;
   if(c.issue) h+=`<span class="ibadge" style="background:${ISSUE_COLORS[c.issue]||'var(--bug)'}">${esc(c.issue)}</span>`;
-  h+=`<div class="p-file" style="margin-top:10px">${esc(n.file)}${n.symbols?` · ${n.symbols} symbols`:''}</div>`;
+  h+=`<div class="p-file" style="margin-top:10px">${esc(n.file)}${n.symbols?` · ${n.symbols} symbol`:''}</div>`;
   if(c.character) h+=`<div class="p-char">${esc(c.character)}</div>`;
   h+=`<div class="p-deg"><span><b>${n.in}</b> được dùng bởi</span><span><b>${n.out}</b> dùng</span></div>`;
   if(!c.what){ h+=`<div class="warn">Not curated yet. Its description is written by reading the file.</div>`; }
