@@ -205,16 +205,32 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 // from open-for-write through close, so no additional distributed lock is
 // needed here. The local fhLockTable lock below serializes within this mount.
 func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, name string, uid, gid uint32) error {
-	fileFullPath := fh.FullPath()
-	// Attribute acknowledgement and local retention must complete before a
-	// whole-entry flush can publish. Take this before the handle's active lock.
-	unlock := wfs.lockMetadataPublication(fileFullPath)
-	defer unlock()
+	fileFullPath, dir, name := wfs.flushTarget(fh, dir, name)
+	var unlock func()
+	var fhActiveLock *util.ActiveLock
+	// An unlink or rename can land while the flush waits for its locks.
+	for attempt := 0; ; attempt++ {
+		// Attribute acknowledgement and local retention must complete before a
+		// whole-entry flush can publish. Take this before the handle's active lock.
+		unlock = wfs.lockMetadataPublication(fileFullPath)
+		fhActiveLock = fh.wfs.fhLockTable.AcquireLock("doFlush", fh.fh, util.ExclusiveLock)
+		nowPath, nowDir, nowName := wfs.flushTarget(fh, dir, name)
+		if nowPath == fileFullPath && nowDir == dir && nowName == name {
+			break
+		}
+		fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+		unlock()
+		if attempt == 3 {
+			return fmt.Errorf("flush %s: name changed while waiting for its locks, now %s", fileFullPath, nowPath)
+		}
+		fileFullPath, dir, name = nowPath, nowDir, nowName
+	}
+	defer func() {
+		fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+		unlock()
+	}()
 
 	glog.V(4).Infof("flushMetadataToFiler %s/%s inode %d fh %d", dir, name, fh.inode, fh.fh)
-
-	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("doFlush", fh.fh, util.ExclusiveLock)
-	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
 	// Re-check under the lock: Unlink sets the flag under it, so a flush that
 	// was already past the earlier check cannot write the entry back after
@@ -222,6 +238,11 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	if fh.isDeleted {
 		glog.V(3).Infof("flushMetadataToFiler %s fh %d: file was unlinked, skipping", fileFullPath, fh.fh)
 		return nil
+	}
+	if fh.linkRefresh != nil {
+		if err := wfs.adoptStoredLink(ctx, fh, util.NewFullPath(dir, name), fh.linkRefresh); err != nil {
+			return err
+		}
 	}
 
 	entry := fh.GetEntry()
@@ -254,6 +275,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	} else if mergedChunks != nil {
 		chunks = mergedChunks
 		manifestChunks = nil
+		fh.noteRewrite()
 	}
 
 	// no chunk deleter here: a failed fold reports the blobs it saved
@@ -281,10 +303,14 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	baseSnapshot := proto.Clone(requestEntry).(*filer_pb.Entry)
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-	resp, err := wfs.createContentEntry(ctx, fh, request)
+	resp, merged, err := wfs.createContentEntry(ctx, fh, request, baseSnapshot, false)
 	if err != nil {
 		glog.Errorf("fh flush create %s: %v", fileFullPath, err)
-		return fmt.Errorf("fh flush create %s: %w", fileFullPath, err)
+		return &contentPublicationError{cause: fmt.Errorf("fh flush create %s: %w", fileFullPath, err), request: proto.Clone(request).(*filer_pb.CreateEntryRequest)}
+	}
+	if merged != nil {
+		fh.rebaseEntry(merged, requestEntry)
+		baseSnapshot = merged
 	}
 
 	event := resp.GetMetadataEvent()
@@ -311,17 +337,30 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	return err
 }
 
+// flushTarget returns the lock path and the name a flush of fh publishes
+// through: the caller's name while it still names the file, else the name the
+// file has now.
+func (wfs *WFS) flushTarget(fh *FileHandle, dir, name string) (util.FullPath, string, string) {
+	fileFullPath := fh.FullPath()
+	if resolved := util.FullPath(dir).Child(name); fileFullPath != "" && fileFullPath != resolved {
+		if inode, found := wfs.inodeToPath.GetInode(resolved); !found || inode != fh.inode {
+			dir, name = fileFullPath.DirAndName()
+		}
+	}
+	return fileFullPath, dir, name
+}
+
 // createContentEntry publishes a handle's whole entry only over the filer
-// state the handle observed. Never refresh the guard and replay a stale whole
-// entry after a conflict: that would discard a peer's acknowledged chunks.
-// Deferred creates expect no entry; existing handles compare the full base,
-// including inode identity. The unary call keeps a refused condition apart
-// from an I/O failure; the mutation stream reduces it to EIO.
+// state the handle observed. Deferred creates expect no entry; existing
+// handles compare the full base, including inode identity. The unary call
+// keeps a refused condition apart from an I/O failure; the mutation stream
+// reduces it to EIO.
 //
-// A miss is retried once, against the stored entry, only when that entry is
-// still the observed state: renamed, restamped, or encoded with filer ids the
-// local mapping cannot reproduce.
-func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request *filer_pb.CreateEntryRequest) (resp *filer_pb.CreateEntryResponse, err error) {
+// When the stored entry moved on, the handle's own changes since its base are
+// replayed onto it and published against it, so a peer's acknowledged chunks
+// survive. merged is that entry in local ids; nil when the request went as is.
+// With writes still buffered, the merge must keep room for them.
+func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request *filer_pb.CreateEntryRequest, local *filer_pb.Entry, buffered bool) (resp *filer_pb.CreateEntryResponse, merged *filer_pb.Entry, err error) {
 	base := fh.baseEntry.Load()
 	guard := &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}
 	if base != nil {
@@ -329,13 +368,15 @@ func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request 
 		wfs.mapPbIdFromLocalToFiler(expected)
 		guard = &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: expected}
 	}
-	for attempt := 0; attempt < 2; attempt++ {
+	sent := request.Entry
+	for attempt := 0; ; attempt++ {
 		request.Condition = &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{guard}}
 		var stored *filer_pb.Entry
 		err = wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 			var callErr error
+			stored = nil
 			resp, callErr = filer_pb.CreateEntryWithResponse(ctx, client, request)
-			if base == nil || attempt > 0 || !errors.Is(callErr, filer_pb.ErrPreconditionFailed) {
+			if base == nil || attempt >= maxContentFlushMerges || !errors.Is(callErr, filer_pb.ErrPreconditionFailed) {
 				return callErr
 			}
 			if found, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: request.Directory, Name: request.Entry.Name}); lookupErr == nil {
@@ -343,29 +384,175 @@ func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request 
 			}
 			return callErr
 		})
-		if stored == nil || !wfs.sameObservedEntry(stored, base) {
-			return resp, err
+		if err == nil && request.Entry != sent {
+			merged = proto.Clone(request.Entry).(*filer_pb.Entry)
+			wfs.mapPbIdFromFilerToLocal(merged)
 		}
+		if err == nil || stored == nil {
+			return resp, merged, err
+		}
+		mark := fh.markSince(base)
+		next, ok := mergeContentEntry(stored, base, local, sent, mark.truncatedTo, mark.rewrote)
+		if !ok || buffered && !mergeKeepsBuffered(next, local) {
+			return resp, nil, err
+		}
+		glog.V(1).Infof("content flush %s/%s: entry changed since the handle's base, merging", request.Directory, request.Entry.Name)
+		request.Entry = next
 		guard = &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: stored}
 	}
-	return resp, err
 }
 
-// sameObservedEntry reports whether the filer's stored entry still holds the
-// state the handle observed, ignoring what no peer write is carried by: the
-// name, the commit stamp, the id encoding and the derived file size.
-func (wfs *WFS) sameObservedEntry(stored, base *filer_pb.Entry) bool {
-	current := proto.Clone(stored).(*filer_pb.Entry)
-	wfs.mapPbIdFromFilerToLocal(current)
-	observed := proto.Clone(base).(*filer_pb.Entry)
-	for _, e := range []*filer_pb.Entry{current, observed} {
-		e.Name, e.CommitTsNs = "", 0
-		if e.Attributes != nil {
-			e.Attributes.FileSize = filer.FileSize(e)
-		}
-		filer_pb.BeforeEntrySerialization(e.Chunks)
+// maxContentFlushMerges bounds how often one flush rebases onto a moving entry.
+const maxContentFlushMerges = 3
+
+// mergeContentEntry replays what local changed since base onto stored: the
+// chunks it added or dropped, and the attributes, extended keys and inline
+// content it changed, taking those values from sent (local in stored's id
+// space). Everything else keeps the stored value. A local truncation keeps
+// the handle's size and clips stored chunks at the lowest size truncated to
+// (truncatedTo, or -1); otherwise the stored size stands unless the handle
+// changed its size or wrote past it.
+// A different file at the path, inline content changed on both sides,
+// inline content next to chunks (reads stop at the inline bytes), a manifest
+// across the truncate (its members keep their sizes), or a local
+// whole-file rewrite (rewrote) over a peer's chunk change cannot be merged:
+// the rewrite carries the handle's stale view.
+func mergeContentEntry(stored, base, local, sent *filer_pb.Entry, truncatedTo int64, rewrote bool) (*filer_pb.Entry, bool) {
+	if !sameContentFile(stored, base) {
+		return nil, false
 	}
-	return proto.Equal(current, observed)
+	merged := proto.Clone(stored).(*filer_pb.Entry)
+	merged.Name = sent.Name
+	if !bytes.Equal(local.Content, base.Content) {
+		if !bytes.Equal(stored.Content, base.Content) {
+			return nil, false
+		}
+		merged.Content = sent.Content
+	}
+
+	inBase := make(map[string]bool, len(base.Chunks))
+	for _, c := range base.Chunks {
+		inBase[contentChunkKey(c)] = true
+	}
+	inLocal := make(map[string]bool, len(local.Chunks))
+	for _, c := range local.Chunks {
+		inLocal[contentChunkKey(c)] = true
+	}
+	localSize := filer.FileSize(local)
+	if truncatedTo < 0 && localSize < filer.FileSize(base) {
+		truncatedTo = int64(localSize)
+	}
+	peerChanged := len(stored.Chunks) != len(base.Chunks)
+	merged.Chunks = merged.Chunks[:0]
+	for _, c := range stored.Chunks {
+		key := contentChunkKey(c)
+		peerChanged = peerChanged || !inBase[key]
+		if inBase[key] && !inLocal[key] || truncatedTo >= 0 && c.Offset >= truncatedTo {
+			continue
+		}
+		c = proto.Clone(c).(*filer_pb.FileChunk)
+		if truncatedTo >= 0 && c.Offset+int64(c.Size) > truncatedTo {
+			if c.IsChunkManifest {
+				return nil, false
+			}
+			c.Size = uint64(truncatedTo - c.Offset)
+		}
+		merged.Chunks = append(merged.Chunks, c)
+	}
+	if rewrote && peerChanged {
+		return nil, false
+	}
+	size := int64(filer.FileSize(stored))
+	if localSize != filer.FileSize(base) {
+		size = max(size, int64(localSize))
+	}
+	for _, c := range local.Chunks {
+		if !inBase[contentChunkKey(c)] {
+			merged.Chunks = append(merged.Chunks, proto.Clone(c).(*filer_pb.FileChunk))
+			size = max(size, c.Offset+int64(c.Size))
+		}
+	}
+	if len(merged.Content) > 0 && len(merged.Chunks) > 0 {
+		return nil, false
+	}
+
+	if merged.Attributes == nil {
+		merged.Attributes = &filer_pb.FuseAttributes{}
+	}
+	baseAttrs, localAttrs := base.GetAttributes(), local.GetAttributes()
+	if baseAttrs == nil {
+		baseAttrs = &filer_pb.FuseAttributes{}
+	}
+	if localAttrs == nil {
+		localAttrs = &filer_pb.FuseAttributes{}
+	}
+	m, b, l := merged.Attributes.ProtoReflect(), baseAttrs.ProtoReflect(), localAttrs.ProtoReflect()
+	s := proto.Clone(sent.GetAttributes()).(*filer_pb.FuseAttributes).ProtoReflect()
+	fields := m.Descriptor().Fields()
+	for i := 0; i < fields.Len(); i++ {
+		fd := fields.Get(i)
+		if fd.Name() == "file_size" || l.Get(fd).Equal(b.Get(fd)) {
+			continue
+		}
+		if s.Has(fd) {
+			m.Set(fd, s.Get(fd))
+		} else {
+			m.Clear(fd)
+		}
+	}
+
+	for k, v := range local.Extended {
+		if old, found := base.Extended[k]; !found || !bytes.Equal(old, v) {
+			if merged.Extended == nil {
+				merged.Extended = make(map[string][]byte)
+			}
+			merged.Extended[k] = sent.Extended[k]
+		}
+	}
+	for k := range base.Extended {
+		if _, found := local.Extended[k]; !found {
+			delete(merged.Extended, k)
+		}
+	}
+
+	if truncatedTo >= 0 {
+		size = int64(localSize)
+	}
+	merged.Attributes.FileSize = uint64(size)
+	return merged, true
+}
+
+// sameContentFile reports whether stored is still the regular file base was:
+// the same inode, or for an entry without one, the same creation time. A
+// synthesized base with neither cannot tell.
+func sameContentFile(stored, base *filer_pb.Entry) bool {
+	if stored == nil || base == nil || stored.IsDirectory || !bytes.Equal(stored.HardLinkId, base.HardLinkId) {
+		return false
+	}
+	if inode := base.GetAttributes().GetInode(); inode != 0 {
+		return stored.GetAttributes().GetInode() == inode
+	}
+	crtime := base.GetAttributes().GetCrtime()
+	return crtime == 0 || stored.GetAttributes().GetCrtime() == crtime
+}
+
+// contentChunkKey identifies a chunk reference: truncation shrinks a chunk in
+// place, so the same file id at another size is a different reference. Both
+// file id encodings give one key, and the chunk is left as is.
+func contentChunkKey(c *filer_pb.FileChunk) string {
+	return fmt.Sprintf("%s@%d+%d", contentFileIdKey(c), c.Offset, c.Size)
+}
+
+func contentFileIdKey(c *filer_pb.FileChunk) string {
+	fid := c.Fid
+	if fid == nil {
+		if parsed, err := filer_pb.ToFileIdObject(c.FileId); err == nil {
+			fid = parsed
+		} else {
+			return c.FileId
+		}
+	}
+	return fmt.Sprintf("%d,%x,%x", fid.VolumeId, fid.FileKey, fid.Cookie)
 }
 
 // ackedBase is the base an acknowledged create leaves: the entry the filer
