@@ -1198,7 +1198,7 @@
    "layer": 2,
    "in": 11,
    "out": 1,
-   "symbols": 160
+   "symbols": 149
   },
   {
    "id": "weed/s3api/request_body.go",
@@ -1617,8 +1617,8 @@
    "kind": "file",
    "layer": 7,
    "in": 0,
-   "out": 19,
-   "symbols": 15
+   "out": 21,
+   "symbols": 23
   },
   {
    "id": "weed/s3api/s3api_object_anonymous_read.go",
@@ -1636,7 +1636,7 @@
    "file": "weed/s3api/s3api_object_handlers.go",
    "kind": "file",
    "layer": 4,
-   "in": 17,
+   "in": 18,
    "out": 34,
    "symbols": 96
   },
@@ -1828,7 +1828,7 @@
    "layer": 5,
    "in": 11,
    "out": 11,
-   "symbols": 27
+   "symbols": 28
   },
   {
    "id": "weed/s3api/s3api_object_routed_read.go",
@@ -1836,7 +1836,7 @@
    "file": "weed/s3api/s3api_object_routed_read.go",
    "kind": "file",
    "layer": 6,
-   "in": 14,
+   "in": 15,
    "out": 7,
    "symbols": 9
   },
@@ -1878,7 +1878,7 @@
    "layer": 5,
    "in": 15,
    "out": 21,
-   "symbols": 74
+   "symbols": 75
   },
   {
    "id": "weed/s3api/s3api_path_validation.go",
@@ -10015,12 +10015,12 @@
    "s": "weed/s3api/s3api_internal_lifecycle.go",
    "t": "weed/pb/filer.proto",
    "r": "references",
-   "w": 4,
+   "w": 10,
    "via": [
     ".lifecycleDispatch() \u2192 Entry",
-    ".lifecycleRequireLatest() \u2192 Entry",
-    "computeEntryIdentity() \u2192 Entry",
-    "entryUsesMetadataOnlyDelete() \u2192 Entry"
+    ".lifecycleNullVersion() \u2192 Entry",
+    ".lifecycleNullVersion() \u2192 Entry",
+    ".lifecycleDeleteNullVersion() \u2192 Entry"
    ]
   },
   {
@@ -10036,8 +10036,10 @@
    "s": "weed/s3api/s3api_internal_lifecycle.go",
    "t": "weed/s3api/bucket_paths.go",
    "r": "calls",
-   "w": 2,
+   "w": 4,
    "via": [
+    ".lifecycleDeleteMarkerIf() \u2192 .bucketDir()",
+    ".lifecycleDeleteNullVersion() \u2192 .bucketDir()",
     ".checkSoleSurvivorMarker() \u2192 .bucketDir()",
     ".isCurrentLatestVersion() \u2192 .bucketDir()"
    ]
@@ -10055,11 +10057,21 @@
    "s": "weed/s3api/s3api_internal_lifecycle.go",
    "t": "weed/s3api/filer_util.go",
    "r": "calls",
-   "w": 3,
+   "w": 4,
    "via": [
+    ".lifecycleDeleteNullVersion() \u2192 .getEntry()",
     ".lifecycleAbortMPU() \u2192 .getEntry()",
     ".checkSoleSurvivorMarker() \u2192 .getEntry()",
     ".isCurrentLatestVersion() \u2192 .getEntry()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_internal_lifecycle.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".lifecycleDeleteMarker() \u2192 NormalizeObjectKey()"
    ]
   },
   {
@@ -10073,10 +10085,11 @@
    "s": "weed/s3api/s3api_internal_lifecycle.go",
    "t": "weed/s3api/s3api_bucket_config.go",
    "r": "calls",
-   "w": 2,
+   "w": 3,
    "via": [
     ".lifecycleDispatch() \u2192 .getVersioningState()",
-    ".lifecycleDispatch() \u2192 .isObjectLockEnabled()"
+    ".lifecycleDispatch() \u2192 .isObjectLockEnabled()",
+    ".lifecycleDeleteNullVersion() \u2192 .isObjectLockEnabled()"
    ]
   },
   {
@@ -10087,6 +10100,15 @@
    "via": [
     ".lifecycleDispatch() \u2192 .WithFilerClient()",
     ".checkSoleSurvivorMarker() \u2192 .WithFilerClient()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_internal_lifecycle.go",
+   "t": "weed/s3api/s3api_object_handlers.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".lifecycleNullVersion() \u2192 isNullVersionObject()"
    ]
   },
   {
@@ -10111,8 +10133,10 @@
    "s": "weed/s3api/s3api_internal_lifecycle.go",
    "t": "weed/s3api/s3api_object_handlers_put.go",
    "r": "calls",
-   "w": 1,
+   "w": 3,
    "via": [
+    ".lifecycleDeleteMarker() \u2192 .withObjectWriteLock()",
+    ".lifecycleDeleteNullVersion() \u2192 .withObjectWriteLock()",
     ".lifecycleAbortMPU() \u2192 .withObjectWriteLock()"
    ]
   },
@@ -10120,51 +10144,66 @@
    "s": "weed/s3api/s3api_internal_lifecycle.go",
    "t": "weed/s3api/s3api_object_retention.go",
    "r": "calls",
-   "w": 3,
+   "w": 5,
    "via": [
+    ".lifecycleDeleteMarkerIf() \u2192 isObjectEntryMiss()",
+    ".lifecycleNullVersion() \u2192 isObjectEntryMiss()",
     ".lifecycleRequireLatest() \u2192 isObjectEntryMiss()",
-    ".LifecycleDelete() \u2192 .getObjectEntry()",
-    ".LifecycleDelete() \u2192 .enforceObjectLockProtections()"
+    ".LifecycleDelete() \u2192 .getObjectEntry()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_internal_lifecycle.go",
+   "t": "weed/s3api/s3api_object_routed_read.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".lifecycleDeleteMarkerIf() \u2192 .getObjectScopedEntryRoutedByKey()",
+    ".lifecycleNullVersion() \u2192 .getObjectEntryRoutedByKey()"
    ]
   },
   {
    "s": "weed/s3api/s3api_internal_lifecycle.go",
    "t": "weed/s3api/s3api_object_routed_write.go",
    "r": "calls",
-   "w": 1,
+   "w": 2,
    "via": [
-    ".lifecycleDispatch() \u2192 .routableWriteOwner()"
+    ".lifecycleDispatch() \u2192 .routableWriteOwner()",
+    ".lifecycleDeleteNullVersion() \u2192 .routableWriteOwner()"
    ]
   },
   {
    "s": "weed/s3api/s3api_internal_lifecycle.go",
    "t": "weed/s3api/s3api_object_versioned_finalize.go",
    "r": "calls",
-   "w": 2,
+   "w": 4,
    "via": [
     ".lifecycleDispatch() \u2192 .routedDeleteNullVersion()",
-    ".lifecycleDispatch() \u2192 .routedDeleteSpecificVersion()"
+    ".lifecycleDispatch() \u2192 .routedDeleteSpecificVersion()",
+    ".lifecycleDeleteMarker() \u2192 .objectWriteOwner()",
+    ".lifecycleDeleteNullVersion() \u2192 .routedDeleteNullVersion()"
    ]
   },
   {
    "s": "weed/s3api/s3api_internal_lifecycle.go",
    "t": "weed/s3api/s3api_object_versioning.go",
    "r": "calls",
-   "w": 4,
+   "w": 7,
    "via": [
     ".lifecycleDispatch() \u2192 isDeleteMarkerEntry()",
-    ".lifecycleDispatch() \u2192 .createDeleteMarker()",
-    ".lifecycleDispatch() \u2192 .deleteSpecificObjectVersion()",
-    ".lifecycleRequireLatest() \u2192 .getLatestObjectVersion()"
+    ".lifecycleDeleteMarkerIf() \u2192 nullVersionIsLatest()",
+    "pointerLatestVersion() \u2192 nullVersionIsLatest()",
+    ".lifecycleDispatch() \u2192 .deleteSpecificObjectVersion()"
    ]
   },
   {
    "s": "weed/s3api/s3api_internal_lifecycle.go",
    "t": "weed/s3api/s3api_server_grpc.go",
    "r": "calls",
-   "w": 1,
+   "w": 2,
    "via": [
-    ".LifecycleDelete() \u2192 .checkAdminAuth()"
+    ".LifecycleDelete() \u2192 .checkAdminAuth()",
+    ".LifecycleReady() \u2192 .checkAdminAuth()"
    ]
   },
   {
@@ -10180,9 +10219,11 @@
    "s": "weed/s3api/s3api_internal_lifecycle.go",
    "t": "weed/s3api/s3err/",
    "r": "calls",
-   "w": 2,
+   "w": 4,
    "via": [
     ".lifecycleDispatch() \u2192 GetAPIError()",
+    ".lifecycleDeleteMarker() \u2192 GetAPIError()",
+    ".lifecycleDeleteNullVersion() \u2192 GetAPIError()",
     ".lifecycleAbortMPU() \u2192 GetAPIError()"
    ]
   },
@@ -13191,8 +13232,9 @@
    "s": "weed/s3api/s3api_object_handlers_put.go",
    "t": "weed/s3api/s3api_object_retention.go",
    "r": "calls",
-   "w": 3,
+   "w": 4,
    "via": [
+    ".validateObjectLockHeaders() \u2192 governanceBypassRequested()",
     ".PutObjectHandler() \u2192 .enforceObjectLockOnEntry()",
     ".PutObjectHandler() \u2192 .evaluateGovernanceBypassRequest()",
     ".PutObjectHandler() \u2192 .enforceObjectLockProtections()"
@@ -14273,12 +14315,12 @@
    "s": "weed/s3api/s3api_object_versioned_finalize.go",
    "t": "weed/pb/filer.proto",
    "r": "references",
-   "w": 14,
+   "w": 15,
    "via": [
     ".latestPointerRecompute() \u2192 ObjectMutation",
     ".routedVersionedFinalize() \u2192 Entry",
-    ".removeUploadDirMutation() \u2192 ObjectMutation",
-    "uploadExistsCondition() \u2192 WriteCondition"
+    ".routedVersionedFinalize() \u2192 WriteCondition",
+    ".removeUploadDirMutation() \u2192 ObjectMutation"
    ]
   },
   {
@@ -14426,12 +14468,12 @@
    "s": "weed/s3api/s3api_object_versioning.go",
    "t": "weed/pb/filer.proto",
    "r": "references",
-   "w": 37,
+   "w": 38,
    "via": [
     "isDeleteMarkerEntry() \u2192 Entry",
     "setCachedListMetadata() \u2192 Entry",
-    ".nullDeleteMarkerEntry() \u2192 Entry",
-    "versionCollector \u2192 Entry"
+    ".createDeleteMarkerIf() \u2192 WriteCondition",
+    ".nullDeleteMarkerEntry() \u2192 Entry"
    ]
   },
   {
@@ -14450,7 +14492,7 @@
    "r": "calls",
    "w": 11,
    "via": [
-    ".createDeleteMarker() \u2192 .bucketDir()",
+    ".createDeleteMarkerIf() \u2192 .bucketDir()",
     ".createNullDeleteMarker() \u2192 .bucketDir()",
     ".listObjectVersions() \u2192 .bucketDir()",
     ".getObjectVersionList() \u2192 .bucketDir()"
@@ -14464,7 +14506,7 @@
    "via": [
     ".markVersionNoncurrent() \u2192 .getEntry()",
     ".markVersionNoncurrent() \u2192 .updateEntry()",
-    ".createDeleteMarker() \u2192 .mkFile()",
+    ".createDeleteMarkerIf() \u2192 .mkFile()",
     ".createNullDeleteMarker() \u2192 .mkFile()"
    ]
   },
@@ -14544,7 +14586,7 @@
    "r": "calls",
    "w": 6,
    "via": [
-    ".createDeleteMarker() \u2192 .updateLatestVersionInDirectory()",
+    ".createDeleteMarkerIf() \u2192 .updateLatestVersionInDirectory()",
     ".createNullDeleteMarker() \u2192 .updateLatestVersionInDirectory()",
     ".addVersion() \u2192 .getStorageClassFromExtended()",
     ".processExplicitDirectory() \u2192 .getStorageClassFromExtended()"
@@ -14588,8 +14630,8 @@
    "r": "calls",
    "w": 2,
    "via": [
-    ".createDeleteMarker() \u2192 .objectWriteOwner()",
-    ".createDeleteMarker() \u2192 .routedVersionedFinalize()"
+    ".createDeleteMarkerIf() \u2192 .objectWriteOwner()",
+    ".createDeleteMarkerIf() \u2192 .routedVersionedFinalize()"
    ]
   },
   {
@@ -14607,7 +14649,7 @@
    "r": "calls",
    "w": 18,
    "via": [
-    ".createDeleteMarker() \u2192 generateVersionId()",
+    ".createDeleteMarkerIf() \u2192 generateVersionId()",
     ".buildSortedCombinedList() \u2192 compareVersionIds()",
     ".shouldSkipVersionForMarker() \u2192 compareVersionIds()",
     ".getSpecificObjectVersion() \u2192 isValidVersionID()"
