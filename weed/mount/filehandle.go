@@ -23,7 +23,7 @@ var IsDebugFileReadWrite = false
 type FileHandle struct {
 	fh      FileHandleId
 	counter int64
-	fhs     map[FileHandleId]struct{} // live fh values, one per open; guarded by fhMap's lock
+	fhs     map[FileHandleId]bool // live fh values, one per open; guarded by fhMap's lock
 	entry   *LockedEntry
 	// Nested handle lock order: wfs.fhLockTable[fh.fh] -> entryLock ->
 	// LockedEntry.RWMutex. Paths may use a subset, but must never acquire an
@@ -34,15 +34,19 @@ type FileHandle struct {
 	wfs             *WFS
 
 	// cache file has been written to
-	dirtyMetadata     bool
-	dirtyPages        *PageWriter
-	reader            *filer.ChunkReadAt
-	contentType       string
-	asyncFlushPending bool   // set in writebackCache mode to defer flush to Release
-	asyncFlushUid     uint32 // saved uid for deferred metadata flush
-	asyncFlushGid     uint32 // saved gid for deferred metadata flush
-	savedDir          string // last known parent path if inode-to-path state is forgotten
-	savedName         string // last known file name if inode-to-path state is forgotten
+	pendingAppend         bool
+	pendingAppendOffset   uint64
+	writebackContentError *atomic.Bool
+	dirtyMetadata         bool
+	dirtyContent          bool
+	dirtyPages            *PageWriter
+	reader                *filer.ChunkReadAt
+	contentType           string
+	asyncFlushPending     bool   // set in writebackCache mode to defer flush to Release
+	asyncFlushUid         uint32 // saved uid for deferred metadata flush
+	asyncFlushGid         uint32 // saved gid for deferred metadata flush
+	savedDir              string // last known parent path if inode-to-path state is forgotten
+	savedName             string // last known file name if inode-to-path state is forgotten
 
 	isDeleted bool
 	// deleteEpoch counts the times isDeleted was raised, all of them under the
@@ -53,6 +57,9 @@ type FileHandle struct {
 	// linkRefresh is the hard link id of a link change whose stored entry
 	// could not be read; the next flush reads it before publishing.
 	linkRefresh []byte
+
+	// pageWrites counts the pages added to dirtyPages, under the handle lock.
+	pageWrites atomic.Uint64
 
 	// entryVersionTsNs is the filer log position the handle's entry reflects.
 	// State at or below it must not replace the entry — that rolls it back.
@@ -96,7 +103,7 @@ func newFileHandle(wfs *WFS, handleId FileHandleId, inode uint64, entry *filer_p
 	fh := &FileHandle{
 		fh:      handleId,
 		counter: 1,
-		fhs:     map[FileHandleId]struct{}{handleId: {}},
+		fhs:     map[FileHandleId]bool{handleId: false},
 		inode:   inode,
 		wfs:     wfs,
 	}
@@ -337,6 +344,8 @@ func (fh *FileHandle) ResetDirtyPages() {
 	fh.dirtyPages.Destroy()
 	fh.dirtyPages = newPageWriter(fh, fh.wfs.option.ChunkSizeLimit)
 	fh.dirtyMetadata = false
+	fh.dirtyContent = false
+	fh.pendingAppend = false
 	fh.contentType = ""
 }
 

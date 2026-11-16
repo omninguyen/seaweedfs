@@ -10,6 +10,14 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// isAppendWrite honors current F_SETFL flags; adapters without flags use the open.
+func (wfs *WFS) isAppendWrite(in *fuse.WriteIn) bool {
+	if in.Flags != 0 {
+		return in.Flags&syscall.O_APPEND != 0
+	}
+	return wfs.fhMap.isAppendHandle(FileHandleId(in.Fh))
+}
+
 /**
  * Write data
  *
@@ -60,8 +68,29 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 		return 0, fuse.OK
 	}
 
-	entry.Content = nil
+	// Size and times cover only the bytes buffered, or the next flush
+	// publishes a hole where the data should be. A partly buffered write
+	// is reported as a short write, or as an error to kernel writeback,
+	// which ignores the count.
 	offset := int64(in.Offset)
+	buffered, err := fh.dirtyPages.AddPage(offset, data, fh.dirtyPages.writerPattern.IsSequentialMode(), tsNs)
+	if err != nil {
+		glog.Errorf("AddPage error: %v", err)
+		if buffered == 0 {
+			return 0, writeErrorToFuseStatus(err)
+		}
+		data = data[:buffered]
+	}
+	fh.pageWrites.Add(1)
+
+	// Only an append past all locally owned bytes needs the stored EOF guard.
+	if in.Offset > entry.Attributes.FileSize && wfs.isAppendWrite(in) {
+		if !fh.pendingAppend || in.Offset < fh.pendingAppendOffset {
+			fh.pendingAppendOffset = in.Offset
+		}
+		fh.pendingAppend = true
+	}
+	entry.Content = nil
 	oldFileSize := int64(entry.Attributes.FileSize)
 	newFileSize := max(offset+int64(len(data)), oldFileSize)
 	entry.Attributes.FileSize = uint64(newFileSize)
@@ -81,13 +110,6 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 		wfs.AddUncommittedBytes(newFileSize - oldFileSize)
 	}
 
-	// glog.V(4).Infof("%v write [%d,%d) %d", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)), len(req.Data))
-
-	if err := fh.dirtyPages.AddPage(offset, data, fh.dirtyPages.writerPattern.IsSequentialMode(), tsNs); err != nil {
-		glog.Errorf("AddPage error: %v", err)
-		return 0, writeErrorToFuseStatus(err)
-	}
-
 	written = uint32(len(data))
 
 	if offset == 0 {
@@ -96,6 +118,7 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 	}
 
 	fh.dirtyMetadata = true
+	fh.dirtyContent = true
 
 	// Invalidate the mtime cache so the next Open will not set FOPEN_KEEP_CACHE.
 	wfs.invalidateOpenMtimeCache(in.NodeId)
@@ -110,5 +133,8 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 		fh.mirrorFile.WriteAt(data, offset)
 	}
 
+	if err != nil && in.WriteFlags&fuse.WRITE_CACHE != 0 {
+		return 0, writeErrorToFuseStatus(err)
+	}
 	return written, fuse.OK
 }
