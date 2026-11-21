@@ -9,7 +9,8 @@
    "Group trong file cấu hình tĩnh bị bỏ qua kèm cảnh báo (group được quản lý qua IAM API).",
    "Tham chiếu ${VAR} trong key của file tĩnh được thay bằng biến môi trường; credential có biến chưa đặt hoặc rỗng bị bỏ, không nạp nguyên văn.",
    "LookupByAccessKey trả con trỏ vào các map đang dùng: caller không được sửa chúng.",
-   "Một action Admin trần gốc vẫn còn sau khi gắn IAM policy (#11226); chỉ một Deny tường minh trong policy được gắn mới gỡ được nó."
+   "Một action Admin trần gốc vẫn còn sau khi gắn IAM policy (#11226); chỉ một Deny tường minh trong policy được gắn mới gỡ được nó.",
+   "addEmptyListPrefix (#12702): một listing không nêu prefix được báo cho policy là s3:prefix \"\" (như AWS và đường IAM nâng cao), cả khi đánh giá IAM policy được gắn lẫn bucket policy; trước đó key vắng mặt, nên một điều kiện StringEquals s3:prefix \"\" không bao giờ khớp."
   ],
   "if_broken": "Request bị từ chối hoặc cho phép sai trên toàn gateway; key đã thu hồi vẫn dùng được; credential admin tĩnh có thể biến mất khi reload; engine IAM nâng cao đánh giá policy cũ.",
   "ux": "Quyết định giữa 403 AccessDenied / InvalidAccessKeyId / SignatureDoesNotMatch và thành công với mọi client; quyết định một `docker run seaweedfs` chưa cấu hình có nhận request anonymous hay không.",
@@ -60,13 +61,14 @@
   "gotchas": [
    "URL presigned V2 không có thời hạn tối đa (SigV4 giới hạn 7 ngày).",
    "Khi có x-amz-date, dòng Date trong string-to-sign bị để trống (nó được phủ qua các header x-amz-* thay vào đó).",
-   "Cảnh báo invalid-access-key ghi log toàn bộ access key id đã thử."
+   "Cảnh báo invalid-access-key ghi log toàn bộ access key id đã thử.",
+   "Comment '// validateV2AuthHeader validates…' giờ nằm phía trên encodedResourceV2 (bị chèn vào giữa ở #12835), nên đọc lướt dễ nhầm hàm nào làm gì."
   ],
   "if_broken": "Client kiểu cũ bị khoá ngoài, hoặc request V2 giả mạo được chấp nhận.",
   "issue": "bug",
-  "issue_note": "Request SigV2 ký qua header không bao giờ được kiểm tra độ mới: doesSignV2Match xác minh HMAC trên header Date nhưng không bao giờ so ngày đó với đồng hồ server (bước kiểm tra RequestTimeTooSkewed duy nhất trong package nằm ở đường header của SigV4). Vì vậy một request ký V2 bị bắt được có thể phát lại vô hạn cho tới khi xoay khoá, trong khi AWS từ chối request V2 cũ hơn 15 phút. Đã tái hiện ở b9866bae (một request ký header ghi ngày một năm trước vẫn được chấp nhận); doesSignV2Match không đổi ở 917cf534. Nửa sau của cờ trước đây, các subresource thiếu trong resourceList khiến chữ ký cho GET /bucket cũng xác thực được ?cors, ?tagging, ?object-lock hoặc ?encryption, đã được upstream sửa bằng #12575 (917cf534).",
+  "issue_note": "Request SigV2 ký qua header không bao giờ được kiểm tra độ mới: doesSignV2Match xác minh HMAC trên header Date nhưng không bao giờ so ngày đó với đồng hồ server (bước kiểm tra RequestTimeTooSkewed duy nhất trong package nằm ở đường header của SigV4). Vì vậy một request ký V2 bị bắt được có thể phát lại vô hạn cho tới khi xoay khoá, trong khi AWS từ chối request V2 cũ hơn 15 phút. Đã tái hiện ở b9866bae (một request ký header ghi ngày một năm trước vẫn được chấp nhận); doesSignV2Match không đổi ở 917cf534. Nửa sau của cờ trước đây, các subresource thiếu trong resourceList khiến chữ ký cho GET /bucket cũng xác thực được ?cors, ?tagging, ?object-lock hoặc ?encryption, đã được upstream sửa bằng #12575 (917cf534). Kiểm tra lại ở afdb32d2: không đổi; #12835 và #12845 sửa resource ký và thêm chặn FIPS, nhưng doesSignV2Match vẫn không so header Date với đồng hồ.",
   "ux": "Client V2 kiểu cũ xác thực được; thất bại trả SignatureDoesNotMatch / InvalidAccessKeyId / AccessDenied (presign hết hạn).",
-  "what": "Xác minh request 'Authorization: AWS <key>:<sig>', URL presigned ?AWSAccessKeyId&Expires&Signature và form POST-policy V2: tra key, từ chối credential hết hạn, dựng lại string-to-sign của V2 (method, Content-MD5, Content-Type, Date hoặc Expires, các header x-amz-* đã sắp xếp, path cùng các subresource trong resourceList), tính HMAC-SHA1 và so sánh thời gian hằng sau khi base64-decode cả hai phía; ghi lại access key id cho audit. resourceList chứa mọi key query chọn thao tác (acl, cors, tagging, object-lock, retention, legal-hold, encryption, publicAccessBlock, replication, seaweedfs-quota và các key còn lại), và mọi giá trị của một key lặp đều được ký. Sau khi một chữ ký V2 dạng header hoặc presigned khớp, request body được ràng buộc bằng bindSignedPayload như unsigned payload, nên chỉ Content-MD5 được kiểm tra với nó.",
+  "what": "Xác minh request 'Authorization: AWS <key>:<sig>', URL presigned ?AWSAccessKeyId&Expires&Signature và form POST-policy V2: tra key, từ chối credential hết hạn, dựng lại string-to-sign của V2 (method, Content-MD5, Content-Type, Date hoặc Expires, các header x-amz-* đã sắp xếp, path cùng các subresource trong resourceList), tính HMAC-SHA1 và so sánh thời gian hằng sau khi base64-decode cả hai phía; ghi lại access key id cho audit. resourceList chứa mọi key query chọn thao tác (acl, cors, tagging, object-lock, retention, legal-hold, encryption, publicAccessBlock, replication, seaweedfs-quota và các key còn lại), và mọi giá trị của một key lặp đều được ký. Sau khi một chữ ký V2 dạng header hoặc presigned khớp, request body được ràng buộc bằng bindSignedPayload như unsigned payload, nên chỉ Content-MD5 được kiểm tra với nó. Từ #12835, resource được ký có tiền tố bucket của virtual-hosted host (encodedResourceV2, dùng bucketFromVirtualHost của SigV4); một bucket trong host khác với bucket mà router resolve trả AccessDenied. Dưới fips140=only mọi đường V2 (header, presigned, POST policy) trả SignatureVersionNotSupported (#12845), vì HMAC-SHA1 panic ở chế độ đó.",
   "when": "authenticateRequestInternal cho authTypeSignedV2 / authTypePresignedV2; doesPolicySignatureV2Match từ handler POST Object.",
   "why": "Hệ quả: SDK và công cụ cũ (mặc định của s3cmd, ứng dụng kiểu cũ) vẫn ký bằng V2; không có phần này thì chúng không nói chuyện được với gateway. Thiết kế: so sánh thời gian hằng tránh oracle thời gian cho chữ ký; hạn của presigned được kiểm tra trước khi tra key. Mọi subresource chọn thao tác đều nằm trong canonical resource vì một chữ ký chỉ phủ path sẽ cấp quyền cho các thao tác khác trên path đó (#12575); mọi key lặp đều được ký vì handler đọc giá trị đầu tiên. Tương thích AWS: canonical resource theo đặc tả V2, cộng các subresource riêng của SeaweedFS là seaweedfs-quota và renameObject."
  },
@@ -78,7 +80,8 @@
    "X-Forwarded-Host/Port/Proto được thử làm host ứng viên từ mọi client (không chỉ trusted proxy); điều này chỉ đổi host mà chữ ký phải phủ, nên không phải lỗ vượt qua.",
    "doesSignatureMatch và doesPresignedSignatureMatch là hai wrapper giống hệt nhau quanh verifyV4Signature(r, false).",
    "Cảnh báo invalid-access-key ghi log toàn bộ access key id đã thử.",
-   "Payload streaming (STREAMING-*) không được ràng buộc ở đây; body của chúng được kiểm tra từng chunk trong chunked_reader_v4.go, vốn không thực thi chữ ký ở chế độ trailer (xem node đó)."
+   "Payload streaming (STREAMING-*) không được ràng buộc ở đây; body của chúng được kiểm tra từng chunk trong chunked_reader_v4.go, vốn không thực thi chữ ký ở chế độ trailer (xem node đó).",
+   "bucketFromVirtualHost (từ #12835 cũng được SigV2 dùng) hạ chữ thường host rồi so một domain có nêu cổng với nguyên host:port, như router làm, và một domain không cổng với host đã bỏ cổng; trước đó cổng luôn bị bỏ, nên một domain cấu hình kèm cổng không bao giờ khớp."
   ],
   "if_broken": "Mọi client SigV4 thất bại, hoặc request giả mạo / phát lại được chấp nhận.",
   "ux": "SignatureDoesNotMatch, RequestTimeTooSkewed, AccessDenied (presign hết hạn), InvalidAccessKeyId, ExpiredToken cho client; URL presigned chạy sau reverse proxy khi đặt -s3.externalUrl hoặc forwarded header.",
@@ -134,11 +137,12 @@
   "gotchas": [
    "Nếu trailer có nhiều dòng x-amz-checksum-*, dòng cuối thắng.",
    "Close() không làm gì; caller tự đóng body bên dưới.",
-   "ChecksumAlgorithm/getCheckSumWriter định nghĩa ở đây cũng được putToFiler và phần tính checksum multipart dùng."
+   "ChecksumAlgorithm/getCheckSumWriter định nghĩa ở đây cũng được putToFiler và phần tính checksum multipart dùng.",
+   "Dưới fips140=only, một upload streaming nêu checksum SHA-1 trả NotImplemented (#12845) trước khi đọc body."
   ],
   "if_broken": "Object được lưu kèm rác của khung, upload thất bại với SDK hiện đại, hoặc body bị can thiệp được chấp nhận.",
   "issue": "bug",
-  "issue_note": "Với upload STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER, body không được xác thực. Chữ ký chunk chỉ được kiểm tra khi dòng chunk có ';chunk-signature=' (chữ ký vắng mặt đơn giản là bị bỏ qua), và ở chế độ trailer chunk cuối đi thẳng tới checksum trailer, nên cả chữ ký chunk cuối lẫn x-amz-trailer-signature đều không bao giờ được xác minh. Đã tái hiện ở commit này bằng một test tạm: một reader dựng giống cách newChunkedReader dựng khi bật auth (có credential, hasTrailer) trả về body do kẻ tấn công chọn mà không lỗi khi các chunk không mang chữ ký và trailer mang CRC32 khớp. Chữ ký header (seed) vẫn phải hợp lệ, nên đây là lỗ hổng toàn vẹn body (phát lại header bị bắt trong cửa sổ 15 phút, hoặc MITM trên HTTP thường), không phải vượt qua xác thực. Không có trailer thì thiếu chữ ký chunk cuối vẫn thất bại.",
+  "issue_note": "Với upload STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER, body không được xác thực. Chữ ký chunk chỉ được kiểm tra khi dòng chunk có ';chunk-signature=' (chữ ký vắng mặt đơn giản là bị bỏ qua), và ở chế độ trailer chunk cuối đi thẳng tới checksum trailer, nên cả chữ ký chunk cuối lẫn x-amz-trailer-signature đều không bao giờ được xác minh. Đã tái hiện ở commit này bằng một test tạm: một reader dựng giống cách newChunkedReader dựng khi bật auth (có credential, hasTrailer) trả về body do kẻ tấn công chọn mà không lỗi khi các chunk không mang chữ ký và trailer mang CRC32 khớp. Chữ ký header (seed) vẫn phải hợp lệ, nên đây là lỗ hổng toàn vẹn body (phát lại header bị bắt trong cửa sổ 15 phút, hoặc MITM trên HTTP thường), không phải vượt qua xác thực. Không có trailer thì thiếu chữ ký chunk cuối vẫn thất bại. Kiểm tra lại ở afdb32d2: không đổi (diff duy nhất là chặn checksum SHA-1 dưới FIPS).",
   "ux": "Upload streaming từ SDK hiện đại chạy được; chunk hỏng hoặc bị can thiệp thất bại với lỗi chunk-signature / checksum không khớp.",
   "what": "newChunkedReader xác minh chữ ký header SigV4 của request (seed signature) cho upload streaming có ký và trả về một reader bóc lớp khung aws-chunked ('<hex size>;chunk-signature=<sig>\\r\\n<data>\\r\\n'), tính lại chữ ký từng chunk dưới dạng HMAC nối chuỗi từ chunk trước, hash payload bằng thuật toán checksum trailer đã khai báo (CRC32, CRC32C, CRC64NVME, SHA1, SHA256), và kiểm tra dòng trailer 'x-amz-checksum-*' với nó. Nó cũng xử lý STREAMING-UNSIGNED-PAYLOAD-TRAILER (không có chữ ký chunk, chỉ checksum). Dòng header của chunk bị giới hạn 4 KiB.",
   "when": "getRequestDataReader (s3api_put_object_helper.go) cho body PUT / UploadPart có x-amz-content-sha256 là giá trị STREAMING-*.",
@@ -198,13 +202,15 @@
   "gotchas": [
    "Bước complete copy TẤT CẢ Extended key của upload entry lên object (trừ key marker), nên bất cứ thứ gì createMultipartUpload lưu (kể cả các trường object-lock; xem issue của s3api_object_handlers_multipart.go) đều nằm lại trên object.",
    "IV theo chunk của SSE-S3 được suy ra từ offset CỤC BỘ TRONG PART của từng chunk mà không có thành phần part, phản chiếu partOffset=0 của putToFiler (xem issue của s3api_put_handlers.go về việc dùng lại keystream).",
-   "Các lần upload trùng cùng số part được phân xử bằng ModifiedTsNs của chunk đầu mới nhất; bên thua bị xoá sau commit.",
+   "Các lần upload trùng cùng số part được phân xử bởi compareLatestPartAttempt (#12770): CommitTsNs của filer trước (entry chưa có stamp được coi là cũ hơn), rồi giá trị lớn hơn giữa ModifiedTsNs của chunk đầu và mtime của entry, nên một lần thử không có chunk vẫn được xếp hạng; bên thua bị xoá sau commit.",
    "listMultipartUploads list toàn bộ thư mục .uploads (giới hạn math.MaxInt32) ở mỗi lần gọi và chỉ giữ một heap của trang.",
-   "Đường không versioning đánh dấu object SeaweedFSExpiresS3 khi có part nào mang TTL."
+   "Đường không versioning đánh dấu object SeaweedFSExpiresS3 khi có part nào mang TTL.",
+   "Mọi thao tác trên .uploads/<id> (tạo, list part, đọc record, xoá part thừa, xoá thư mục upload, abort) đi qua uploadFiler(bucket, key) từ #12668, tức owner filer của object đích, không phải filer hiện tại; vì vậy mọi helper giờ cần cả key (deleteUnusedPartEntries, routedUploadRemoval, getMultipartSSEAlgorithm).",
+   "ListParts (#12770) trả mỗi số part một lần, lần thử mới nhất, qua listPartAttempts: nó quét tên theo thứ tự text, gộp các lần thử của một số part có thể vắt qua hai trang, và quét riêng part 10000 vì tên '10000.part' xếp giữa '1000.part' và '1000_<uuid>.part'. Trước đó một part upload hai lần hiện hai lần."
   ],
   "if_broken": "Object đã complete thiếu byte hoặc sai thứ tự, ETag sai làm hỏng việc kiểm chứng của SDK, dữ liệu part mồ côi, hoặc chunk bị giải phóng dưới một object còn sống.",
   "issue": "duplicate",
-  "issue_note": "completeMultipartUpload dựng entry cuối cùng ba lần với các closure decorate gần như giống hệt nhau (versioned decorateVersionEntry, suspended, không versioning): upload id, số part, ranh giới part, owner, copy Extended của upload entry, SSE header của part đầu, SSE-S3 header, ETag, checksum, mime, kích thước. Một bản sửa về những gì object đã complete mang theo phải làm ở cả ba nơi.",
+  "issue_note": "completeMultipartUpload dựng entry cuối cùng ba lần với các closure decorate gần như giống hệt nhau (versioned decorateVersionEntry, suspended, không versioning): upload id, số part, ranh giới part, owner, copy Extended của upload entry, SSE header của part đầu, SSE-S3 header, ETag, checksum, mime, kích thước. Một bản sửa về những gì object đã complete mang theo phải làm ở cả ba nơi. Kiểm tra lại ở afdb32d2: ba bản sao vẫn còn (#12668 chỉ đổi filer mà các thao tác .uploads đi tới).",
   "ux": "Upload object lớn complete với ETag và checksum tương thích AWS; retry Complete an toàn; abort giải phóng dung lượng.",
   "what": "createMultipartUpload tạo <bucket>/.uploads/<uploadId> (id = sha1(key)_<uuid hex>) giữ key, owner, user metadata, ACL, thuật toán/loại checksum, metadata object-lock và cấu hình encryption cho multipart (SSE-KMS key id/context/base IV, hoặc SSE-S3 DEK dùng chung + base IV, chọn từ header hoặc default của bucket). completeMultipartUpload kiểm tra thứ tự part, ETag và kích thước (part không phải cuối ≥5 MiB), ghép chunk của các part thành một danh sách chunk với offset được đặt lại (bổ sung IV theo chunk của SSE-S3 khi thiếu), ghi nhận ranh giới part và số part, tính multipart ETag md5(concat(part md5s))-N và checksum COMPOSITE hoặc FULL_OBJECT (CRC combine), manifest hoá chunk, và commit theo trạng thái versioning: một version mới dưới .versions/ (finalize transaction được route hoặc mkFile + cập nhật con trỏ), một object 'null' cho bucket suspended, hoặc một object thường, mỗi trường hợp xoá upload dir trong cùng transaction khi được route. Một Complete retry sau khi đã commit được trả lời từ object đã lưu (committedCompletion: object hiện tại của key mang SeaweedFSUploadId này), và chính lần thử đó cũng vậy khi finalize của nó báo thất bại sau khi entry thực ra đã được commit (#12416); nếu các chunk đã commit không phải của lần thử này, bước dọn giữ lại dữ liệu của mọi part. abortMultipartUpload xoá upload dir dưới object lock, giữ chunk nếu upload thực ra đã complete; thao tác xoá được route lock đúng path mà một lần complete được route commit (uploadCommitPath: path của object trong bucket versioned, nếu không thì entry mà bước complete ghi, với key có dấu gạch chéo cuối thì nằm bên trong thư mục), nên abort và complete được tuần tự hoá (#12558). listMultipartUploads giữ một heap có giới hạn cho trang kế tiếp; listObjectParts phân trang các file part.",
   "when": "CreateMultipartUpload, CompleteMultipartUpload, AbortMultipartUpload, ListParts, ListMultipartUploads (qua s3api_object_handlers_multipart.go); routedUploadRemoval/writeMultipartObject từ s3api_object_routed_write.go.",
@@ -638,11 +644,12 @@
    "Sub-action multipart (UploadPart, Complete, Abort, ListParts) khớp các statement cấp s3:PutObject.",
    "UploadPart/UploadPartCopy thừa hưởng thuật toán SSE đã chọn ở CreateMultipartUpload cho các condition s3:x-amz-server-side-encryption.",
    "Condition theo grant header (s3:x-amz-grant-*) còn được kiểm tra với giá trị header gốc trước khi chuẩn hoá cho các statement Deny.",
-   "examples.go trong thư mục này bị loại (//go:build ignore)."
+   "examples.go trong thư mục này bị loại (//go:build ignore).",
+   "RequestConditionValues (#12762) là phần trích condition key từ chính request, tách khỏi ExtractConditionValuesFromRequest để đường IAM/STS dùng chung; nó cố ý bỏ aws:SourceIp (phụ thuộc trusted proxy) và các key listing s3:prefix/s3:delimiter/s3:max-keys (mỗi đường tự thêm). s3:max-keys bị bỏ cho listing multipart (?uploads)."
   ],
   "if_broken": "Policy thôi cấp hoặc từ chối đúng trên toàn gateway.",
   "issue": "bug",
-  "issue_note": "s3:authType chỉ được đặt cho request ký qua header (REST-HEADER) và URL presigned SigV2 (?AWSAccessKeyId → REST-QUERY-STRING). URL presigned SigV4 (?X-Amz-Credential, thứ mà SDK hiện nay sinh ra) hoàn toàn không có s3:authType, nên policy 'deny presigned URLs' được AWS tài liệu hoá (Deny với StringEquals s3:authType REST-QUERY-STRING) không chặn được chúng. Đã tái hiện bằng một test tạm ở commit này: cùng một statement Deny trả Deny cho request presigned SigV2 và Allow cho request presigned SigV4. Upload POST Object cũng không bao giờ có s3:authType=POST. Kiểm tra lại ở 917cf534 và 5a1b0abc: không đổi (engine.go chỉ đặt s3:authType từ header Authorization hoặc ?AWSAccessKeyId).",
+  "issue_note": "s3:authType chỉ được đặt từ header Authorization (REST-HEADER) hoặc từ query ?AWSAccessKeyId (presigned SigV2) / ?X-Amz-Credential (presigned SigV4) thành REST-QUERY-STRING (engine.go). Upload POST Object không bao giờ có s3:authType=POST: PostPolicyBucketHandler phân quyền một request PUT tổng hợp không mang header Authorization lẫn query presigned, nên một policy 'Deny khi s3:authType = POST' (hay ngược lại, chỉ cho phép POST) không có hiệu lực. Nửa còn lại của lỗi ban đầu, URL presigned SigV4 không có s3:authType nên policy 'deny presigned URLs' được AWS tài liệu hoá (Deny với StringEquals s3:authType REST-QUERY-STRING) không chặn được chúng, đã được upstream sửa bằng #12762 (f88751c3), commit giờ đặt REST-QUERY-STRING cho ?X-Amz-Credential. Kiểm tra lại ở 917cf534 và 5a1b0abc: không đổi; ở afdb32d2: nửa POST không đổi.",
   "ux": "Policy kiểu AWS chạy đúng như đã viết, kể cả điều kiện IP và tag.",
   "what": "types.go parse JSON policy (Version, Statement với Effect, Action/NotAction, Resource/NotResource, Principal/NotPrincipal, Condition) và biên dịch các mẫu thành regexp / bộ khớp wildcard, giữ mẫu biến ${...} để thay thế theo từng request. engine.go đánh giá: một statement khớp khi action (sub-action multipart cũng khớp grant s3:PutObject), resource / not-resource, principal / not-principal và mọi condition đều khớp; một Deny khớp bất kỳ sẽ thắng, nếu không thì Allow nếu có Allow nào khớp, còn lại là Indeterminate. Nó trích các condition key của request (aws:SourceIp qua trusted proxy, aws:SecureTransport, thời gian, user agent, referer, s3:prefix/delimiter/max-keys, s3:authType, s3:RequestMethod, mọi header x-amz-* dưới dạng s3:x-amz-*, s3:RequestObjectTag/*) và principal variable từ ARN (aws:username và aws:userid chỉ cho IAM user, vì ARN assumed-role kết thúc bằng tên session do caller chọn; gateway điền chúng cho role session từ claim user của session, #12572; aws:PrincipalAccount, aws:principaltype); thay thế ${aws:*}, ${jwt:*}, ${ldap:*}. conditions.go hiện thực các toán tử String*, Numeric*, Date*, Bool, IpAddress, Arn*, Null và ForAllValues/ForAnyValue, s3:ExistingObjectTag/* từ entry của object. trusted_proxies.go xác định IP client từ X-Forwarded-For / X-Real-Ip chỉ với peer proxy đã cấu hình; bucket_policy.go kiểm tra bucket policy (bắt buộc Principal, resource nằm trong bucket, chỉ action s3:, toán tử đã biết, tối đa 20 KiB).",
   "when": "BucketPolicyEngine (s3api_bucket_policy_engine.go) khi đánh giá bucket policy; IdentityAccessManagement.iamPolicyEngine cho policy được gắn/của group; kiểm tra khi PutBucketPolicy.",
@@ -666,7 +673,8 @@
   "character": "Bộ resolve không trạng thái từ (HTTP method, subresource trong query, dạng bucket/object, action kiểu cũ) sang chuỗi action s3: chi tiết của AWS",
   "gotchas": [
    "Bảng subresource của bucket là một map Go được duyệt theo thứ tự ngẫu nhiên: request nêu hai subresource sẽ resolve không xác định; rejectAmbiguousSubresource (middleware router) tồn tại để request như vậy không bao giờ tới đây.",
-   "Action kiểu cũ không xác định rơi về 's3:'+action thay vì thất bại."
+   "Action kiểu cũ không xác định rơi về 's3:'+action thay vì thất bại.",
+   "?accelerate resolve sang s3:GetAccelerateConfiguration / s3:PutAccelerateConfiguration (#12747), cùng lúc route PUT ?accelerate và PUT ?notification được thêm."
   ],
   "if_broken": "Policy cấp hoặc từ chối sai thao tác, ví dụ một grant GetObject cũng cho đọc ACL, hoặc xoá version được phép nhờ grant DeleteObject.",
   "ux": "IAM / bucket policy AWS viết bằng action chi tiết chạy như trên AWS.",
@@ -694,7 +702,8 @@
    "NormalizeObjectKey mặc định đổi '\\' thành '/', khác AWS, nơi đó là hai key khác nhau; chế độ này áp dụng toàn process và chỉ đặt một lần lúc khởi động.",
    "Các key ExtChecksum* cố ý dùng tiền tố x-seaweedfs- để vòng lặp chung chuyển metadata thành header không làm rò chúng ra client.",
    "SeaweedFSPrincipalHeader và SeaweedFSSessionTokenHeader là header nội bộ được tin cậy: mọi điểm vào auth phải xoá giá trị do client gửi (auth_credentials.go scrubInternalHeaders).",
-   "S3TABLES_ACTION_* phải luôn khớp với switch điều phối trong s3tables/handler.go (comment ghi đó là nguồn sự thật)."
+   "S3TABLES_ACTION_* phải luôn khớp với switch điều phối trong s3tables/handler.go (comment ghi đó là nguồn sự thật).",
+   "ExtOwnershipDeletedKey (#12748) là một marker: DeleteBucketOwnershipControls đặt nó thay vì chỉ xoá ExtOwnershipKey, để GetBucketOwnershipControls trả OwnershipControlsNotFoundError thay vì ownership mặc định; applyBucketConfigToExtended gỡ nó ngay khi một ownership được đặt lại."
   ],
   "if_broken": "Dữ liệu ghi dưới key cũ không còn đọc được như trạng thái S3, header nội bộ có thể rò ra client hoặc được nhận từ client, và có thể path traversal giữa các bucket.",
   "ux": "Không nhìn thấy trực tiếp; nó quyết định chuẩn hoá key (gộp dấu gạch chéo lặp, bỏ dấu gạch chéo đầu, đổi '\\' thành '/' trừ khi có -s3.allowBackslashInKey) và những response header nào client thấy.",
@@ -720,7 +729,9 @@
    "Chỉ role ĐẦU TIÊN trong claim 'roles' của token được dùng (selectPrimaryRole).",
    "Token nguyên văn 'invalid-token' hoặc token ngắn hơn 10 ký tự bị từ chối ngay (một chốt có hình dạng của test).",
    "Phần thừa không dùng: các kiểu MockSessionInfo / MockAssumedRoleUser, IAMIdentity.IsAdmin (luôn false), S3ApiServer.SetIAMIntegration (cứng 'localhost:8888', không có caller ngoài test), và giá trị context 'requestTime', thứ không gì đặt.",
-   "Việc xác minh OIDC bên ngoài có timeout 15s mỗi request."
+   "Việc xác minh OIDC bên ngoài có timeout 15s mỗi request.",
+   "Listing đưa thêm s3:delimiter và s3:max-keys vào request context (addBucketListingConditions, #12699) chỉ khi query có chúng, nên điều kiện lên một key vắng mặt fail closed; s3:max-keys bị bỏ cho listing multipart (?uploads dùng max-uploads). Prefix vắng mặt vẫn là \"\".",
+   "extractRequestContext (#12762) chép các condition key đọc từ chính request (policy_engine.RequestConditionValues: aws:SecureTransport, aws:CurrentTime, aws:RequestTime, aws:UserAgent, aws:Referer, tag object của request, s3:authType) vào context của phiên STS; trước đó policy của role không thấy chúng, nên một điều kiện lên chúng không bao giờ khớp. aws:SourceIp và các key listing không đến từ đó vì chúng phụ thuộc proxy và cách xử lý listing."
   ],
   "if_broken": "Truy cập federated thất bại, hoặc token được chấp nhận cho role mà trust policy không cho phép.",
   "ux": "User federated (OIDC) có thể gọi S3 trực tiếp bằng ID token, và quyền của role / policy được gắn áp dụng như AWS IAM.",
@@ -758,7 +769,8 @@
   "gotchas": [
    "SSE-C không có key commitment (server không bao giờ giữ key); tính toàn vẹn của việc chọn key dựa vào KeyMD5 đã lưu.",
    "Một lần không khớp MD5 log cả MD5 được cung cấp và MD5 mong đợi ở mức error.",
-   "decryptReaderCloser định nghĩa ở đây được các đường giải mã SSE-KMS và SSE-S3 dùng chung để đóng HTTP body bên dưới."
+   "decryptReaderCloser định nghĩa ở đây được các đường giải mã SSE-KMS và SSE-S3 dùng chung để đóng HTTP body bên dưới.",
+   "Dưới GODEBUG=fips140=only, validateAndParseSSECHeaders trả ErrSSECNotSupportedFIPS140, ánh xạ sang NotImplemented (#12845): phép kiểm tra key cần MD5, thứ panic ở chế độ đó. Request không có SSE-C header vẫn đi qua bình thường."
   ],
   "if_broken": "Object SSE-C không đọc được, hoặc key sai được chấp nhận và trả về rác.",
   "ux": "Client phải gửi cùng key ở mọi lần đọc; không khớp trả AccessDenied (MD5 đã lưu khác) hoặc các lỗi SSE-C cụ thể.",
@@ -810,7 +822,8 @@
    "loadFilerKEK retry filer 10 lần cách nhau 2s (tới ~20s trễ khởi động) trước khi thất bại.",
    "GetSSES3IV rơi về IV trong metadata của chunk ĐẦU TIÊN khi key cấp object không có.",
    "Multipart SSE-S3 lưu IV đã ĐIỀU CHỈNH sẵn theo chunk (CreateSSES3EncryptedReaderWithBaseIV trả IV dẫn xuất); giải mã dùng nguyên nó, khác với SSE-KMS.",
-   "KeyID là 'sse-s3-key-<math/rand Int63>': một định danh, không phải bí mật."
+   "KeyID là 'sse-s3-key-<util.RandomUint64>' (trước #12847 là math/rand Int63): một định danh, không phải bí mật.",
+   "Từ #12847 mọi AES-GCM ở đây (bọc KEK, mã hoá DEK bằng super key) đi qua util.Encrypt/Decrypt, vốn dùng NewGCMWithRandomNonce để chạy được dưới fips140=only. Định dạng lưu không đổi: util.Encrypt trả nonce 12 byte || ciphertext+tag, và encryptKeyWithSuperKey tách nonce ra trường metadata riêng như trước; gcmNonceSize phải khớp với nonce mà util.Encrypt đặt ở đầu."
   ],
   "if_broken": "Mọi object SSE-S3 không đọc được (KEK sai hoặc thiếu), hoặc object mới được mã hoá dưới một key không khớp với key của cluster, nên gateway khác không đọc được.",
   "ux": "Khi chưa cấu hình KEK, request SSE-S3 thất bại với lỗi rõ ràng 'set s3.sse.kek or s3.sse.key' thay vì âm thầm lưu plaintext; người vận hành thấy cảnh báo migrate trong log.",
@@ -886,7 +899,8 @@
    "KMSKeyCache/BucketKMSCache trên thực tế không được dùng: chỉ đường bucket-key không có caller trong s3_sse_kms.go mới gắn nó vào (xem issue note của s3_sse_kms.go).",
    "Lifecycle TTL fast path chỉ được parse khi bucket có ExtLifecycleTtlFastPathKey=true; lỗi parse cho ra nil (không TTL) thay vì từ chối thao tác ghi.",
    "Cả hai LRU được giới hạn ở bucketCacheCapacity = 65536 bucket; bucket bị loại được nạp lại từ filer ở lần truy cập kế tiếp.",
-   "Một cấu hình Block Public Access đã lưu mà không parse được được nạp như cả bốn cờ là true (fail closed), và updateBucketConfig ghi lại nguyên byte đã lưu trừ khi chính lần cập nhật đổi thiết lập đó."
+   "Một cấu hình Block Public Access đã lưu mà không parse được được nạp như cả bốn cờ là true (fail closed), và updateBucketConfig ghi lại nguyên byte đã lưu trừ khi chính lần cập nhật đổi thiết lập đó.",
+   "OwnershipDeleted (#12748) được nạp từ marker ExtOwnershipDeletedKey và chỉ có hiệu lực khi Ownership rỗng; getBucketOwnership khi đó trả OwnershipControlsNotFoundError thay vì giá trị mặc định."
   ],
   "if_broken": "Mọi handler rẽ nhánh theo trạng thái bucket đều hoạt động sai: object bị ghi đè thay vì tạo version, WORM không được thực thi, bucket policy không được đánh giá, CORS header bị thiếu. Một đường patch hỏng hoặc làm mất thao tác ghi config hoặc xác nhận những lần ghi chưa từng tới nơi.",
   "ux": "Vô hình khi đúng. Khi sai hoặc cũ: hành vi versioning hay object-lock không khớp với những gì client đã đặt, preflight CORS thất bại, một bucket vừa bị xoá trả NoSuchBucket tới hết negative TTL sau khi được tạo lại trên gateway khác.",
@@ -924,9 +938,10 @@
    "Các fast path public-bucket của AuthWithPublicRead gọi handler KHÔNG qua iam.Auth, nên scrubInternalHeaders không chạy ở đó; đọc object GET/HEAD ẩn danh thô thì đi qua deferAnonymousObjectRead, hàm này có làm sạch (qua authenticateRequestInternal).",
    "checkBucket chỉ kiểm tra tồn tại khi auth bật; kiểm tra ownership (hasAccess) chỉ áp dụng khi auth TẮT.",
    "PutBucketAclHandler sleep 50ms trước khi trả lời.",
-   "DeleteBucketOwnershipControls viết lại cả bucket entry bằng updateEntry thay vì đường patch mà updateBucketConfig dùng, và không vô hiệu hoá bucketConfigCache, nên một config patch đồng thời có thể bị mất và gateway này có thể phục vụ ownership cũ cho tới khi metadata event tới.",
+   "DeleteBucketOwnershipControls (từ #12748) đi qua updateBucketConfig (patch có vô hiệu bucketConfigCache) và đặt OwnershipDeleted thay vì xoá key, rồi trả 204 không body như AWS; trước đó nó viết lại cả bucket entry bằng updateEntry, có thể làm mất một patch đồng thời, và trả 200 kèm một OwnershipControls rỗng.",
    "GetBucketLifecycleConfiguration rơi về việc tổng hợp rule từ collection TTL kiểu cũ trong filer.conf khi không có lifecycle XML được lưu; Put/Delete lifecycle xoá các day-TTL kiểu cũ đó trước.",
-   "DeleteBucket tỉa các grant 'Action:bucket' khỏi identity động như việc ghi sổ best-effort trên một context nền 30s; identity tĩnh không bao giờ bị động tới."
+   "DeleteBucket tỉa các grant 'Action:bucket' khỏi identity động như việc ghi sổ best-effort trên một context nền 30s; identity tĩnh không bao giờ bị động tới.",
+   "GetBucketRequestPayment giờ kiểm tra bucket trước (checkBucket, #12716) và trả NoSuchBucket cho bucket không tồn tại; trước đó nó luôn trả Payer=BucketOwner."
   ],
   "if_broken": "Bucket được tạo thiếu lock/versioning đã yêu cầu, bị xoá khi còn giữ object bị lock, được list cho caller không được thấy chúng, hoặc bucket public-read ngừng phục vụ đọc ẩn danh.",
   "ux": "Ngữ nghĩa tạo/xoá/list bucket cho mọi client và console; việc trình duyệt ẩn danh có tải được từ bucket public-read hay không; một thay đổi lifecycle để lại object mang TTL fast-path sẽ nhận một header cảnh báo.",
@@ -942,7 +957,7 @@
   ],
   "if_broken": "Console và helper của SDK thất bại khi kiểm tra bucket, hoặc subresource lạ trả về listing.",
   "ux": "Công cụ kiểm tra thiết lập bucket nhận câu trả lời hợp lý; không bật được 'requester pays'.",
-  "what": "GetBucketPolicyStatus báo IsPublic khi có statement Allow nào có Principal '*' và không có condition. PutBucketRequestPayment chỉ nhận Payer=BucketOwner (body giới hạn 64 KiB). GetBucketAccelerateConfiguration trả Suspended. GetBucketLogging và GetBucketNotificationConfiguration trả document rỗng. GetBucketReplication và GetBucketWebsite trả lỗi not-found tương ứng. unroutedBucketSubresource / unroutedSubresource nêu tên query key đầu tiên trên một GET bucket vốn không phải tham số listing cũng không phải presign key, để ListObjects trả NotImplemented thay vì một listing.",
+  "what": "GetBucketPolicyStatus báo IsPublic khi có statement Allow nào có Principal '*' và không có condition. PutBucketRequestPayment chỉ nhận Payer=BucketOwner (body giới hạn 64 KiB). GetBucketAccelerateConfiguration trả Suspended; PutBucketAccelerateConfiguration (#12747) nhận Status=Suspended (trả 200 không lưu gì), trả NotImplemented cho Enabled và MalformedXML cho giá trị khác. PutBucketNotificationConfiguration nhận đúng cấu hình rỗng mà GET luôn báo, trả NotImplemented khi có Topic/Queue/CloudFunction/EventBridge và MalformedXML khi có phần tử lạ (#12752). Mọi PUT cấu hình ở đây giới hạn body 64 KiB. GetBucketLogging và GetBucketNotificationConfiguration trả document rỗng. GetBucketReplication và GetBucketWebsite trả lỗi not-found tương ứng. unroutedBucketSubresource / unroutedSubresource nêu tên query key đầu tiên trên một GET bucket vốn không phải tham số listing cũng không phải presign key, để ListObjects trả NotImplemented thay vì một listing.",
   "when": "GET /<bucket>?policyStatus, ?accelerate, ?logging, ?notification, ?replication, ?website và PUT ?requestPayment; kiểm tra unrouted chạy trong catch-all của ListObjects.",
   "why": "Hệ quả: SDK và console gọi các hàm này khi kiểm tra bucket, và một subresource lạ được trả lời bằng listing bucket sẽ âm thầm nói với client điều sai (ví dụ rằng GET ?replication đã thành công). Thiết kế: các tính năng SeaweedFS không có báo cùng trạng thái mà AWS hiển thị cho bucket chưa từng bật chúng. Tương thích AWS: tên element trong response và mã lỗi khớp AWS."
  },
@@ -997,7 +1012,8 @@
   "character": "BucketPolicyEngine: wrapper theo server (một instance trên S3ApiServer, dùng chung với IdentityAccessManagement) quanh policy_engine.PolicyEngine cho bucket policy",
   "gotchas": [
    "Engine được cấp dữ liệu từ bucket config cache; một policy đổi trên gateway khác chỉ áp dụng ở đây sau khi metadata event dựng lại cấu hình.",
-   "LoadBucketPolicy (từ một entry) không có caller nào trong package ngoài test; việc nạp thật đi qua LoadBucketPolicyFromCache."
+   "LoadBucketPolicy (từ một entry) không có caller nào trong package ngoài test; việc nạp thật đi qua LoadBucketPolicyFromCache.",
+   "MultipartSSELookup nhận cả object (#12668): record .uploads/<id> giờ nằm trên owner filer của object, nên lookup SSE của upload phải biết object để tìm đúng filer. EvaluatePolicy cũng thêm s3:prefix \"\" cho listing không nêu prefix (addEmptyListPrefix, #12702)."
   ],
   "if_broken": "Bucket policy thôi áp dụng (lộ dữ liệu hoặc từ chối truy cập hợp lệ) hoặc lỗi đánh giá từ chối tất cả (caller đóng chặt khi lỗi).",
   "ux": "Bucket policy viết cho AWS chạy không cần sửa: các khối Allow, Deny, Condition và Principal.",
@@ -1087,7 +1103,8 @@
   "character": "Kiểm tra header cho CopyObject và upload: SSE-C, SSE-KMS và nguồn cùng đích của copy",
   "gotchas": [
    "validateSSECCopyHeaderCompleteness và validateSSECHeaderCompleteness là cùng một phép kiểm tra trên hai họ header; sửa một bên thì phải sửa bên kia.",
-   "validateEncryptionContext chỉ từ chối giá trị rỗng; dạng base64/JSON của context được code SSE-KMS kiểm tra sau."
+   "validateEncryptionContext chỉ từ chối giá trị rỗng; dạng base64/JSON của context được code SSE-KMS kiểm tra sau.",
+   "Dưới fips140=only, ValidateRequestEncryption trả NotImplemented cho mọi SSE-C header, kể cả header x-amz-copy-source-server-side-encryption-customer-* của CopyObject (#12845), trước mọi kiểm tra tương thích khác."
   ],
   "if_broken": "Bản copy thiếu key hoặc key xung đột được chấp nhận và tạo ra object không đọc được.",
   "ux": "Encryption header cấu hình sai thất bại nhanh với 400 nêu rõ vấn đề.",
@@ -1158,8 +1175,9 @@
   "gotchas": [
    "Nếu s3a.filerClient là nil (chỉ khi khởi tạo/test) withFilerClient rơi về kết nối trực tiếp một filer không có failover và context.Background().",
    "WithFilerClient được export không mang context (chữ ký của filer_pb.FilerClient), nên nó chạy với ngân sách Background; dùng withFilerClient(ctx, …) khi có deadline.",
-   "Một preferred owner nằm ngoài danh sách filer tĩnh không được filerClient theo dõi sức khoẻ; markOwnerUnreachable (routed_read.go) là thứ khiến các lần đọc route-by-key bỏ qua nó trong 2s.",
-   "writeSuccessResponseEmpty không gọi s3err.PostLog, khác với các bộ ghi XML."
+   "Một preferred owner nằm ngoài danh sách filer tĩnh không được filerClient theo dõi sức khoẻ; markOwnerUnreachable (routed_read.go) là thứ khiến các lần đọc route-by-key bỏ qua nó trong 2s mặc định (UnreachableOwnerTTL, #12827).",
+   "writeSuccessResponseEmpty không gọi s3err.PostLog, khác với các bộ ghi XML.",
+   "Một failover thành công đổi filer hiện tại bằng SwitchCurrentFiler(currentFiler, filer) (#12772): chỉ đổi khi filer hiện tại vẫn là filer mà lượt thử bắt đầu từ, nên hai request failover đồng thời không ghi đè lựa chọn của nhau; HomeFiler (filer của process nhúng gateway) được FilerClient ưu tiên lại mỗi khi nó khoẻ."
   ],
   "if_broken": "Phát lại các lời gọi không idempotent có thể áp thao tác ghi hai lần; failover khi NotFound có thể phục vụ object cũ hoặc sống lại; tính timeout của caller là lỗi filer sẽ dây chuyền thành mọi filer bị đánh dấu không khoẻ và đọc object thất bại trên toàn gateway.",
   "ux": "Với nhiều filer, một filer chết khiến client tốn một request chậm hơn chút thay vì một 5xx; lần đọc được route tới owner của key thấy object client vừa tự ghi.",
@@ -1213,11 +1231,13 @@
    "SSE-KMS lưu BASE IV theo chunk (giải mã áp ChunkOffset), SSE-S3 lưu IV đã ĐIỀU CHỈNH sẵn, SSE-C lưu IV ngẫu nhiên theo part cộng PartOffset; điều chỉnh trước một KMS IV sẽ áp offset hai lần và làm hỏng range qua ranh giới part.",
    "404 implicit-directory trên HEAD chỉ áp cho bucket non-versioned và key không có dấu gạch chéo cuối.",
    "Fallback remote-mount chỉ được dùng cho version null/hiện tại (shouldFallBackToRemote) và chỉ khi kích thước remote bằng kích thước entry.",
-   "readChunkRange cắt một lần đọc cả chunk (không có header Range) ở kích thước chunk đã ghi, vì weed mount thu nhỏ Size của chunk khi ftruncate mà để nguyên needle; trước #12632 phần đuôi cũ của needle bị stream vào response S3."
+   "readChunkRange cắt một lần đọc cả chunk (không có header Range) ở kích thước chunk đã ghi, vì weed mount thu nhỏ Size của chunk khi ftruncate mà để nguyên needle; trước #12632 phần đuôi cũ của needle bị stream vào response S3.",
+   "HEAD của một file 0 byte hỏi zeroByteFileHasChildren (#12824), hàm coi một lần dò con thất bại là KHÔNG có con và phục vụ file, còn hasChildren của listing vẫn coi thất bại là có con. Lý do: một keep-alive connection mà net/http đã huỷ context tiếp tục phục vụ request sau với context đã huỷ, và một 404 khi đó khiến công cụ copy HEAD lại key vừa ghi báo copy thất bại. probeChildren trả lỗi ngay khi context đã kết thúc, không đi vòng failover.",
+   "Một lần stream GET thất bại vì client đã ngắt trả ClientDisconnected thay vì InternalError (#12707), để một download bị huỷ không bị đếm là 5xx; client không bao giờ thấy câu trả lời đó."
   ],
   "if_broken": "Client nhận byte hỏng hoặc ciphertext, body bị cắt cụt với 200, object đã xoá sống lại (delete marker bị bỏ qua), hoặc object hiện ra cho caller mà policy có điều kiện theo tag từ chối.",
   "issue": "duplicate",
-  "issue_note": "GetObjectHandler và HeadObjectHandler mỗi bên mang một bản sao gần như nguyên văn ~90 dòng của việc resolve versioned entry (version cụ thể → null delete marker → dò nhanh .versions/ → fallback getLatestObjectVersion → trích version id → response delete-marker). Một bản sửa cách một handler resolve version hiện tại không tới được handler kia.",
+  "issue_note": "GetObjectHandler và HeadObjectHandler mỗi bên mang một bản sao gần như nguyên văn ~90 dòng của việc resolve versioned entry (version cụ thể → null delete marker → dò nhanh .versions/ → fallback getLatestObjectVersion → trích version id → response delete-marker). Một bản sửa cách một handler resolve version hiện tại không tới được handler kia. Kiểm tra lại ở afdb32d2: không đổi.",
   "ux": "Hành vi download: status 200/206/304/404/412, ngữ nghĩa Range và partNumber, ETag, Last-Modified, Content-Type, user metadata, x-amz-version-id, lock header, SSE header, Retry-After cho remote object chưa cache.",
   "what": "GetObjectHandler/HeadObjectHandler: chặn table-bucket → object ảo SOSAPI → kiểm tra hợp lý versionId → object directory-marker → conditional header (một 304/412 được phân quyền theo entry trước, với đọc ẩn danh và với key trỏ tới path vật lý của version file, để cả hai không xác nhận một ETag mà caller không đọc được) → resolve entry (versioned: một version cụ thể, null delete marker, hoặc latest qua một lần dò nhanh .versions/ rồi getLatestObjectVersion; non-versioned: lookup route-by-key) → trả lời delete-marker → kiểm tra lại policy pha 2 với tag của entry → header version và lock → stream. streamFromVolumeServers đọc chunk thẳng từ volume server qua ReaderCache dùng chung và hoãn status line tới khi đọc được byte đầu tiên (commitOnFirstWrite), nên một needle bị thiếu thành 5xx sạch sẽ thay vì một 200 hỏng. Một lỗi stream chưa ghi response luôn được trả lời (writeStreamErrorResponse: 503 SlowDown cho 429 từ volume server, ngược lại 500), kể cả khi bị cancel, vì idle timeout hoặc một lookup dùng chung bị request khác cancel sẽ huỷ stream trong khi client này vẫn kết nối và nếu không sẽ nhận một 200 rỗng (#12502). streamFromVolumeServersWithSSE kiểm tra key SSE-C hoặc nạp metadata SSE-KMS/S3, rồi giải mã cả object (single-part hoặc một multipart reader lười áp IV theo từng chunk) hoặc chỉ các chunk mà Range chạm tới. Object của storage remote-mount được cache nền, stream từ origin khi chưa cache, hoặc trả 503 + Retry-After: 2. Ngoài ra: setResponseHeaders (lọc metadata→header, số tag, checksum khi x-amz-checksum-mode, override response-* chỉ cho request có ký), ánh xạ partNumber→byte-range, detectPrimarySSEType, toFilerPath, newListEntry, resolveObjectEntry.",
   "when": "GET/HEAD /bucket/key (bọc trong AuthWithPublicRead để public-read ẩn danh đi qua được). Các helper streaming và giải mã cũng được copy (getEncryptedStreamFromVolumes, cacheRemoteObjectForCopy) và listing (newListEntry) dùng.",
@@ -1253,11 +1273,11 @@
    "Encryption header của request được kiểm tra trước khi default của bucket đích được thêm thành header, và default chỉ được thêm sau lần xác thực lại ACL; dời nó sớm hơn khiến lần xác thực lại thấy header client chưa từng ký, dời bước kiểm tra muộn hơn để một request sai dạng lọt qua.",
    "Với REPLACE, header x-amz-meta-* lặp lại chỉ giữ giá trị cuối, trong khi CreateMultipartUpload (ParseS3Metadata) nối các giá trị lặp bằng ','.",
    "copyChunks và copyChunksForRange trả về ở chunk thất bại đầu tiên trong khi các worker khác vẫn tiếp tục copy.",
-   "UploadPartCopy ghi part bằng mkFile trên filer mặc định, không phải owner filer của key."
+   "UploadPartCopy đọc record upload và ghi part qua uploadFiler(dstBucket, dstObject) (#12668), tức owner filer của object đích; trước đó nó gọi mkFile trên filer mặc định, nên trên các gateway có filer store độc lập part có thể nằm ở filer mà bước complete không đọc."
   ],
   "if_broken": "Bản copy đọc những nguồn mà caller không được đọc, tạo object mã hoá không đọc được, để lại hai entry dùng chung chunk, hoặc làm mất version.",
   "issue": "bug",
-  "issue_note": "Dữ liệu đã copy không được dọn khi copy thất bại sau khi các chunk đã được ghi. CopyObject copy mọi chunk sang needle mới (executeUnifiedCopyStrategy) và chỉ sau đó mới chạy finalizeCopyDestination dưới object write lock, nơi kiểm tra lại các điều kiện đích (If-Match / If-None-Match). Cả một 412 ở đó lẫn một lỗi ghi filer đều không xoá dstEntry.Chunks; điều tương tự xảy ra khi mkFile part của UploadPartCopy thất bại sau copyChunksForRange. PutObject xử lý các lỗi tương đương bằng deleteOrphanedChunks (s3api_object_handlers_put.go); copy không có lời gọi như vậy, nên mỗi lần copy thất bại làm rò toàn bộ kích thước đã copy trên volume server cho tới volume.fsck. Việc dọn dẹp phải bỏ qua trường hợp xoay key trả lại chính chunk của nguồn. Riêng biệt, UploadPartCopy resolve nguồn không qua prefixObjectSource (CopyObject có áp), nên copy một part từ một key cũng có các key lồng bên dưới bị trả NoSuchKey. Tái hiện ở b9866bae: một CopyObject có lần ghi filer thất bại trả 500 và để chunk đã copy trên volume server mà không phát lệnh xoá nào; classifyCopySourceError trả NoSuchKey cho prefix object trên đường UploadPartCopy và cho qua trên đường CopyObject. Các điều kiện đích được kiểm tra trước khi copy và lại một lần dưới lock, nên rò rỉ do 412 cần một lần ghi vào đích xảy ra ở giữa.",
+  "issue_note": "Dữ liệu đã copy không được dọn khi copy thất bại sau khi các chunk đã được ghi. CopyObject copy mọi chunk sang needle mới (executeUnifiedCopyStrategy) và chỉ sau đó mới chạy finalizeCopyDestination dưới object write lock, nơi kiểm tra lại các điều kiện đích (If-Match / If-None-Match). Cả một 412 ở đó lẫn một lỗi ghi filer đều không xoá dstEntry.Chunks; điều tương tự xảy ra khi mkFile part của UploadPartCopy thất bại sau copyChunksForRange. PutObject xử lý các lỗi tương đương bằng deleteOrphanedChunks (s3api_object_handlers_put.go); copy không có lời gọi như vậy, nên mỗi lần copy thất bại làm rò toàn bộ kích thước đã copy trên volume server cho tới volume.fsck. Việc dọn dẹp phải bỏ qua trường hợp xoay key trả lại chính chunk của nguồn. Riêng biệt, UploadPartCopy resolve nguồn không qua prefixObjectSource (CopyObject có áp), nên copy một part từ một key cũng có các key lồng bên dưới bị trả NoSuchKey. Tái hiện ở b9866bae: một CopyObject có lần ghi filer thất bại trả 500 và để chunk đã copy trên volume server mà không phát lệnh xoá nào; classifyCopySourceError trả NoSuchKey cho prefix object trên đường UploadPartCopy và cho qua trên đường CopyObject. Các điều kiện đích được kiểm tra trước khi copy và lại một lần dưới lock, nên rò rỉ do 412 cần một lần ghi vào đích xảy ra ở giữa. Kiểm tra lại ở afdb32d2: không đổi.",
   "ux": "aws s3 cp/mv giữa các key và bucket, sửa metadata qua copy-in-place, khôi phục version, và multipart copy của object lớn hơn 5 GiB chạy như trên AWS.",
   "what": "CopyObjectHandler parse X-Amz-Copy-Source (bucket, key, versionId) và chạy các kiểm tra theo thứ tự: path table-bucket, tên nguồn/đích, encryption header của request (trước khi thêm default của bucket), các directive, storage class, s3:GetObject trên nguồn (authorizeCopySource, rồi kiểm tra lại policy có biết tag), ACL của đích, đích trỏ tới path vật lý của một version đã lưu (checkVersionFileWrite, #12622), default encryption của bucket đích được thêm thành header (sau kiểm tra ACL, vì kiểm tra đó xác thực lại request và các header này không nằm trong SignedHeaders của nó, #12436), resolve nguồn theo trạng thái versioning (prefix object được làm phẳng, nguồn chỉ có ở remote được cache), và các điều kiện nguồn (x-amz-copy-source-if-*) cùng điều kiện đích. Một self-copy chỉ đổi metadata, tag hoặc storage class và không cần mã hoá lại sẽ cập nhật entry tại chỗ (route tới owner filer của key với retry theo snapshot, hoặc dưới object write lock). Ngược lại nó dựng một entry đích. Các key ownership, ACL và lock không được copy, và SSE key xung đột bị lọc (shouldSkipEncryptionHeader). processMetadataBytes áp COPY/REPLACE, lock header của đích hoặc default của bucket được áp, và dữ liệu được tạo inline (processInlineContentForCopy) hoặc bằng executeUnifiedCopyStrategy. finalizeCopyDestination sau đó commit một version mới (có rollback nếu lật con trỏ latest thất bại), một null version, hoặc một object thường trên owner filer. CopyObjectPartHandler kiểm tra partNumber/uploadId và copy-source-range, đi đường chậm mã hoá lại khi SSE, checksum hoặc nội dung inline đòi hỏi, và ngược lại copy các chunk chồng lấn (copyChunksForRange, hàm cũng tính MD5 của part) vào part entry. Phần còn lại của file là cơ chế theo chunk: assign (với collection của bucket đích được truyền tường minh, như PutObject, để khi có filer group, một lần copy và một lần put vào cùng bucket rơi vào cùng collection, #12499), tải xuống hoặc stream, giải mã/mã hoá lại với SSE metadata theo chunk, và upload.",
   "when": "PUT /<bucket>/<key> có X-Amz-Copy-Source (CopyObject) và PUT ?partNumber&uploadId có X-Amz-Copy-Source (UploadPartCopy).",
@@ -1268,7 +1288,8 @@
   "gotchas": [
    "Đích SSE-S3 đi qua nhánh multipart SSE-S3 của putToFiler, nên part được copy thừa hưởng việc dùng lại keystream theo part đã được gắn cờ ở s3api_put_handlers.go.",
    "applyRange nhảy tới điểm đầu bằng cách đọc và bỏ byte trên nguồn SSE-S3, nên copy phần đuôi của một object SSE-S3 lớn sẽ đọc toàn bộ phần đầu.",
-   "Content-MD5 bị bỏ trên request nhân bản, nên part được copy không được kiểm tra toàn vẹn với digest của client."
+   "Content-MD5 bị bỏ trên request nhân bản, nên part được copy không được kiểm tra toàn vẹn với digest của client.",
+   "writeEmptyCopyPart và đường re-encrypt ghi part qua uploadFiler(dstBucket, dstObject) từ #12668, nên mọi helper ở đây cần cả key đích."
   ],
   "if_broken": "Multipart object lắp bằng copy bị hỏng khi đọc, hoặc thất bại lúc complete vì thiếu checksum.",
   "ux": "UploadPartCopy vào upload có mã hoá hoặc checksum tạo ra object đọc được; copy từ nguồn SSE-KMS hoặc SSE-C thất bại với 501.",
@@ -1343,7 +1364,8 @@
    "allow-unordered được chấp nhận nhưng listing luôn có thứ tự.",
    "Các lần dò entry ẩn chạy dưới một ngân sách theo prefix và một ngân sách cho cả request; vượt ngân sách, một thư mục chỉ chứa entry đã xoá vẫn có thể hiện ra như CommonPrefix.",
    "Một prefix object (nội dung lưu trên một thư mục cũng có con) có thể làm một trang vượt max-keys một mục, vì key và CommonPrefix của nó đến từ cùng một entry.",
-   "Các window prefetch được đọc trước khi phép duyệt tới chúng, nên một key được ghi vào thư mục sau khi window của nó đã được đọc có thể thiếu trong trang đó, như với mọi listing không phải snapshot."
+   "Các window prefetch được đọc trước khi phép duyệt tới chúng, nên một key được ghi vào thư mục sau khi window của nó đã được đọc có thể thiếu trong trang đó, như với mọi listing không phải snapshot.",
+   "encoding-type khác 'url' trả InvalidArgument (parseEncodingType, #12753). Với encoding-type=url, V2 mã hoá cả Prefix và Delimiter; V1 mã hoá Delimiter nhưng chỉ mã hoá Prefix khi XML không mang được nó, vì botocore không giải mã Prefix của V1 (#12760)."
   ],
   "if_broken": "Key bị bỏ sót hoặc trùng qua các trang, object đã xoá xuất hiện lại, hoặc listing treo trên cây thư mục sâu.",
   "ux": "aws s3 ls, công cụ sync và paginator của SDK thấy cùng key, thứ tự và phân trang như trên AWS.",
@@ -1351,7 +1373,7 @@
   "when": "GET /<bucket>?list-type=2 (V2) và GET /<bucket> trần (V1, GET bucket catch-all).",
   "why": "Hệ quả: listing là cách mọi client khám phá object; một key bị bỏ sót ở ranh giới trang hoặc một key đã xoá vẫn hiện ra sẽ âm thầm phá hỏng công cụ sync và backup. Thiết kế: namespace S3 là phẳng nhưng filer là một cây, nên phép duyệt tái tạo thứ tự byte phẳng trên các directory listing và tiếp tục từ những marker có thể trỏ vào giữa một cây con. Duyệt đệ quy nhiều thư mục nhỏ là một round trip tới filer cho mỗi thư mục, nối tiếp nhau, nên prefetcher giữ nhiều lần đọc song song (#12438); các lookup theo marker tránh quét lại một cây con bị cắt từ đầu của nó (#12540), và lookup cho dấu gạch chéo cuối tránh một lần quét anh em mà SQL store trả lời bằng cách đọc phần còn lại của thư mục. Mỗi lần thử failover dựng lại trang từ đầu để một trang dựng dở không bao giờ lọt vào lần retry. Tương thích AWS: KeyCount, StartAfter, NextContinuationToken, EncodingType, thứ tự CommonPrefix ('foo/' trước 'foo+1/'), và việc V1 trả lại Marker/NextMarker theo S3.",
   "issue": "bug",
-  "issue_note": "Trên bucket không versioning, một listing có delimiter báo một thư mục filer rỗng là CommonPrefix, dù không có object nào dưới nó. Xoá object cuối cùng dưới một prefix để lại các thư mục filer cho tới khi empty-folder cleaner xoá chúng (khoảng hai phút: DefaultQueueMaxAge cộng một lần quét 30 s), và dirHoldsOnlyHiddenEntries, hàm ẩn các prefix như vậy, chỉ chạy khi có cấu hình versioning và cố ý giữ thư mục rỗng (TestEmptyDirectoryStaysACommonPrefix). AWS chỉ suy ra CommonPrefixes từ các key đang tồn tại. Probe bằng boto3 trên SeaweedFS 4.53 và master d51a7933: sau khi xoá mọi object dưới job/task_1/p=0/ và job/task_1/p=1/, listing đệ quy trả KeyCount=0, nhưng listing có delimiter vẫn trả job/, task_1/, p=0/ và p=1/ (bucket versioned không trả gì). FileOutputCommitter v1 mặc định của Spark khi đó làm thất bại một lần append với partitionBy trong vòng hai phút sau một lần ghi trước vào cùng table: job commit của nó tìm thấy thư mục _temporary/0/task_*/p=0 rỗng của job trước và S3A trả FileNotFoundException khi list vào đó (tái hiện 4/4 với Spark 3.5.7, Hadoop 3.3.4; chạy được trên bucket không versioning của Silo, nơi không list prefix rỗng nào)."
+  "issue_note": "Trên bucket không versioning, một listing có delimiter báo một thư mục filer rỗng là CommonPrefix, dù không có object nào dưới nó. Xoá object cuối cùng dưới một prefix để lại các thư mục filer cho tới khi empty-folder cleaner xoá chúng (khoảng hai phút: DefaultQueueMaxAge cộng một lần quét 30 s), và dirHoldsOnlyHiddenEntries, hàm ẩn các prefix như vậy, chỉ chạy khi có cấu hình versioning và cố ý giữ thư mục rỗng (TestEmptyDirectoryStaysACommonPrefix). AWS chỉ suy ra CommonPrefixes từ các key đang tồn tại. Probe bằng boto3 trên SeaweedFS 4.53 và master d51a7933: sau khi xoá mọi object dưới job/task_1/p=0/ và job/task_1/p=1/, listing đệ quy trả KeyCount=0, nhưng listing có delimiter vẫn trả job/, task_1/, p=0/ và p=1/ (bucket versioned không trả gì). FileOutputCommitter v1 mặc định của Spark khi đó làm thất bại một lần append với partitionBy trong vòng hai phút sau một lần ghi trước vào cùng table: job commit của nó tìm thấy thư mục _temporary/0/task_*/p=0 rỗng của job trước và S3A trả FileNotFoundException khi list vào đó (tái hiện 4/4 với Spark 3.5.7, Hadoop 3.3.4; chạy được trên bucket không versioning của Silo, nơi không list prefix rỗng nào). Kiểm tra lại ở afdb32d2: không đổi."
  },
  "weed/s3api/s3api_object_handlers_multipart.go": {
   "character": "Các HTTP handler của S3ApiServer cho multipart upload API (Create, UploadPart, Complete, Abort, ListParts, ListMultipartUploads); logic lưu trữ nằm ở filer_multipart.go",
@@ -1359,11 +1381,13 @@
    "AbortMultipartUploadHandler gọi s3err.WriteEmptyResponse (vốn đã ghi audit log) rồi lại gọi s3err.PostLog, nên mỗi lần abort phát ra hai bản ghi audit.",
    "Tham số encryption tới putToFiler dưới dạng request header nội bộ (SeaweedFSSSEKMSBaseIVHeader, SeaweedFSSSES3KeyDataHeader…); điều này dựa vào việc iam.Auth làm sạch các bản sao do client gửi.",
    "Upload id là tất định theo key (sha1 của key) cộng một hậu tố ngẫu nhiên; id kiểu cũ không có hậu tố vẫn được chấp nhận.",
-   "getBucketMultipartResources / getObjectResources tiếp tục parse sau một số không hợp lệ và báo mã lỗi kèm giá trị 0."
+   "getBucketMultipartResources / getObjectResources tiếp tục parse sau một số không hợp lệ và báo mã lỗi kèm giá trị 0.",
+   "UploadPart, kiểm tra upload còn mở và getMultipartSSEAlgorithm đọc record upload qua uploadFiler(bucket, object) (#12668); một part được ghi qua putToFiler với withMultipartPart(r, upload), nên lần create của nó cũng tới owner filer của object.",
+   "ListMultipartUploads và ListParts trả InvalidArgument cho encoding-type khác 'url' (#12753), nhưng chỉ khi chưa có lỗi parse nào khác."
   ],
   "if_broken": "Upload lớn thất bại hoặc complete thành object hỏng hay không giải mã được; upload bị abort để lại part mồ côi chiếm dung lượng.",
   "issue": "bug",
-  "issue_note": "NewMultipartUploadHandler truyền isVersioningEnabled(bucket) làm đối số objectLockEnabled của validateObjectLockHeaders (PutObject, CopyObject, POST policy và extract truyền isObjectLockEnabled). Trên bucket bật versioning mà KHÔNG có Object Lock, x-amz-object-lock-mode/retain-until/legal-hold vì vậy được chấp nhận (với caller có quyền retention/legal-hold) thay vì bị từ chối; createMultipartUpload lưu chúng trên upload entry và bước complete copy mọi Extended key của upload entry sang object cuối cùng (filer_multipart.go). Object khi đó báo retention trong header GET/HEAD và GetObjectRetention, nhưng enforceObjectLockProtections bỏ qua bucket không có Object Lock, nên object 'bị lock' vẫn xoá được. Tái hiện ở b9866bae trên bucket versioned không có Object Lock: PutObject với x-amz-object-lock-legal-hold trả 400, CreateMultipartUpload trả 200. Kiểm tra lại ở 917cf534 và 4fc41872: không đổi (validateObjectLockHeaders vẫn nhận versioningEnabled ở s3api_object_handlers_multipart.go:82).",
+  "issue_note": "NewMultipartUploadHandler truyền isVersioningEnabled(bucket) làm đối số objectLockEnabled của validateObjectLockHeaders (PutObject, CopyObject, POST policy và extract truyền isObjectLockEnabled). Trên bucket bật versioning mà KHÔNG có Object Lock, x-amz-object-lock-mode/retain-until/legal-hold vì vậy được chấp nhận (với caller có quyền retention/legal-hold) thay vì bị từ chối; createMultipartUpload lưu chúng trên upload entry và bước complete copy mọi Extended key của upload entry sang object cuối cùng (filer_multipart.go). Object khi đó báo retention trong header GET/HEAD và GetObjectRetention, nhưng enforceObjectLockProtections bỏ qua bucket không có Object Lock, nên object 'bị lock' vẫn xoá được. Tái hiện ở b9866bae trên bucket versioned không có Object Lock: PutObject với x-amz-object-lock-legal-hold trả 400, CreateMultipartUpload trả 200. Kiểm tra lại ở 917cf534, 4fc41872 và afdb32d2: không đổi (validateObjectLockHeaders vẫn nhận versioningEnabled ở s3api_object_handlers_multipart.go:82).",
   "ux": "aws s3 cp/sync và multipart upload của SDK cho file lớn; ETag của part; trả lại thuật toán checksum khi Create.",
   "what": "NewMultipartUploadHandler kiểm tra độ dài key, SSE header, bucket (tự tạo nếu được phép), bố cục table-bucket, object-lock header, Cache-Control/Expires và ACL của upload, từ chối key trỏ tới path vật lý của một version đã lưu (checkVersionFileWrite; CompleteMultipartUpload kiểm tra lại, #12622), rồi tạo upload. PutObjectPartHandler kiểm tra upload id so với key (sha1(key) cộng hậu tố _<32 hex> tuỳ chọn), từ chối x-amz-storage-class hoặc x-amz-tagging không hợp lệ trước khi đọc body (validatePutHeaders), phát lại các tham số SSE-KMS hoặc SSE-S3 của upload (key id, encryption context, base IV, key data) từ upload directory entry vào các request header nội bộ, thực thi thuật toán checksum của upload, ghi part vào <bucket>/.uploads/<uploadId>/<NNNN>_<uuid>.part qua putToFiler (với path của object làm đích lưu trữ), rồi kiểm tra lại rằng upload chưa bị abort trong lúc đó (dọn part của chính nó nếu đã bị). Các handler Complete/Abort/List parse tham số và uỷ thác (một body Complete không khớp signed payload hash trả lỗi đó thay vì MalformedXML, #12577). Ngoài ra: genUploadsFolder, genPartUploadPath, checkUploadId, getMultipartSSEAlgorithm (được bucket policy engine dùng cho condition s3:x-amz-server-side-encryption trên UploadPart).",
   "when": "POST ?uploads, PUT ?partNumber&uploadId (không có copy source), POST ?uploadId, DELETE ?uploadId, GET ?uploadId, GET ?uploads.",
@@ -1386,17 +1410,20 @@
   "character": "HTTP handler của S3ApiServer (PutObjectHandler) cùng putToFiler, engine ghi object dùng chung được tái sử dụng bởi multipart part, copy và versioned write; cũng chứa việc đánh giá conditional header, kiểm tra object-lock header và encryption/retention mặc định của bucket",
   "gotchas": [
    "Metadata nội bộ tới putToFiler dưới dạng request header (ExtVersionIdKey, các key object-lock); điều này chỉ an toàn vì iam.Auth làm sạch các bản sao do client gửi trước (scrubInternalHeaders).",
-   "Default encryption của bucket bị bỏ qua cho lần ghi multipart part (context flag withMultipartPart): encryption được quyết định lúc CreateMultipartUpload và phát lại qua header.",
+   "Default encryption của bucket bị bỏ qua cho lần ghi multipart part (context value withMultipartPart, giờ mang uploadFilerClient của upload thay vì một bool, #12668): encryption được quyết định lúc CreateMultipartUpload và phát lại qua request header nội bộ. Lần create không điều kiện của một part đi tới owner filer của object đích qua upload.WithFilerClient, và confirmCreateLanded kiểm tra trên owner của object đó (routeObject) chứ không phải của path part.",
    "lifecycleTTLSec chỉ khác 0 cho PutObject không versioning ở cấp cao nhất; part và copy-part phải truyền 0 nếu không đồng hồ TTL của chúng sẽ bắt đầu trước khi complete.",
    "Part (object == \"\") không bao giờ được manifest hoá vì bước complete đặt lại offset của chunk, điều mà manifest chunk không biểu diễn được.",
    "updateLatestVersionInDirectory retry lookup .versions 8 lần với backoff 100ms·2^n (tổng tới ~12.7s) và từ chối dời con trỏ latest lùi về một version id cũ hơn.",
    "Một PUT được route mà filer trả PRECONDITION_FAILED kèm conditionAltKey được gửi lại một lần với entry mà đường đọc phục vụ, cho các filer bỏ qua condition_alt_key.",
    "partOffset được hardcode là 0 cho mọi lời gọi SSE, kể cả multipart part; với SSE-S3 điều này khiến mọi part của một upload dùng chung một keystream (xem issue note của s3api_put_handlers.go).",
-   "validatePutHeaders chạy hai lần trên một PutObject: trong handler trước khi đọc body (PUT không có Content-Type đoán nó từ lần đọc body đầu tiên, nên kiểm tra muộn hơn sẽ phải đợi body) và lại trong putToFiler cho các caller khác của nó (UploadPart, POST policy, zip member, UploadPartCopy)."
+   "validatePutHeaders chạy hai lần trên một PutObject: trong handler trước khi đọc body (PUT không có Content-Type đoán nó từ lần đọc body đầu tiên, nên kiểm tra muộn hơn sẽ phải đợi body) và lại trong putToFiler cho các caller khác của nó (UploadPart, POST policy, zip member, UploadPartCopy).",
+   "Trên đường lock (không route), putToFiler giờ gửi điều kiện ghi kèm lần create (routeWriteCondition, #12846) vì lock chỉ là lease và filer kiểm tra lại dưới path lock của nó. Một create có điều kiện bị filer chuyển tiếp tới ring owner mà lookup có thể không tới được, nên chunk chỉ được thu hồi khi filer từ chối hẳn (PRECONDITION_FAILED) hoặc khi lookup chứng minh entry vắng mặt.",
+   "Cache-Control không parse được trả InvalidRequest (#12733), không còn InvalidDigest.",
+   "Dưới fips140=only, detectRequestedChecksumAlgorithmQ trả NotImplemented cho SHA-1 (#12845); detectAnyChecksumAlgorithm là phần đọc thuật toán không có chặn đó."
   ],
   "if_broken": "Upload thất bại hoặc, tệ hơn, báo thành công cho object không được lưu hoặc trỏ tới chunk đã xoá; bucket versioned mất version; WORM retention bị vượt qua bằng ghi đè; object mã hoá không đọc được.",
   "issue": null,
-  "issue_note": "",
+  "issue_note": " Kiểm tra lại ở afdb32d2: partOffset vẫn hardcode 0.",
   "ux": "Những gì client S3 thấy khi upload: ETag, x-amz-version-id, header trả lại SSE và checksum, các lỗi BadDigest / InvalidDigest / PreconditionFailed / IncompleteBody / ClientDisconnected / InvalidStorageClass, và 503 thay vì một thành công giả khi không chứng minh được kết quả của lần commit.",
   "what": "PutObjectHandler kiểm tra request (dùng sai copy-source/partNumber, Content-MD5, độ dài key, bố cục table-bucket, conditional header, bucket policy, SSE header, header storage class và tag (validatePutHeaders, trước khi bất cứ thứ gì đọc body), Cache-Control/Expires), từ chối key đích trỏ tới path vật lý của một version đã lưu (checkVersionFileWrite, #12622), rồi rẽ nhánh: key có dấu gạch chéo cuối ≤1KB thành một directory marker tường minh (mkdir dưới object write lock; marker giữ storage class và tag; một Content-MD5 không khớp body rỗng là BadDigest); ngược lại nó ghi theo trạng thái versioning (Enabled → putVersionedObject vào <key>.versions/, Suspended → putSuspendedVersioningObject làm version 'null', chưa từng cấu hình → putToFiler thường với lifecycle TTL tuỳ chọn). putToFiler stream body qua MD5 và các bộ băm CRC/SHA tuỳ chọn, áp SSE-C/KMS/S3 hoặc default encryption của bucket, upload chunk thẳng tới volume server (kích thước chunk theo -maxMB của filer, mặc định 8 MiB), ghi SSE metadata theo chunk, dựng entry (ETag, write id, checksum, owner, ACL, version id, các trường lock, user metadata, tag, storage class; với versioned write, hook newVersion của bước finalize tạo lại version id và tên file ngay trước khi create, sau khi upload và chờ lock, để id theo thứ tự commit, #12454), manifest hoá chunk, và commit: route tới owner filer của key như một ObjectTransaction khi có thể, nếu không thì CreateEntry dưới distributed object write lock. Kết quả không chắc chắn đi qua createAfterAmbiguousRoute / confirmCreateLanded trước khi dọn bất kỳ chunk nào.",
   "when": "PUT /bucket/key không có copy source hay multipart query. putToFiler cũng được UploadPart (s3api_object_handlers_multipart.go), các đường copy và các helper versioned và suspended ở đây gọi. checkConditionalHeaders(ForReads) chạy trong các handler GET/HEAD/PUT/copy.",
@@ -1430,7 +1457,8 @@
   "gotchas": [
    "Thao tác ghi versioned là UpdateEntry toàn entry không điều kiện, nên một thay đổi PutObjectRetention hay legal-hold đồng thời trên cùng version có thể bị hoàn tác (mẫu lost-update đã gắn cờ ở s3api_bucket_policy_handlers.go).",
    "PutObjectTagging đọc đúng Content-Length byte; một request chunked không đọc được gì và thất bại thành MalformedXML.",
-   "Mọi lỗi khi resolve version, kể cả lỗi tạm thời, đều trả NoSuchKey."
+   "Mọi lỗi khi resolve version, kể cả lỗi tạm thời, đều trả NoSuchKey.",
+   "Trên bucket có cấu hình versioning, Get/Put/DeleteObjectTagging trả x-amz-version-id của version đã thao tác (#12745), 'null' cho object ghi trước khi bật versioning; PUT và DELETE đặt header này cả trên bucket chưa từng có versioning."
   ],
   "if_broken": "Policy và lifecycle rule dựa trên tag hành động theo tag cũ, hoặc tag rơi vào nhầm version.",
   "ux": "aws s3api put-object-tagging và các biến thể theo version hoạt động như trên AWS.",
@@ -1467,11 +1495,12 @@
   "character": "Các method của S3ApiServer cho lookup read-your-writes; giữ một map TTL theo server các owner không liên lạc được (s3a.unreachableOwners, sync.Map)",
   "gotchas": [
    "routableWriteOwner (routed_write.go) là nguồn duy nhất của owner; cả hai bên phải băm cùng route key nếu không lần đọc bỏ lỡ thao tác ghi.",
-   "Việc dò owner trước chỉ xảy ra khi ErrNotFound và chỉ một lần; lỗi transport đi qua vòng failover bình thường thay vào đó."
+   "Việc dò owner trước chỉ xảy ra khi ErrNotFound và chỉ một lần; lỗi transport đi qua vòng failover bình thường thay vào đó.",
+   "Với RoutedLookupTimeout = 0 (mặc định) không có giới hạn: một owner nuốt SYN khiến mỗi lần đọc chờ hết 20s connect timeout của gRPC trước khi failover sang filer kế tiếp, filer nào cũng đọc được cùng entry."
   ],
   "if_broken": "Lần đọc đi tới filer tuỳ ý và thỉnh thoảng bỏ lỡ thao tác ghi mới hoặc phục vụ version cũ; khi việc dò owner trước bị hỏng, các key bị dời do thay đổi ring trả 404 trong chốc lát.",
   "ux": "Nhất quán read-after-write trong triển khai nhiều filer: client vừa PUT một object có thể GET nó ngay.",
-  "what": "Đọc entry của một object, hoặc các entry trong phạm vi của nó (thư mục .versions và các version file), ưu tiên filer sở hữu thao tác ghi của key trên hash ring: getObjectEntryRoutedByKey, getObjectScopedEntryRoutedByKey, listObjectScopedEntriesRoutedByKey. Nếu owner báo not-found trong lúc rebalance, nó dò owner trước đó của key một lần. Cũng giữ các dấu 'owner vừa không liên lạc được' 2s và lookupEntryPreferringOwner / lookupEntryOnFiler cho các lần đọc một filer.",
+  "what": "Đọc entry của một object, hoặc các entry trong phạm vi của nó (thư mục .versions và các version file), ưu tiên filer sở hữu thao tác ghi của key trên hash ring: getObjectEntryRoutedByKey, getObjectScopedEntryRoutedByKey, listObjectScopedEntriesRoutedByKey. Nếu owner báo not-found trong lúc rebalance, nó dò owner trước đó của key một lần. Lần thử đầu tới một owner không phải filer hiện tại bị giới hạn bởi RoutedLookupTimeout (routedLookupContext, #12827): deadline chỉ phủ lúc chờ câu trả lời đầu, answeringClient/answeringStream gỡ nó khi listing đã bắt đầu trả để stream chạy hết; lần dò prior owner cũng bị giới hạn như vậy (routedProbeContext). Cũng giữ các dấu 'owner vừa không liên lạc được' (2s mặc định, UnreachableOwnerTTL) và lookupEntryPreferringOwner / lookupEntryOnFiler cho các lần đọc một filer.",
   "when": "GET/HEAD object và các đường versioning resolve entry qua đây khi có cấu hình objectWriteLockClient (ring); không có thì nó thu về getEntry/list thường.",
   "why": "Hệ quả: với nhiều filer, thao tác ghi commit trên owner của key và replicate bất đồng bộ; đọc từ filer khác ngay sau PUT có thể trả 404 hoặc version trước. Thiết kế: unreachableOwnerTTL = 2s đủ dài để không phải dial một owner đã chết ở mỗi request và đủ ngắn để sớm quay lại đọc owner trước sau khi nó hoặc ring hồi phục. lookupEntryPreferringOwner không bao giờ đổi owner lấy một peer khoẻ hơn, vì làm vậy sẽ đọc phía sau thao tác ghi caller vừa làm."
  },
@@ -1480,7 +1509,7 @@
   "gotchas": [
    "routeWriteCondition từ chối route một thao tác ghi có điều kiện tới path version duy nhất: một versioned write có điều kiện phải kiểm tra latest version, điều chỉ đường lock làm.",
    "routedObjectOwner cố ý không trả owner cho bucket versioned hoặc object-lock để kiểm tra WORM ở lại đường lock.",
-   "routedUploadRemoval giữ một kiểm tra exists() phía gateway vì filer cũ bỏ qua điều kiện upload-exists của mutation trong lúc rolling upgrade.",
+   "routedUploadRemoval giữ một kiểm tra upload-còn-tồn-tại phía gateway vì filer cũ bỏ qua điều kiện upload-exists của mutation trong lúc rolling upgrade; từ #12668 kiểm tra đó hỏi owner trước (lookupEntryPreferringOwner) và chỉ coi ErrNotFound là upload đã bị gỡ.",
    "routedSelfCopy coi FailedPrecondition/NotFound là câu trả lời có thẩm quyền của owner (không phát lại, không đánh dấu owner down)."
   ],
   "if_broken": "Thao tác ghi vào cùng key đua nhau (lost update, cả hai PUT If-None-Match:* đều thành công); route key không khớp khiến filer chuyển tới nhầm owner; một transaction được phát lại có thể áp lại mutation lên một thao tác ghi đã tới ở giữa.",
@@ -1506,7 +1535,7 @@
   "gotchas": [
    "objectWriteOwner ở đây và routableWriteOwner trong s3api_object_routed_write.go cùng resolve owner từ một route key; giữ chúng đồng bộ.",
    "routedDeleteNullVersion rơi về đường lock khi có lỗi transport hoặc transaction chỉ với thao tác xoá không điều kiện (thao tác xoá là idempotent); thao tác có điều kiện trả 500, vì owner có thể đã áp nó và đường lock không loại trừ các thao tác xoá được route (#12624). routedDeleteSpecificVersion thì luôn làm request thất bại.",
-   "routedMultipartFinalize giữ một kiểm tra upload-exists phía gateway cho các filer cũ bỏ qua điều kiện của mutation."
+   "routedMultipartFinalize giữ một kiểm tra upload-exists phía gateway cho các filer cũ bỏ qua điều kiện của mutation; từ #12668 nó hỏi uploadFiler(bucket, object), tức owner filer giữ record upload."
   ],
   "if_broken": "Con trỏ latest lệch khỏi version mới nhất thật, version bị lock bị xoá, hoặc upload đã complete để lại thư mục staging.",
   "ux": "'latest' đúng read-after-write trong cluster nhiều filer; AccessDenied khi một thao tác xoá versioned chạm vào version bị lock.",
@@ -1520,7 +1549,8 @@
    "getLatestObjectVersion retry lookup .versions 8 lần với backoff 100ms·2^n (tệ nhất ~12.7s); kiểm tra conditional header dùng fast path 1 lần retry thay vào đó.",
    "versionIdFromEntry rơi về tiền tố tên file 'v_' khi entry không có metadata version-id.",
    "Latest-version metadata được cache trên .versions/ là thứ listing tin; mọi bên ghi dời con trỏ phải gọi setCachedListMetadata hoặc clearCachedVersionMetadata nếu không listing hiện size/ETag cũ.",
-   "processExplicitDirectory báo directory marker tường minh như một version 'null' với ETag của nội dung rỗng d41d8cd98f00b204e9800998ecf8427e."
+   "processExplicitDirectory báo directory marker tường minh như một version 'null' với ETag của nội dung rỗng d41d8cd98f00b204e9800998ecf8427e.",
+   "ListObjectVersions nhận encoding-type (#12753): giá trị khác 'url' trả InvalidArgument; với 'url', encodeURL mã hoá Prefix, Delimiter, KeyMarker, NextKeyMarker và key của mọi Version, DeleteMarker và CommonPrefix."
   ],
   "if_broken": "Object đã xoá xuất hiện lại, sai version được phục vụ như hiện tại, ListObjectVersions trùng hoặc rơi version giữa các trang, hoặc lifecycle NoncurrentDays hết hạn sai thời điểm.",
   "ux": "Ngữ nghĩa x-amz-version-id, delete marker, cờ IsLatest và thứ tự trong đầu ra list-object-versions, và việc xoá latest version có làm version trước hiện ra lại không.",
@@ -1588,11 +1618,14 @@
    "Route ownership-controls bỏ qua cb.Limit (chúng chỉ được bọc trong iam.Auth).",
    "ValidateS3Credential so sánh secret bằng != (không phải thời gian hằng); lance/handlers_oauth.go dùng nó cho OAuth client_credentials và xác minh token.",
    "STS có route riêng cùng một POST / dự phòng không xác thực, độ ưu tiên thấp nhất; POST / có chữ ký đi tới UnifiedPostHandler, nơi điều phối theo Action (AssumeRole*/GetCallerIdentity/GetFederationToken tới STS, mọi thứ khác tới embedded IAM).",
-   "recheckPolicyForKeyWithLookup nghiêng về từ chối: mọi lần lookup miss hoặc lỗi đều giữ Deny ban đầu, và một Deny tường minh trong policy của chính caller vẫn phủ quyết một Allow của bucket policy."
+   "recheckPolicyForKeyWithLookup nghiêng về từ chối: mọi lần lookup miss hoặc lỗi đều giữ Deny ban đầu, và một Deny tường minh trong policy của chính caller vẫn phủ quyết một Allow của bucket policy.",
+   "RoutedLookupTimeout, UnreachableOwnerTTL và VolumeLookupTimeout (#12827) mặc định 0: lookup route-by-key tới owner không phải filer hiện tại không bị giới hạn, owner hỏng bị bỏ qua 2s, và lookup volume dùng timeout mặc định của FilerClient. Ở mạng mà partition nuốt gói tin, để 0 nghĩa là mỗi lần đọc chờ tới 20s connect timeout của gRPC.",
+   "filerGuard nhận cả khoá ký trước đó (jwt.filer_signing.previous_key, .read.previous_key) và ReloadSigningKeys nạp lại cả bộ (#12844), nên token ký bằng khoá cũ vẫn được chấp nhận trong lúc xoay khoá.",
+   "Route PUT ?accelerate và PUT ?notification (#12747) chạy dưới ACTION_ADMIN như các thao tác ghi cấu hình bucket khác."
   ],
   "if_broken": "Gateway không khởi động, hoặc route rơi vào sai handler (ví dụ một PUT tagging bị xử lý như PutObject và ghi đè object). Nếu mất lock-ring subscription, các thao tác ghi route theo key sẽ âm thầm quay về đường distributed lock.",
   "issue": "bug",
-  "issue_note": "ValidateS3Credential so sánh secret do client gửi với cred.SecretKey bằng != (s3api_server.go:1587), phép so sánh dừng ở byte khác đầu tiên. Đây là bước kiểm tra credential đứng sau các endpoint token OAuth client_credentials của Iceberg và Lance (iceberg/handlers_oauth.go, lance/handlers_oauth.go), nơi secret thô đi kèm request, nên thời gian phản hồi làm lộ phần secret đoán đúng dài bao nhiêu. Cả hai đường kiểm tra chữ ký trong package này đều dùng subtle.ConstantTimeCompare (auth_signature_v4.go, auth_signature_v2.go). Các handler OAuth đã trả cùng một thông điệp chung cho mọi thất bại, nên thời gian là chỗ rò duy nhất. Mức độ thấp, vì nhiễu mạng làm cuộc tấn công chậm; cách sửa là một dòng so sánh thời gian hằng. Phát hiện khi đọc code; chưa tái hiện.",
+  "issue_note": "ValidateS3Credential so sánh secret do client gửi với cred.SecretKey bằng != (s3api_server.go:1602 ở afdb32d2), phép so sánh dừng ở byte khác đầu tiên. Đây là bước kiểm tra credential đứng sau các endpoint token OAuth client_credentials của Iceberg và Lance (iceberg/handlers_oauth.go, lance/handlers_oauth.go), nơi secret thô đi kèm request, nên thời gian phản hồi làm lộ phần secret đoán đúng dài bao nhiêu. Cả hai đường kiểm tra chữ ký trong package này đều dùng subtle.ConstantTimeCompare (auth_signature_v4.go, auth_signature_v2.go). Các handler OAuth đã trả cùng một thông điệp chung cho mọi thất bại, nên thời gian là chỗ rò duy nhất. Mức độ thấp, vì nhiễu mạng làm cuộc tấn công chậm; cách sửa là một dòng so sánh thời gian hằng. Phát hiện khi đọc code; chưa tái hiện. Kiểm tra lại ở afdb32d2: không đổi.",
   "ux": "Quyết định dạng URL nào chạy được (path-style hay virtual-host qua -domainName, health probe ở /status, /healthz, /readyz), thao tác nào tồn tại, và các mặc định: không có cấu hình IAM nghĩa là 'không credential = cho phép tất cả' để `docker run seaweedfs` chạy ngay (#9557), còn một file cấu hình IAM tường minh mặc định là Deny.",
   "what": "NewS3ApiServerWithStore nối toàn bộ gateway: IAM kiểu cũ (IdentityAccessManagement), bucket policy engine, FilerClient (khám phá filer qua master khi có -master), lock ring cho ghi object (LockClient nhận LockRingUpdates từ master), SSE-S3 key manager, một ReaderCache dùng chung cho GET streaming (256 slot downloader, chunk cache trong bộ nhớ tuỳ chọn), circuit breaker, bucket config cache (TTL 60 phút), IAM nâng cao + STS + embedded IAM API tuỳ chọn, trusted proxy, hook reload khi nhận SIGHUP, và các vòng lặp nền (metadata subscription, metric kích thước bucket, backfill owner index, versioning reconciler). registerRouter khai báo mọi route S3 trên gorilla/mux: router path-style và virtual-host theo -domainName cùng một catch-all không có host, mỗi route bọc thành track(iam.Auth(cb.Limit(handler, ACTION))). checkVersionFileWrite từ chối thao tác ghi có key trỏ tới đường dẫn vật lý của một version đã lưu (<key>.versions/v_<id>), vốn sẽ thay nội dung của version đó tại chỗ trong bucket Suspended; nó đọc entry trên owner filer của object logic và, khi lần đọc đã route có thể đến từ một replica, hỏi lại owner trước khi tin một lần miss (#12622). IsConfiguredAccountID và TrustedOIDCIssuers cung cấp các account cục bộ và tập OIDC issuer đã cấu hình cho các catalog server (#12615). File cũng chứa checkPolicyWithEntry / recheck*Policy*, chạy lại đánh giá bucket policy khi handler đã có entry của object (cho điều kiện s3:ExistingObjectTag) và từ chối key trỏ tới đường dẫn vật lý của file version, để GET, HEAD, copy source và subresource object có chữ ký không đọc được một version vượt qua s3:GetObjectVersion hay một Deny trên key logic (#12574); bước kiểm tra lại dựa trên lookup sẽ đọc entry mỗi khi key có dạng đó, kể cả trong bucket không có policy; và các adapter nhỏ mà server khác dùng (AuthenticateRequest, ValidateS3Credential, GetCredentialByAccessKey).",
   "when": "Được khởi tạo một lần khi process bắt đầu bởi weed/command (s3, filer -s3, mini); registerRouter chạy bên trong constructor. Các helper kiểm tra lại chạy bên trong handler object sau khi đọc entry. SIGHUP đọc lại identity của -config, khoá ký JWT của filer và trusted proxy.",
@@ -1603,7 +1636,8 @@
   "gotchas": [
    "Không có khoá ký thì dịch vụ mở cho mọi peer cục bộ, kể cả các process khác trên cùng host.",
    "GetPolicy trả response rỗng, không phải NotFound, cho policy không tồn tại.",
-   "PutIdentity và RemoveIdentity không kiểm tra s3a.iam nil, khác các RPC policy và group."
+   "PutIdentity và RemoveIdentity không kiểm tra s3a.iam nil, khác các RPC policy và group.",
+   "checkAdminAuth chấp nhận token ký bằng khoá hiện tại hoặc khoá trước đó (VerificationKeys(true), #12844) để xoay khoá không làm đứt shell và admin đang kết nối."
   ],
   "if_broken": "Gateway tiếp tục phục vụ key đã thu hồi cho tới lần reload toàn bộ, hoặc bất kỳ ai chạm tới cổng gRPC đều viết lại được identity.",
   "ux": "Thay đổi IAM làm ở bất kỳ đâu hiện ra trên mọi gateway gần như ngay lập tức.",
@@ -1631,7 +1665,7 @@
   ],
   "if_broken": "Bộ điều phối restart hoặc rút lưu lượng khỏi các gateway đang khoẻ.",
   "ux": "Probe thành công mỗi khi process còn chạy.",
-  "what": "StatusHandler trả 200 với body rỗng trên /status, /healthz và /readyz. Với ?features nó trả JSON {\"sseS3\": <bool>} cho biết SSE-S3 key manager đã được cấu hình chưa; trang vector encryption của admin UI dò nó trước khi đề xuất SSE-S3 (#12517).",
+  "what": "StatusHandler trả 200 với body rỗng trên /status, /healthz và /readyz. Với ?features nó trả JSON {\"sseS3\": <bool>} cho biết SSE-S3 key manager đã được cấu hình chưa; trang vector encryption của admin UI dò nó trước khi đề xuất SSE-S3 (#12517). Sau StartDraining (#12703, gọi khi nhận SIGTERM và -preStopSeconds > 0) mọi probe trả 503 để load balancer ngừng gửi request mới, trong khi request vẫn tới được phục vụ như thường.",
   "when": "GET/HEAD /status, /healthz và /readyz, đăng ký trước các route bucket và ngoài iam.Auth.",
   "why": "Hệ quả: load balancer và probe của Kubernetes đánh dấu gateway khoẻ hay không dựa trên câu trả lời này. Thiết kế: nó không kiểm tra gì (không vòng qua filer hay master), nên probe không bao giờ thất bại vì độ trễ backend; nó chỉ báo HTTP server đang phục vụ."
  },
@@ -1740,11 +1774,12 @@
   "gotchas": [
    "Mọi ErrorCode mới PHẢI có một mục trong errorCodeResponse: GetAPIError là phép tra map thuần không có mặc định, và thiếu mục sẽ làm WriteHeader(0) panic.",
    "getRemoteIP tin nguyên X-Forwarded-For / X-Real-IP cho audit log (khác policy engine, vốn chỉ tin các trusted proxy đã cấu hình), nên remote_ip trong log có thể bị client giả mạo trừ khi proxy xoá các header này.",
-   "WriteResponse ép kiểu w.(http.Flusher); một wrapper ResponseWriter không implement Flusher sẽ panic."
+   "WriteResponse ép kiểu w.(http.Flusher); một wrapper ResponseWriter không implement Flusher sẽ panic.",
+   "ErrInvalidEncodingMethod (#12753) trả InvalidArgument 400 cho encoding-type khác 'url' trên mọi listing (V1, V2, versions, multipart uploads và parts), như AWS."
   ],
   "if_broken": "Client nhận status sai hoặc lỗi sai định dạng, nên retry, xử lý 404 và logic có điều kiện thất bại; hoặc bản ghi audit bị thiếu hay bị trùng.",
   "issue": "bug",
-  "issue_note": "ErrMalformedCredentialDate (khai báo trong enum ErrorCode) không có mục trong errorCodeResponse, nên GetAPIError trả APIError rỗng (status 0) và WriteErrorResponse panic với 'invalid WriteHeader code 0'. Có thể chạm tới mà không cần credential: bất kỳ request nào có header Authorization SigV4 (hoặc X-Amz-Credential presigned, hoặc credential của POST policy) mang Credential date không parse được đều nhận mã này từ parseCredentialHeader (auth_signature_v4.go), và iam.Auth chuyển thẳng nó cho WriteErrorResponse trước mọi lần tra key. Đã tái hiện ở b9866bae bằng một test tạm gọi iam.Auth: handler panic; dưới net/http panic được recover theo từng kết nối, nên client thấy kết nối bị ngắt thay vì 400 AuthorizationQueryParametersError. Đến 917cf534 đây vẫn là ErrorCode duy nhất không có mục.",
+  "issue_note": "ErrMalformedCredentialDate (khai báo trong enum ErrorCode) không có mục trong errorCodeResponse, nên GetAPIError trả APIError rỗng (status 0) và WriteErrorResponse panic với 'invalid WriteHeader code 0'. Có thể chạm tới mà không cần credential: bất kỳ request nào có header Authorization SigV4 (hoặc X-Amz-Credential presigned, hoặc credential của POST policy) mang Credential date không parse được đều nhận mã này từ parseCredentialHeader (auth_signature_v4.go), và iam.Auth chuyển thẳng nó cho WriteErrorResponse trước mọi lần tra key. Đã tái hiện ở b9866bae bằng một test tạm gọi iam.Auth: handler panic; dưới net/http panic được recover theo từng kết nối, nên client thấy kết nối bị ngắt thay vì 400 AuthorizationQueryParametersError. Đến 917cf534 đây vẫn là ErrorCode duy nhất không có mục. Kiểm tra lại ở afdb32d2: vẫn là ErrorCode duy nhất không có mục (112 mã; #12753 thêm ErrInvalidEncodingMethod kèm mục của nó).",
   "ux": "Chính xác body lỗi XML, HTTP status và x-amz-request-id mà mọi client nhận; dấu vết audit mà người vận hành truy vấn.",
   "what": "Định nghĩa ~110 giá trị ErrorCode và errorCodeResponse, bảng ánh xạ sang mã lỗi AWS và HTTP status. WriteErrorResponse(WithMessage) dựng XML RESTErrorResponse của AWS (Code, Message, Resource, RequestId, Key, BucketName), xả request body tối đa 30s, ghi response và gửi một bản ghi audit. WriteXMLResponse/WriteAwsXMLResponse/WriteEmptyResponse/WriteResponse đặt x-amz-request-id và Accept-Ranges, áp header CORS dự phòng cho request mức service, và bỏ body với HEAD/1xx/204/304. audit_fluent.go dựng bản ghi AccessLog (requester, principal ARN, OIDC claim, access key id, operation dạng REST.PUT.OBJECT, mã lỗi) và gửi bất đồng bộ tới Fluent, với một cờ theo request để middleware track() có thể ghi bản ghi dự phòng mà không ghi trùng; WithAccessLogOperation cho handler tự đặt tên operation (S3 Vectors làm vậy), và bản ghi mức bucket không có key cũng được ghi.",
   "when": "Ở cuối mọi request: lỗi từ auth, circuit breaker và handler; các hàm ghi thành công qua s3api_handlers.go. InitAuditLog chạy một lần khi có -auditLogConfig.",
@@ -1813,11 +1848,12 @@
   "gotchas": [
    "Một vector bucket có policy s3tables chứa statement s3vectors bị policy đó chi phối cho tới khi đặt một vector policy; PutVectorBucketPolicy khi đó gỡ các statement đó.",
    "authorizeVectorTags đọc bucket record và policy của nó bằng hai lần lookup riêng.",
-   "Một index có lần create trên engine với kết quả không rõ ở lại trong catalog với dấu initializing; GetIndex và ListIndexes không ẩn nó, và chỉ một CreateIndex với cùng dimension, metric và non-filterable key mới xoá được dấu."
+   "Một index có lần create trên engine với kết quả không rõ ở lại trong catalog với dấu initializing; GetIndex và ListIndexes không ẩn nó, và chỉ một CreateIndex với cùng dimension, metric và non-filterable key mới xoá được dấu.",
+   "jsonbString (#12817) phải escape giống serde_json (\\b, \\f, \\u00XX cho ký tự điều khiển, ký tự 0x7f-0x9f để nguyên), vì filter so chuỗi với text mà json_extract trả về; trước đó nó dùng cú pháp \\u{..} và \\0, nên một giá trị chứa ký tự điều khiển không bao giờ khớp."
   ],
   "if_broken": "Ghi hoặc query vector thất bại, index báo sai dimension, hoặc policy cấp quyền cho nhầm principal.",
   "ux": "Ứng dụng lưu embedding và chạy similarity search qua AWS S3 Vectors SDK.",
-  "what": "Bảng điều phối ánh xạ mọi tên thao tác tới một handler. Bucket: CreateVectorBucket kiểm tra s3vectors:CreateVectorBucket (và TagResource cho tag) với handler account, qua IAM authorizer khi gateway có, và tạo một table bucket LANCE; Get/List lọc theo vector policy; Delete drop namespace index ngầm định khi nó là nội dung duy nhất, ràng buộc với bucket đã được phân quyền. Policy: validateVectorPolicy chỉ nhận action và resource s3vectors cùng các tag condition key, từ chối key Statement/Effect/Condition viết sai chính tả, một Allow condition null, một condition bị tách qua nhiều key, một operator không có key, và giá trị mà operator không đọc được (s3tables.ConditionValue); Put/Delete viết lại xattr vector policy bằng một lần ghi có kiểm tra so sánh, đồng thời gỡ các statement s3vectors khỏi policy của s3tables. authorizeVectorTags đánh giá action theo vector policy với tag của bucket, index và request. Index: CreateIndex phân quyền, đảm bảo namespace ngầm định, ghi catalog record trước và đánh dấu initializing (dimension, metric, các non-filterable key, một createNonce), đọc lại để xác nhận nonce và version token của chính nó đã thắng, tạo engine index, rồi xoá dấu. Một record initializing có cùng tham số được tiếp tục thay vì bị từ chối; khi engine thất bại dứt khoát, record chỉ bị xoá nếu nonce và token vẫn khớp, còn một kết quả không rõ thì để nguyên. Vector: Put kiểm tra dimension và kích thước batch; Get/List/Delete chuyển tiếp tới engine; List giả lập segment khi engine không làm được; Query kiểm tra dimension và các non-filterable key, dịch JSON filter thành một biểu thức SQL trên json_extract(metadata, ...) và đổi khoảng cách L2 bình phương thành euclidean. Mỗi lần phân quyền ghi nhận bucket và index cho metric và access log.",
+  "what": "Bảng điều phối ánh xạ mọi tên thao tác tới một handler. Bucket: CreateVectorBucket kiểm tra s3vectors:CreateVectorBucket (và TagResource cho tag) với handler account, qua IAM authorizer khi gateway có, và tạo một table bucket LANCE; Get/List lọc theo vector policy; Delete drop namespace index ngầm định khi nó là nội dung duy nhất, ràng buộc với bucket đã được phân quyền. Policy: validateVectorPolicy chỉ nhận action và resource s3vectors cùng các tag condition key, từ chối key Statement/Effect/Condition viết sai chính tả, một Allow condition null, một condition bị tách qua nhiều key, một operator không có key, và giá trị mà operator không đọc được (s3tables.ConditionValue); Put/Delete viết lại xattr vector policy bằng một lần ghi có kiểm tra so sánh, đồng thời gỡ các statement s3vectors khỏi policy của s3tables. authorizeVectorTags đánh giá action theo vector policy với tag của bucket, index và request. Index: CreateIndex phân quyền, đảm bảo namespace ngầm định, ghi catalog record trước và đánh dấu initializing (dimension, metric, các non-filterable key, một createNonce), đọc lại để xác nhận nonce và version token của chính nó đã thắng, tạo engine index, rồi xoá dấu. Một record initializing có cùng tham số được tiếp tục thay vì bị từ chối; khi engine thất bại dứt khoát, record chỉ bị xoá nếu nonce và token vẫn khớp, còn một kết quả không rõ thì để nguyên. Vector: Put kiểm tra dimension và kích thước batch; Get/List/Delete chuyển tiếp tới engine; List giả lập segment khi engine không làm được; Query kiểm tra dimension và các non-filterable key, dịch JSON filter thành một biểu thức SQL trên json_extract(metadata, ...) và đổi khoảng cách L2 bình phương thành euclidean. Mỗi lần phân quyền ghi nhận bucket và index cho metric và access log. Từ #12738, CreateIndex kiểm tra MetadataConfiguration và PutVectors kiểm tra độ dài key (tối đa 1024 ký tự) cùng metadata của từng vector theo giới hạn AWS (metadata_limits.go); QueryVectors từ chối filter vượt 100 ràng buộc.",
   "when": "Mọi thao tác S3 Vectors.",
   "why": "Hệ quả: đây là toàn bộ API của vector store; phân quyền sai mở vector của một bucket cho principal khác, và một index record sai khiến mọi thao tác ghi thất bại vì dimension. Thiết kế: catalog sở hữu tên, policy và tag, engine sở hữu dữ liệu vector, và mọi thao tác ghi trải qua cả hai đặt catalog record trước và chỉ rollback những gì request này chứng minh được là đã tạo (nonce cộng version token), và chỉ khi engine từ chối dứt khoát: một Unavailable hay kết quả không rõ khác có thể đã tạo engine index. Dấu initializing cho phép một lần retry của cùng request hoàn tất thay vì gặp 409. Vector policy là một document riêng để grant s3vectors không bao giờ rò sang việc đánh giá của S3 Tables. Tương thích: tên thao tác, giới hạn (500 mỗi lần put, 100 key mỗi lần get, topK 10000, 16 segment), distance metric và các filter operator ($eq, $ne, $in, $nin, $exists, $and, $or, range) theo AWS S3 Vectors."
  },
@@ -1904,7 +1940,8 @@
   "if_broken": "Lời gọi engine thất bại hoặc mở nhầm dataset, hoặc vector bucket có mã hoá nhận index file không mã hoá.",
   "gotchas": [
    "Một table đã mang Location được cho qua không resolve, nên location do caller cung cấp được tin.",
-   "Cờ encryption được đọc bằng một lần lookup catalog thứ hai ở mỗi lời gọi."
+   "Cờ encryption được đọc bằng một lần lookup catalog thứ hai ở mỗi lời gọi.",
+   "MetadataKeys và UpdateMetadataKey (#12820) cũng được resolve location trước khi chuyển tiếp, như các lời gọi engine khác."
   ]
  },
  "weed/s3api/s3vectors/discovery.go": {
@@ -1916,7 +1953,8 @@
   "if_broken": "Mọi lời gọi vector thất bại với 'no weed-vector registered on master', hoặc lời gọi dính vào một engine đã chết.",
   "gotchas": [
    "Mỗi lần lookup thành công log từng server phát hiện được ở glog level 0, nên một gateway bận rộn log địa chỉ engine vài giây một lần.",
-   "Chỉ server đầu tiên không phải server thất bại được dùng; không có việc phân tải giữa nhiều engine."
+   "Chỉ server đầu tiên không phải server thất bại được dùng; không có việc phân tải giữa nhiều engine.",
+   "FilterStats, MetadataKeys và UpdateMetadataKey (#12813, #12820) theo cùng mẫu thử-hai-lần: lỗi transport reset kết nối và thử lại một lần, lỗi khác trả về ngay."
   ]
  },
  "weed/s3api/s3vectors/iam.go": {
@@ -1986,7 +2024,8 @@
    "Các giá trị FilerError được ghi là ổn định: không bao giờ sắp xếp lại hay dùng lại số. LookupDirectoryEntries cố ý được khai báo cuối cùng để giữ ổn định chỉ số của message được sinh ra.",
    "KeepConnectedRequest/Response và LocateBrokerRequest/Response vẫn được khai báo nhưng không RPC nào của service dùng chúng.",
    "IF_EXTENDED_TIME_ELAPSED so với đồng hồ của filer, không phải của gateway; vì vậy việc thực thi retention phụ thuộc vào giờ của host filer.",
-   "Các entry ObjectMutation được dự định chỉ trong phạm vi metadata: các chunk mang dữ liệu được upload trước transaction, nên một transaction thất bại để việc dọn chúng cho caller."
+   "Các entry ObjectMutation được dự định chỉ trong phạm vi metadata: các chunk mang dữ liệu được upload trước transaction, nên một transaction thất bại để việc dọn chúng cho caller.",
+   "CreateEntryRequest.fsync (#12759) yêu cầu lần ghi store bền trước khi trả lời, như ?fsync=true của HTTP; filer cũ bỏ qua trường này."
   ]
  },
  "weed/pb/filer_pb/entry_scrub.go": {
@@ -2023,7 +2062,9 @@
    "GetExpiryTime dereference entry.Attributes không kiểm tra nil; IsExpired có chặn, caller trực tiếp phải tự chặn.",
    "UpdateEntryWithResponse trả response không kiểm tra: UpdateEntryResponse không mang mã lỗi, nên một condition thất bại chỉ hiện ra dưới dạng lỗi gRPC.",
    "metadataEventMatchesPath khớp mọi path khi pathPrefix rỗng (strings.HasPrefix với \"\"), bất kể pathPrefixes hay directories nói gì; một subscription có ý 'chỉ các thư mục này' phải truyền một prefix không rỗng mà nó không bao giờ khớp.",
-   "IsOlderDir coi một thư mục là cũ một khi crtime của nó đã qua hơn 3 giây."
+   "IsOlderDir coi một thư mục là cũ một khi crtime của nó đã qua hơn 3 giây.",
+   "MetadataDirectoryMayMatchSubscription (#12669) quyết định trên thư mục trước khi giải mã event và nghiêng về true: thư mục rỗng, prefix rỗng, và thư mục chưa sạch (chứa '//' hoặc '/.') luôn khớp, vì bộ khớp thật làm sạch path đã nối.",
+   "CreateEntry nhận ra lời từ chối read-only của filer cũ (codes.Unknown với text ErrReadOnly) qua LegacyReadOnlyError và trả lỗi khớp ErrReadOnly (#12823); IsFilerVerdict cho caller biết một lỗi là phán quyết của filer chứ không phải lỗi mạng, kể cả khi path trong message chứa từ như 'transport'."
   ]
  },
  "weed/pb/filer_pb/filer_client.go": {
@@ -2066,7 +2107,7 @@
  },
  "weed/pb/filer_pb/filer_pb_event_scan.go": {
   "character": "Một bộ quét protobuf viết tay chỉ đọc những trường mà bộ khớp subscription cần từ một metadata event đã log",
-  "what": "ScanMetadataEventSkeleton duyệt một SubscribeMetadataResponse đã marshal bằng protowire và giữ directory, ts_ns và, từ event notification, tên entry cũ và mới cùng new_parent_path, bỏ qua mọi trường khác (trên hết là danh sách chunk). Nó trả ok=false với mọi input sai dạng hoặc với một trường message lặp lại (thứ mà protobuf sẽ gộp), báo caller rơi về unmarshal đầy đủ. Tên entry theo quy tắc last-occurrence-wins của proto.",
+  "what": "ScanMetadataEventSkeleton duyệt một SubscribeMetadataResponse đã marshal bằng protowire và giữ directory, ts_ns và, từ event notification, tên entry cũ và mới cùng new_parent_path, bỏ qua mọi trường khác (trên hết là danh sách chunk). Nó trả ok=false với mọi input sai dạng hoặc với một trường message lặp lại (thứ mà protobuf sẽ gộp), báo caller rơi về unmarshal đầy đủ. Tên entry theo quy tắc last-occurrence-wins của proto. ScanMetadataEventDirectories (#12669) chỉ lấy directory và new_parent_path, không cấp phát, để bộ lọc bỏ event trước cả lần quét skeleton.",
   "why": "Hệ quả: một metadata subscriber theo dõi một prefix khiến filer kiểm tra mọi event đã log với nó; unmarshal cả entry cùng danh sách chunk chỉ để đọc hai cái tên chiếm phần lớn chi phí đó. Thiết kế: chỉ decode input của bộ khớp, và chỉ decode đầy đủ các event khớp.",
   "when": "filer_grpc_server_sub_meta.go, khi phát lại các log entry đã lưu cho một subscription.",
   "ux": "CPU của filer thấp hơn khi có nhiều subscriber hẹp (mount, S3 gateway).",
@@ -2091,7 +2132,10 @@
    "DeleteEntry với expected_extended thất bại thành FailedPrecondition khi entry không tồn tại, kể cả khi mọi giá trị mong đợi đều khẳng định vắng mặt.",
    "LookupDirectoryEntry trả ErrNotFound thô, vượt qua gRPC dưới dạng codes.Unknown kèm text của nó; filer_pb.LookupEntry dựa vào text đó.",
    "AppendToEntry commit với context.Background(), nên deadline và metadata event sink của caller không tới được lần ghi store.",
-   "AssignVolume trả lỗi gán của master chỉ dưới dạng text, không có error_code; chỉ phán quyết read-only có mã."
+   "AssignVolume trả lỗi gán của master chỉ dưới dạng text, không có error_code; chỉ phán quyết read-only có mã.",
+   "CreateEntry trên path read-only trả ErrorCode READ_ONLY trong response (#12823); trước đó lỗi không status tới client dưới dạng codes.Unknown và mount retry như một lần filer sập, giữ mỗi close() của file mới 7s.",
+   "CreateEntry và UpdateEntry không xoá chunk mà các hard link khác của file còn đọc (KeepHardLinkedChunks, #12812).",
+   "AppendToEntry giữ một blocking long-lived lock trong cả lần append (#12819) và kiểm tra generation trước khi ghi; mất lock thì xoá chunk vừa ghi và trả lỗi để retry. Comment tự nói đây là best effort: lần ghi store không có điều kiện, nên một lần mất lock sau phép kiểm tra vẫn không bị phát hiện."
   ]
  },
  "weed/server/filer_grpc_server_condition.go": {
@@ -2104,7 +2148,8 @@
   "gotchas": [
    "storedEntryETag phải giữ đồng bộ với thứ tự ưu tiên ETag của gateway; lệch nhau khiến If-Match thất bại trên object mà client vừa đọc ETag.",
    "Hạn chót retention được so với đồng hồ của filer.",
-   "IF_ENTRY_EQUAL không có expected entry chỉ đúng khi entry vắng mặt."
+   "IF_ENTRY_EQUAL không có expected entry chỉ đúng khi entry vắng mặt.",
+   "IF_ENTRY_EQUAL so cả hai phía sau khi chuẩn hoá qua FromPbEntry/ToProtoEntry (#12849): một store không decode qua FromPbEntry giữ nguyên FileSize được đưa vào, nên trước đó entry đọc từ nó không bằng entry mong đợi dù cùng nội dung."
   ]
  },
  "weed/server/filer_grpc_server_route.go": {
@@ -2170,7 +2215,8 @@
   "ux": "Đọc nguội nhiều file nhỏ nhanh hơn.",
   "if_broken": "Cache phục vụ entry có volume đã mất, hoặc miss mà thực ra là lỗi master tạm thời.",
   "gotchas": [
-   "Location và read token bao phủ chunk của chính entry; với manifest chunk đó là volume của manifest needle, không phải volume của các data chunk mà manifest liệt kê."
+   "Location bao phủ chunk của chính entry; với manifest chunk đó là volume của manifest needle, không phải volume của các data chunk. Read token thì từ #12756 bao phủ cả data chunk và manifest lồng nhau phía sau (populateReadAuth), nhưng chỉ khi read signing bật; một manifest không resolve được chỉ được log ở V(1) và data chunk của nó không có token.",
+   "populateReadAuth resolve mọi manifest TRƯỚC rồi mới ký token, vì read JWT sống ngắn (60s mặc định): ký sớm thì token có thể hết hạn trong lúc tải manifest của các entry sau."
   ]
  },
  "weed/server/filer_grpc_server_dlm.go": {
@@ -2183,7 +2229,8 @@
   "gotchas": [
    "TransferLocks và ReplicateLock không kiểm tra is_moved hay peer: bất kỳ client nào tới được cổng gRPC của filer đều chèn được một lock với token và owner bất kỳ.",
    "seconds_to_lock lấy từ request không có cận trên.",
-   "Replication sang backup là bắn-rồi-quên; một lock lấy ngay trước khi primary của nó chết có thể không tồn tại trên backup được nâng lên."
+   "Replication sang backup là bắn-rồi-quên; một lock lấy ngay trước khi primary của nó chết có thể không tồn tại trên backup được nâng lên.",
+   "OnDlmChangeSnapshot reset đồng hồ sức khoẻ lock-ring mỗi khi filer thấy mình trong ring (#12709); /healthz và /readyz trả 503 khi filer vắng khỏi ring của chính nó quá 30s, để orchestrator restart nó thay vì để mọi thao tác lock treo."
   ]
  },
  "weed/server/filer_grpc_server_posix_lock.go": {
@@ -2245,10 +2292,11 @@
    "Trên store không có transaction (BeginTransaction là no-op: LevelDB và phần lớn KV store), một directory rename thất bại giữa chừng để một số con đã dời và một số chưa.",
    "Một directory rename copy và xoá mọi entry con cháu: chi phí tỷ lệ với kích thước cây con, và con cháu không bị lock khi nó chạy.",
    "StreamRenameEntry gửi từng move event cho caller trước commit, nên client có thể thấy event của một rename rồi sau đó bị rollback.",
-   "AtomicRenameEntry không kiểm tra thư mục đích rỗng; dời một thư mục đè lên thư mục không rỗng chỉ thất bại vì thao tác xoá đích không đệ quy."
+   "AtomicRenameEntry không kiểm tra thư mục đích rỗng; dời một thư mục đè lên thư mục không rỗng chỉ thất bại vì thao tác xoá đích không đệ quy.",
+   "Khi rename đè lên một file, moveSelfEntry giữ lại chunk của đích mà các hard link khác của nó còn đọc (KeepHardLinkedChunks, #12812) trước khi hoãn việc xoá tới sau commit."
   ],
   "issue": "bug",
-  "issue_note": "StreamRenameEntry làm rò store transaction khi một thư mục được rename đè lên một thư mục không rỗng. Nó gọi BeginTransaction, rồi với nguồn là thư mục thì kiểm tra đích và, khi 'is not empty', trả lỗi mà không gọi RollbackTransaction (filer_grpc_server_rename.go, bước kiểm tra ListDirectoryEntries sau FindEntry(targetDir)); nhánh 'is not directory' ngay phía trên thì có rollback. Trên SQL store, BeginTransaction mở một *sql.Tx bằng BeginTx trên một context mà wrapper đã tách khỏi việc huỷ (filerstore_wrapper.go: context.WithoutCancel), nên database/sql không bao giờ rollback nó: mỗi lần rename như vậy giữ một kết nối trong pool cho tới khi filer restart. Một mount nơi user liên tục 'mv dir existing-nonempty-dir' (hoặc một công cụ retry việc đó) làm cạn pool, sau đó mọi lời gọi store đều phải đợi kết nối. Bước kiểm tra rỗng cũng list bằng context.Background() thay vì context của transaction, nên trên SQL store nó đọc bên ngoài transaction. Tìm ra bằng cách đọc code ở 917cf534; chưa tái hiện. Cách sửa là một RollbackTransaction trước lần return đó."
+  "issue_note": "StreamRenameEntry làm rò store transaction khi một thư mục được rename đè lên một thư mục không rỗng. Nó gọi BeginTransaction, rồi với nguồn là thư mục thì kiểm tra đích và, khi 'is not empty', trả lỗi mà không gọi RollbackTransaction (filer_grpc_server_rename.go, bước kiểm tra ListDirectoryEntries sau FindEntry(targetDir)); nhánh 'is not directory' ngay phía trên thì có rollback. Trên SQL store, BeginTransaction mở một *sql.Tx bằng BeginTx trên một context mà wrapper đã tách khỏi việc huỷ (filerstore_wrapper.go: context.WithoutCancel), nên database/sql không bao giờ rollback nó: mỗi lần rename như vậy giữ một kết nối trong pool cho tới khi filer restart. Một mount nơi user liên tục 'mv dir existing-nonempty-dir' (hoặc một công cụ retry việc đó) làm cạn pool, sau đó mọi lời gọi store đều phải đợi kết nối. Bước kiểm tra rỗng cũng list bằng context.Background() thay vì context của transaction, nên trên SQL store nó đọc bên ngoài transaction. Tìm ra bằng cách đọc code ở 917cf534; chưa tái hiện. Cách sửa là một RollbackTransaction trước lần return đó. Kiểm tra lại ở afdb32d2: không đổi."
  },
  "weed/server/filer_grpc_server_remote.go": {
   "character": "CacheRemoteObjectToLocalCluster: kéo một object remote-mount vào các needle volume cục bộ và trỏ entry của nó tới chúng",
@@ -2264,7 +2312,7 @@
  },
  "weed/server/filer_grpc_server_sub_meta.go": {
   "character": "Các stream metadata subscription: phát lại metadata log đã lưu của một filer rồi theo dõi log trong bộ nhớ của nó, cho một filer hoặc gộp qua các peer, với phát hiện khoảng trống và giữ watermark",
-  "what": "SubscribeMetadata phục vụ stream gộp (event của filer này trộn với của mọi peer, qua log buffer của MetaAggregator) một khi có peer; một filer đơn lẻ, hoặc một filer có peer chưa xuất hiện, phục vụ stream cục bộ và kết thúc nó bằng errAggregationUpgrade khi một peer tới để client kết nối lại lấy stream gộp. SubscribeLocalMetadata chỉ phục vụ event của filer này. Mỗi stream đăng ký client (client_id và epoch: một epoch mới hơn thay thế, một bản trùng bị từ chối), rồi lặp: đọc persisted log từ đĩa kể từ cursor (hoặc, với client tự đọc volume chunk, gửi LogFileChunkRefs theo lô 64 và chỉ các chunk chưa gửi trước đó), rồi theo dõi buffer trong bộ nhớ cho tới khi cạn, và lặp lại. Event đi qua bộ lọc path hai lần: một lần quét skeleton rẻ trước khi unmarshal (filer_pb_event_scan.go) và lần khớp đầy đủ sau đó; event từ chữ ký của chính subscriber bị bỏ, chữ ký của filer được nối thêm, thư mục system log không bao giờ được gửi, và sau 1000 event bị lọc thì một event rỗng mang timestamp tiến lên. pipelinedSender tách việc đọc khỏi gRPC send (buffer 1024) và, với client hỗ trợ batching, gói tới 256 event mỗi lần Send khi chúng trễ hơn 2 phút. Heartbeat lúc rảnh (5 s, hoặc một tuyên bố delivery 200 ms trên filer có peer) và báo cáo flush cho client đã bắt kịp biết delivery và flush đã tới đâu. Khi buffer trong bộ nhớ đã loại khoảng sau cursor và đĩa chưa giữ nó, subscriber đứng chờ (gapStallReporter, metric) và bỏ cuộc sau 15 phút, nhảy qua khoảng trống kèm một dòng log lỗi. Stream gộp cũng giữ việc đọc ở watermark delivery và flush thấp của các peer để một event từ peer chậm hơn không bị bỏ qua, với một lối thoát settled-horizon khi watermark của một peer đứng lại.",
+  "what": "SubscribeMetadata phục vụ stream gộp (event của filer này trộn với của mọi peer, qua log buffer của MetaAggregator) một khi có peer; một filer đơn lẻ, hoặc một filer có peer chưa xuất hiện, phục vụ stream cục bộ và kết thúc nó bằng errAggregationUpgrade khi một peer tới để client kết nối lại lấy stream gộp. SubscribeLocalMetadata chỉ phục vụ event của filer này. Mỗi stream đăng ký client (client_id và epoch: một epoch mới hơn thay thế, một bản trùng bị từ chối), rồi lặp: đọc persisted log từ đĩa kể từ cursor (hoặc, với client tự đọc volume chunk, gửi LogFileChunkRefs theo lô 64 và chỉ các chunk chưa gửi trước đó), rồi theo dõi buffer trong bộ nhớ cho tới khi cạn, và lặp lại. Event đi qua bộ lọc path hai lần: một lần quét skeleton rẻ trước khi unmarshal (filer_pb_event_scan.go) và lần khớp đầy đủ sau đó; event từ chữ ký của chính subscriber bị bỏ, chữ ký của filer được nối thêm, thư mục system log không bao giờ được gửi, và sau 1000 event bị lọc thì một event rỗng mang timestamp tiến lên. pipelinedSender tách việc đọc khỏi gRPC send (buffer 1024) và, với client hỗ trợ batching, gói tới 256 event mỗi lần Send khi chúng trễ hơn 2 phút. Heartbeat lúc rảnh (5 s, hoặc một tuyên bố delivery 200 ms trên filer có peer) và báo cáo flush cho client đã bắt kịp biết delivery và flush đã tới đâu. Khi buffer trong bộ nhớ đã loại khoảng sau cursor và đĩa chưa giữ nó, subscriber đứng chờ (gapStallReporter, metric) và bỏ cuộc sau 15 phút, nhảy qua khoảng trống kèm một dòng log lỗi. Stream gộp cũng giữ việc đọc ở watermark delivery và flush thấp của các peer để một event từ peer chậm hơn không bị bỏ qua, với một lối thoát settled-horizon khi watermark của một peer đứng lại. Từ #12674, một subscriber gộp đã bắt kịp được phục vụ từ ring trong bộ nhớ (ringServesCursor) thay vì một lượt đọc đĩa bị giữ ở flush low-watermark, nên event tới ngay chứ không trễ tới một flush interval. Từ #12767 một token phạm vi chỉ đọc giới hạn stream vào các path của nó (filer_grpc_server_sub_meta_scope.go). Có metric delivery lag, thời gian giữ và số lần resume từ đĩa (#12773).",
   "why": "Hệ quả: S3 gateway (cache IAM, bucket config và circuit-breaker), mount, filer.sync, backup và replication đều chỉ biết thay đổi qua stream này; một event bị bỏ sót là cache cũ hoặc một file chưa replicate, một event bị trùng thường vô hại. Thiết kế: subscriber tiếp tục từ một timestamp, nên server phải chứng minh một khoảng hoặc nằm trên đĩa hoặc vẫn trong bộ nhớ trước khi dời cursor qua nó, và với nhiều filer nó không được giao vượt watermark của peer chậm nhất. Bỏ cuộc sau một lần đứng chờ có giới hạn đổi tính đầy đủ lấy tính sống khi một peer đã chết, và việc nhảy qua được đếm và log.",
   "when": "Các stream sống lâu từ mọi metadata follower; S3 gateway subscribe /etc/ lúc khởi động (subscribeMetaEvents trong s3api_server.go).",
   "ux": "Thay đổi làm qua một gateway hay filer hiện ra trong cache của các bên khác trong chốc lát; một peer bị kẹt làm chúng trễ tới bằng watermark horizon của nó.",
@@ -2273,7 +2321,7 @@
    "Subscriber có client_id 0 không bao giờ được đăng ký, và hasClient trả false cho nó, nên vòng lặp kết thúc stream như vậy ở lần kiểm tra liveness đầu tiên; follower phải gửi id khác 0.",
    "Sau 15 phút đứng chờ trên một khoảng trống không chứng minh được, stream nhảy qua khoảng đó: event mà một peer flush vào đó về sau không bao giờ được giao cho subscriber đó.",
    "Stream cục bộ đổi dấu client_id (req.ClientId = -req.ClientId) để subscription cục bộ và gộp của một client không đụng nhau trong registry.",
-   "Việc lọc chỉ theo path; một subscriber muốn một tập event hẹp vẫn khiến filer tốn một lần quét skeleton cho mọi event đã log."
+   "Việc lọc chỉ theo path. Từ #12669, reader của một subscription có PathPrefix ngủ qua các append ở thư mục nó không thể khớp (SetSubscriberWakeFilter) và bỏ event qua ScanMetadataEventDirectories trước lần quét skeleton, nên chi phí cho event không liên quan nhỏ hơn nhưng vẫn là một lần quét mỗi event khi đọc."
   ]
  },
  "weed/filer/filer.go": {
@@ -2288,7 +2336,9 @@
    "DeleteEmptyParentDirectories gỡ thư mục qua doDeleteEntryMetaAndData, hàm chỉ phát event cho file, nên các lần xoá thư mục đó cũng không bao giờ được thông báo; nó cũng bỏ qua thiết lập allow-empty-folders của bucket.",
    "ensureParentDirectoryEntry chỉ kiểm tra tên bucket khi thành phần path thứ hai đúng là 'buckets', không phải DirBucketsPath, và kiểm tra bằng VerifyS3BucketName dễ dãi.",
    "Một lần đọc qua FindEntry có thể xoá một entry (hết hạn), kể cả dưới shared lock mà fencedFindEntry giữ.",
-   "CreateEntry trên '/' là một no-op âm thầm."
+   "CreateEntry trên '/' là một no-op âm thầm.",
+   "Khi ctx tắt metadata event (WithSuppressedMetadataEvents, rename dùng), ensureParentDirectoryEntry trả lại commit stamp của các thư mục cha nó tạo (releaseEntryCommitTsNs, #12711) thay vì phát event: event của caller chỉ phủ entry của chính nó, và một stamp không event nào nhận sẽ giữ watermark delivery đứng lại.",
+   "Filer giữ thêm hàng retry manifest (manifestRetryQueue, tạo lười) và tập fsyncDeletions bên cạnh pendingDeletions; xem filer_deletion.go và filer_deletion_persist.go."
   ]
  },
  "weed/filer/filer_delete_entry.go": {
@@ -2301,7 +2351,8 @@
   "gotchas": [
    "doDeleteEntryMetaAndData không phát event cho thư mục; chỉ doBatchDeleteFolderMetaAndData mới phát. Một caller chỉ xoá thư mục qua nó (DeleteEmptyParentDirectories, đường remote lười) để subscriber không hay biết.",
    "Với ignoreRecursiveError, một lần xoá remote thất bại được log và lượt duyệt tiếp tục, nên metadata có thể đã mất trong khi remote object vẫn còn.",
-   "Kiểm tra non-empty chỉ nhìn trang đầu của lần listing đầu; các con đua vào sau đó không bị một thao tác xoá không đệ quy quét."
+   "Kiểm tra non-empty chỉ nhìn trang đầu của lần listing đầu; các con đua vào sau đó không bị một thao tác xoá không đệ quy quét.",
+   "Xoá đệ quy chia chunk của các con thành hai lô theo storage rule của CHÍNH path từng con (#12759): con nằm dưới rule fsync được xoá trên volume bằng delete bền, các con khác bằng delete thường, giống như khi mỗi con bị xoá riêng. Rule DisableChunkDeletion của thư mục gốc vẫn tắt cả hai lô."
   ]
  },
  "weed/filer/filer_rename.go": {
@@ -2717,7 +2768,10 @@
   "if_broken": "Subscriber bỏ lỡ hoặc sắp sai thứ tự event, cache bị cũ, peer phân kỳ.",
   "gotchas": [
    "Hàng đợi notification bên ngoài được gọi đồng bộ bên trong mọi mutation và lỗi của nó chỉ được log, nên một hàng đợi chậm làm chậm thao tác ghi và một hàng đợi hỏng làm mất event của nó.",
-   "Một lần flush metadata-log liên tục thất bại (ví dụ không có volume ghi được) retry mãi tới khi shutdown, trong khi buffer vẫn giữ cửa sổ đó."
+   "Một lần flush metadata-log liên tục thất bại (ví dụ không có volume ghi được) retry mãi tới khi shutdown, trong khi buffer vẫn giữ cửa sổ đó.",
+   "Mỗi event cũng được gửi tới các webhook target quản lý từ admin UI (sendToNotificationWebhooks, #12690), trừ event chạm chính file cấu hình webhook (isNotificationWebhooksConf), vì nó chứa bearer token.",
+   "notifyRenameTarget đánh thức subscriber của thư mục đích của một move (#12669): log buffer được phân vùng theo thư mục nguồn, nên một subscriber chỉ theo dõi đích sẽ ngủ qua event đó nếu không có lời đánh thức này. MetaAggregator gọi nó cho event của peer.",
+   "LocalDeliveredThroughTsNs xuất tuổi của delivery claim (FilerMetaDeliveryClaimAgeSeconds, #12773) mỗi lần được hỏi."
   ]
  },
  "weed/filer/filer_notify_append.go": {
@@ -2745,7 +2799,7 @@
  },
  "weed/filer/filer_on_meta_event.go": {
   "character": "Các phản ứng riêng của filer với metadata event: nạp lại config, hook bucket, theo dõi thư mục rỗng và remote tombstone",
-  "what": "onMetadataChangeEvent chạy cho mọi event cục bộ và mọi event áp từ một peer: nạp lại filer.conf khi /etc/seaweedfs/filer.conf thay đổi, nạp lại cấu hình và mapping của remote storage khi /etc/remote thay đổi, gọi OnBucketCreation / OnBucketDeletion của store cho các thư mục được tạo, xoá hoặc đổi tên ngay dưới buckets path, đưa create, delete và rename cho empty-folder cleaner (và vô hiệu bucket policy được cache của nó), và ghi nhận các lần xoá remote. LoadFilerConf và LoadRemoteStorageConfAndMapping nạp chúng lúc khởi động.",
+  "what": "onMetadataChangeEvent chạy cho mọi event cục bộ và mọi event áp từ một peer: nạp lại filer.conf khi /etc/seaweedfs/filer.conf thay đổi, nạp lại cấu hình và mapping của remote storage khi /etc/remote thay đổi, nạp lại webhook target khi file cấu hình webhook của admin UI thay đổi (maybeReloadNotificationWebhooks, #12690), gọi OnBucketCreation / OnBucketDeletion của store cho các thư mục được tạo, xoá hoặc đổi tên ngay dưới buckets path, đưa create, delete và rename cho empty-folder cleaner (và vô hiệu bucket policy được cache của nó), và ghi nhận các lần xoá remote. LoadFilerConf và LoadRemoteStorageConfAndMapping nạp chúng lúc khởi động.",
   "why": "Thiết kế: cấu hình nằm trong namespace của filer, nên theo dõi event stream làm một thay đổi thực hiện trên bất kỳ filer nào có hiệu lực trên tất cả mà không cần restart.",
   "when": "Inline trong NotifyUpdateEvent và trong bước xử lý event từ peer của meta aggregator.",
   "ux": "fs.configure và remote.mount có hiệu lực ngay trên toàn cluster.",
@@ -2758,7 +2812,7 @@
  },
  "weed/filer/meta_aggregator.go": {
   "character": "MetaAggregator: theo dõi metadata log của mọi filer peer, trộn nó vào một buffer gộp và replicate thay đổi của peer vào store của filer này",
-  "what": "OnPeerUpdate bắt đầu hoặc dừng một vòng subscription cho mỗi filer (kể cả chính nó), kết nối lại mỗi 1.7 s sau một lỗi. doSubscribeToOneFiler đọc store signature của peer; một peer trên store khác được replicate: offset của nó được đọc từ KV (filer.meta.offset theo signature) hoặc, ở lần tiếp xúc đầu, cả cây của peer được copy (traversePeerMetadata, loại trừ system log) và offset được lưu ở một phút trước khi bắt đầu copy. Rồi nó gọi SubscribeLocalMetadata (batching, heartbeat lúc rảnh, log chunk ref đọc phía client), nối từng event vào MetaLogBuffer, phát lại nó vào store cục bộ khi peer có store khác (replicateMetadataChange retry lỗi tạm thời), chạy onMetadataChangeEvent, và tiến watermark delivery và flush của peer; offset được lưu nhiều nhất mỗi phút một lần và khi thoát, chặn dưới event đầu tiên phát lại thất bại. Watermark thấp giữa các peer, các change channel và RemotePeerArrivedChan cho subscriber gộp đứng chờ tới khi mọi peer đã giao hoặc flush một khoảng.",
+  "what": "OnPeerUpdate bắt đầu hoặc dừng một vòng subscription cho mỗi filer (kể cả chính nó), kết nối lại mỗi 1.7 s sau một lỗi. doSubscribeToOneFiler đọc store signature của peer; một peer trên store khác được replicate: offset của nó được đọc từ KV (filer.meta.offset theo signature) hoặc, ở lần tiếp xúc đầu, cả cây của peer được copy (traversePeerMetadata, loại trừ system log) và offset được lưu ở một phút trước khi bắt đầu copy. Rồi nó gọi SubscribeLocalMetadata (batching, heartbeat lúc rảnh, log chunk ref đọc phía client), nối từng event vào MetaLogBuffer, phát lại nó vào store cục bộ khi peer có store khác (replicateMetadataChange retry lỗi tạm thời), chạy onMetadataChangeEvent, và tiến watermark delivery và flush của peer; offset được lưu nhiều nhất mỗi phút một lần và khi thoát, chặn dưới event đầu tiên phát lại thất bại. Watermark thấp giữa các peer, các change channel và RemotePeerArrivedChan cho subscriber gộp đứng chờ tới khi mọi peer đã giao hoặc flush một khoảng. Một peer từ chối kết nối liên tục quá 2 phút (2 × LogFlushInterval) bị coi là đã gỡ (notePeerUnreachable, #12725), để watermark bằng 0 của nó không giữ mọi subscriber gộp ở settled horizon mãi mãi; kết nối thành công lại theo dõi nó từ watermark 0. NewPeerStartTsNs (#12674) nhớ lần bắt đầu mới nhất của một subscription peer không có điểm resume, để stream gộp biết cursor nào ring không tự phục vụ được.",
   "why": "Hệ quả: với nhiều filer, mỗi filer chỉ thấy mutation của chính nó; subscriber và (với store riêng) chính các store cần của tất cả. Thiết kế: peer dùng chung một store chỉ gộp event, peer có store riêng còn phát lại chúng; watermark làm stream đã trộn an toàn để tiếp tục.",
   "when": "Filer trong cluster có nhiều hơn một filer (AggregateFromPeers lúc khởi động).",
   "ux": "Một thao tác ghi qua một filer hiện ra qua tất cả.",
@@ -2766,7 +2820,9 @@
   "gotchas": [
    "Một lần phát lại thất bại với lỗi không tạm thời bị bỏ qua cho phần còn lại của phiên: chỉ offset đã lưu được giữ dưới nó, nên nó được retry sau khi restart, không phải trước.",
    "Last-writer-wins giữa các filer so commit timestamp từ đồng hồ của các host khác nhau, nên lệch đồng hồ quyết định các thao tác ghi xung đột.",
-   "Shutdown đợi mọi vòng peer không có deadline, log mỗi 5 s."
+   "Shutdown đợi mọi vòng peer không có deadline, log mỗi 5 s.",
+   "Thông báo gỡ peer của master chỉ tới các client gắn với master đã thấy peer biến mất; một peer chết qua lần đổi leader trước #12725 bị theo dõi mãi. Ngưỡng 2 phút nghĩa là một peer chỉ mất kết nối tạm thời lâu hơn vậy sẽ bị bỏ khỏi watermark, và event nó log trong lúc đó chỉ còn trên đĩa.",
+   "Low-watermark delivery và flush được xuất dưới dạng tuổi (FilerMetaPeerLowWatermarkAgeSeconds, -1 khi một peer được theo dõi chưa báo hiệu) mỗi lần được đọc."
   ]
  },
  "weed/filer/meta_replay.go": {
@@ -2957,8 +3013,10 @@
   "if_broken": "Dung lượng đĩa không bao giờ được thu hồi, hoặc chunk vẫn được tham chiếu bị xoá.",
   "gotchas": [
    "Id hết lượt retry, hoặc thất bại với lỗi không retry được, bị lãng quên và nằm lại trên đĩa như mồ côi cho tới volume.fsck.",
-   "Nếu một manifest chunk không resolve được, chính manifest vẫn bị xoá trong khi các data chunk của nó thì không, làm rò chúng.",
-   "Retry được hay vĩnh viễn được quyết định bằng cách khớp text lỗi."
+   "Từ #12810 một manifest chunk được giữ tới khi các sub-chunk của nó (kể cả manifest lồng nhau) đã được xếp hàng xoá, sub-chunk trước manifest chứa nó. Manifest không resolve được vào hàng manifestRetries (retry, mỗi lượt giới hạn 1 phút); hết MaxRetryAttempts thì chỉ xoá chính manifest, để các sub-chunk cho volume.fsck. Trước đó manifest bị xoá ngay và data chunk của nó bị rò.",
+   "Retry được hay vĩnh viễn được quyết định bằng cách khớp text lỗi.",
+   "Id đánh dấu fsync (#12759) được xoá trên volume bằng delete bền; một delete bền mà volume không sync được bị rollback và trả 5xx, nên với id fsync một 5xx là retry được, không phải lỗi vĩnh viễn.",
+   "deleteChunksIfNotNew (và Filer.KeepHardLinkedChunks cho đường gRPC) không xoá chunk khi entry bị thay là một trong nhiều hard link của một file mà tên khác vẫn đọc (#12812); xem filer_hardlink_chunks.go."
   ]
  },
  "weed/filer/filer_deletion_persist.go": {
@@ -2969,7 +3027,98 @@
   "ux": "Dung lượng từ các lần xoá được thu hồi kể cả qua các lần restart filer.",
   "if_broken": "Chunk bị rò sau crash, hoặc ledger ghi đè lên chính nó bằng một tập không đầy đủ.",
   "gotchas": [
-   "Id của ledger được xếp hàng lại bị xoá sau ân hạn mà không kiểm tra lại rằng không entry nào tham chiếu chúng; tính đúng dựa vào việc ledger chỉ bao giờ giữ các chunk mà metadata đã bỏ."
+   "Id của ledger được xếp hàng lại bị xoá sau ân hạn mà không kiểm tra lại rằng không entry nào tham chiếu chúng; tính đúng dựa vào việc ledger chỉ bao giờ giữ các chunk mà metadata đã bỏ.",
+   "queueDeletions(fsync, ids...) ghi record ledger (epoch và dấu fsync) trước khi id vào hàng nóng, để vòng xoá không bao giờ thấy một id thiếu record (#12759). Dấu fsync dính tới khi record bị lãng quên: một lần enqueue sau không fsync giữ nguyên nó, và một delete không bền hoàn tất không xoá record đã được đánh dấu fsync sau khi delete đó bắt đầu.",
+   "Ledger lưu id fsync ở fsyncParts phần cuối của manifest; filer cũ đọc chúng như id thường, nên rolling downgrade chỉ mất tính bền của delete, không mất id."
+  ]
+ },
+ "weed/s3api/fips140_only.go": {
+  "character": "Một biến cấp package (không có hàm), công tắc FIPS chung cho auth, SSE-C và checksum",
+  "what": "var fips140Enforced = fips140.Enforced: báo process có chạy với GODEBUG=fips140=only không. Ở chế độ đó MD5, SHA-1 và HMAC-SHA1 panic, nên các đường cần chúng hỏi biến này và từ chối bằng một lỗi S3 trước khi băm gì: SigV2 (header, presigned, POST policy) trả SignatureVersionNotSupported, SSE-C (kể cả header copy-source) trả NotImplemented, và checksum SHA-1 (header hay trailer streaming) trả NotImplemented.",
+  "why": "Hệ quả: không có chặn này, một request SigV2 hoặc SSE-C duy nhất làm panic goroutine của request dưới fips140=only, thay vì nhận một lỗi rõ ràng. Thiết kế: đây là biến chứ không phải lời gọi trực tiếp, để test bật được các lời từ chối mà không phải chạy cả test binary dưới fips140=only (#12845). Phần AES-GCM thì đổi sang util.Encrypt (NewGCMWithRandomNonce, #12847) để vẫn chạy được, nên SSE-S3 và SSE-KMS không bị chặn.",
+  "when": "Đọc ở mỗi request đi qua sáu điểm kiểm tra: isReqAuthenticatedV2, doesPolicySignatureV2Match, validateAndParseSSECHeaders, ValidateRequestEncryption, newChunkedReader (checksum trailer) và detectRequestedChecksumAlgorithmQ.",
+  "ux": "Trên một gateway chạy fips140=only, client SigV2 hoặc SSE-C nhận lỗi S3 có mã rõ ràng thay vì kết nối bị đứt.",
+  "if_broken": "Dưới fips140=only, request dùng SigV2, SSE-C hoặc checksum SHA-1 làm panic handler (client thấy kết nối bị đóng); nếu biến luôn true, các tính năng đó bị từ chối cả trên gateway thường.",
+  "gotchas": [
+   "AST không thấy các lần đọc biến này (không phải lời gọi hàm), nên node không có cạnh; các caller nằm trong auth_signature_v2.go, chunked_reader_v4.go, s3_sse_c.go, s3api_copy_validation.go và s3api_object_handlers_put.go.",
+   "Một đường mới cần MD5/SHA-1 (ví dụ Content-MD5 hay ETag) không tự được bảo vệ; mỗi đường phải tự hỏi fips140Enforced. Content-MD5 và ETag hiện không đi qua đây."
+  ]
+ },
+ "weed/s3api/s3api_object_routed_upload.go": {
+  "character": "uploadFilerClient: một filer_pb.FilerClient gắn với một upload, cộng các thao tác .uploads/<id> trên nó",
+  "what": "uploadFiler(bucket, object) trả uploadFilerClient, thứ đọc và ghi thư mục .uploads/<id> của một multipart upload trên write owner của object đích, tức filer mà bước complete commit trên đó. WithFilerClient gửi tới owner (routableWriteOwner) qua withFilerClientFailover, bỏ qua owner vừa được đánh dấu không liên lạc được, và rơi về filer thường khi không có ring. getEntry đọc record upload; nếu owner không có record mang upload key (ngay sau một lần đổi ring, part có thể để lại một thư mục trần trên owner mới) thì record của prior owner thắng, và một prior owner không trả lời được làm lookup thất bại thay vì đọc ra 'không có upload'. list đọc listing của owner và, trong cửa sổ cooling-off của ring, gộp listing của prior owner vào (mergeEntryListings: entry của owner thắng khi trùng tên, sắp theo tên, cắt ở limit). exists, mkdir, mkFile đi qua client này; rm có retryFilerOp.",
+  "why": "Hệ quả: trên các gateway có filer store độc lập, upload và part được ghi trên filer hiện tại của từng gateway, nên bước complete trên owner không thấy part do gateway khác ghi (#12668). Đặt mọi thứ của một upload lên owner của object làm upload và part của nó hiện ra với mọi gateway ngay khi owner lưu chúng. Thiết kế: prior owner được hỏi vì ring vừa đổi có thể chưa replicate record hay part sang owner mới; lỗi của prior owner bị coi là lỗi chứ không phải 'không có', vì đọc nhầm ra 'không có upload' sẽ trả NoSuchUpload cho một upload đang tồn tại.",
+  "when": "Mọi đường multipart: CreateMultipartUpload, UploadPart và UploadPartCopy (kể cả đường re-encrypt và part rỗng), ListParts, complete (đọc record, list part, xoá part thừa, xoá thư mục), abort, kiểm tra upload còn mở và lookup SSE của upload cho bucket policy.",
+  "ux": "Multipart upload chạy được khi các part đi qua những gateway khác nhau trong một cụm nhiều filer, và vẫn chạy trong lúc ring đổi.",
+  "if_broken": "CompleteMultipartUpload báo InvalidPart hoặc NoSuchUpload cho part đã upload qua gateway khác, ListParts thiếu part, hoặc part rơi lại trên filer cũ sau khi ring đổi và bị rò.",
+  "gotchas": [
+   "mergeEntryListings chỉ chính xác khi cả hai trang được list từ cùng một cursor với cùng limit; lấy limit phần tử đầu của hợp hai trang là đúng vì mỗi trang đã giữ limit tên đầu tiên sau cursor.",
+   "list lấy listing của prior owner bằng pb.WithFilerClient trực tiếp, không qua failover và không có timeout; một prior owner treo làm lần list treo theo. getEntry thì dùng lookupEntryOnFiler.",
+   "Nếu prior owner lỗi mà owner không có entry nào, list trả lỗi (mọi part có thể đang ở prior owner); nếu owner có entry thì lỗi của prior owner bị bỏ qua và trang có thể thiếu part chưa replicate.",
+   "getEntry dùng isMultipartUploadEntry để phân biệt record thật với thư mục trần do part tạo; một record không mang upload key bị coi như chưa có."
+  ]
+ },
+ "weed/s3api/s3vectors/metadata_keys.go": {
+  "character": "Các method của s3vectors.Server cho caller tin cậy (shell, admin UI), không phải route S3",
+  "what": "MetadataKeys trả danh sách metadata key được index của một vector index; UpdateMetadataKey thêm hoặc gỡ một key. Cả hai đọc index qua trustedIndex (lookup catalog nội bộ, không phân quyền) và cần có engine (errNoEngine). Thêm một key bị từ chối khi key rỗng hoặc là non-filterable key của index (metadataKeyIndexable), và khi engine đến từ master discovery thì mọi engine đã đăng ký phải báo capability weed.vector.capability.metadata_columns qua gRPC health check (3 s mỗi engine); engine cũ không điền cột metadata đã index được nêu tên để nâng cấp trước. Gỡ một key bỏ qua cả hai kiểm tra.",
+  "why": "Hệ quả: một key được index trên index mà có engine không điền cột của nó sẽ cho filter sai hoặc thiếu kết quả, nên việc bật index phải chờ tới khi mọi engine hỗ trợ. Thiết kế: caller là shell và admin UI đã tự xác thực, nên không có kiểm tra IAM ở đây; việc dựng cột và chạy lại dữ liệu là việc của engine và worker job (#12820).",
+  "when": "Lệnh shell s3vectors.metadata và trang metadata key của admin UI; không request S3 nào tới đây.",
+  "ux": "Người vận hành chọn metadata key nào được index để filter trên key đó nhanh hơn, và được báo engine nào cần nâng cấp trước.",
+  "if_broken": "Key được bật trên cụm còn engine cũ cho kết quả query sai hoặc thiếu, hoặc không bật được key nào.",
+  "gotchas": [
+   "Kiểm tra capability chỉ chạy khi backend là vectorDiscovery (engine từ master); với engine cấu hình tĩnh nó trả nil và key được bật không kiểm tra.",
+   "Không có phân quyền: code nào giữ s3vectors.Server đều đổi được key của mọi index."
+  ]
+ },
+ "weed/s3api/s3vectors/metadata_limits.go": {
+  "character": "Hằng số giới hạn của AWS S3 Vectors và các hàm kiểm tra thuần",
+  "what": "Các giới hạn AWS: key vector tối đa 1024 ký tự; metadata mỗi vector tổng 100 KB (cũng là cận của một trường non-filterable), phần filterable 2 KB, tối đa 50 key; MetadataConfiguration tối đa 10 non-filterable key, mỗi key 1–63 ký tự; tối đa 100 ràng buộc filter mỗi query (giới hạn của index ENHANCED). filterConstraints đếm một ràng buộc cho mỗi phép so trên một trường ({\"a\":1} là một, {\"a\":{\"$gte\":1,\"$lt\":5}} là hai; $and/$or không tự thêm). checkVectorMetadata đo kích thước trên bản mã hoá JSON của từng thành viên \"key\":value (metadataEntrySize), tách filterable với non-filterable theo cấu hình của index.",
+  "why": "Hệ quả: trước #12738 gateway nhận metadata và filter vượt giới hạn AWS, nên một ứng dụng chạy được trên SeaweedFS có thể thất bại trên AWS và ngược lại, còn engine phải chịu metadata lớn tuỳ ý. Thiết kế: kích thước đo trên JSON vì đó là dạng engine lưu; lỗi trả ValidationException như AWS.",
+  "when": "CreateIndex (validateMetadataConfiguration), PutVectors (checkVectorMetadata cho từng vector) và QueryVectors (checkFilterConstraints).",
+  "ux": "Client nhận ValidationException với thông điệp nêu giới hạn bị vượt, như trên AWS.",
+  "if_broken": "Metadata quá lớn lọt vào engine, hoặc request hợp lệ bị từ chối.",
+  "gotchas": [
+   "Index CLASSIC của AWS giới hạn 40 KB và filter khác ENHANCED; ở đây mọi index dùng giới hạn ENHANCED.",
+   "Độ dài key tính bằng rune, kích thước metadata tính bằng byte của JSON (một ký tự phi ASCII hay ký tự cần escape chiếm nhiều byte hơn)."
+  ]
+ },
+ "weed/filer/filer_hardlink_chunks.go": {
+  "character": "Các method của Filer quyết định chunk nào của một file hard-link còn được tên khác đọc",
+  "what": "replacesHardLink báo một lần ghi có gỡ một hard link không (entry cũ mang HardLinkId và entry mới không phải cùng link đó; ghi cùng file qua một tên của nó thì không). hardLinkStillHeld hỏi, SAU lần ghi, record dùng chung của file còn sống không (store đã gỡ link của tên bị thay trong chính lần ghi, nên record mất đúng khi đó là link cuối). KeepHardLinkedChunks lấy ra khỏi danh sách garbage mọi chunk của file mà một link khác còn đọc: chunk lấy từ record KV dùng chung cộng chunk của entry cũ, kèm mọi chunk mà các manifest liệt kê (withoutChunksOf qua ResolveChunkManifest, kể cả manifest lồng nhau).",
+  "why": "Hệ quả: trước #12812, ghi đè hoặc rename đè lên một tên của file có nhiều hard link xoá chunk của file, nên các tên còn lại đọc ra dữ liệu đã mất. Thiết kế: chunk được lấy từ record dùng chung vì entry cũ có thể là một hàng cũ khi lookup của nó không đọc được record. Khi record hoặc manifest không đọc được thì không xoá gì: một chunk rò còn thu hồi được sau, một chunk đã xoá mà tên khác còn đọc thì mất hẳn.",
+  "when": "CreateEntry và UpdateEntry của gRPC, rename đè lên file (moveSelfEntry), và deleteChunksIfNotNew trong filer_deletion.go.",
+  "ux": "Các tên khác của một file hard-link (ln trong mount) vẫn đọc được sau khi một tên bị ghi đè hay bị rename đè.",
+  "if_broken": "Ghi đè một tên làm hỏng dữ liệu của mọi tên khác của file đó, hoặc chunk không bao giờ được xoá.",
+  "gotchas": [
+   "hardLinkStillHeld phải được gọi sau lần ghi; gọi trước thì link count đọc được không cho biết entry cũ có phải link cuối không.",
+   "Khi đọc lỗi nó trả nil (không xoá gì) và log ở mức error; chunk khi đó chờ volume.fsck."
+  ]
+ },
+ "weed/filer/filer_notification_webhooks.go": {
+  "character": "managedWebhooks trên Filer: một hàng webhook thứ hai, bên cạnh notification.toml",
+  "what": "Webhook target sửa từ admin UI được lưu ở /etc/seaweedfs/notification_webhooks.json. LoadNotificationWebhooks nạp chúng lúc khởi động và đóng hàng (xả tối đa 30s) khi filer dừng. maybeReloadNotificationWebhooks chạy cho mọi metadata event và nạp lại khi event chạm file đó (cả rename vào đó). reloadNotificationWebhooks đọc file đang lưu chứ không phải bản trong event, bỏ qua khi nội dung giống bản đã áp, giữ target hiện tại khi cấu hình không hợp lệ hoặc không khởi động được hàng, và hẹn retry sau 5s khi đọc lỗi; hàng mới thay hàng cũ bằng atomic swap, hàng cũ được xả ở nền. sendToNotificationWebhooks gửi mỗi event, và gửi lại vào hàng thay thế khi đụng hàng vừa đóng. isNotificationWebhooksConf giữ file cấu hình (chứa bearer token) khỏi event gửi tới hàng notification.",
+  "why": "Hệ quả: trước #12690 webhook chỉ cấu hình được qua notification.toml và cần restart filer. Thiết kế: đọc file đang lưu dưới reloadMu để các event thay đổi đồng thời không áp một bản cũ cuối cùng; giữ nguyên target khi cấu hình hỏng để một lần sửa sai không cắt mọi webhook; chỉ một retry chờ vì không event nào sau đó phát lại thay đổi có lần đọc thất bại.",
+  "when": "Khởi động filer, mọi metadata event cục bộ hoặc từ peer (onMetadataChangeEvent), và mọi notifyUpdateEvent.",
+  "ux": "Người vận hành thêm, sửa, xoá webhook trong admin UI và nó có hiệu lực ngay trên mọi filer, không cần restart.",
+  "if_broken": "Webhook không nhận event, nhận event sau khi đã bị xoá, hoặc nhận chính file cấu hình kèm token.",
+  "gotchas": [
+   "isNotificationWebhooksConf chỉ chặn event tới notification queue và webhook; metadata log và subscriber của SubscribeMetadata vẫn thấy entry của file cấu hình, gồm cả nội dung và token.",
+   "sendToNotificationWebhooks chạy đồng bộ trong đường mutation như hàng notification.toml; tốc độ phụ thuộc vào SendMessage của webhook.Queue.",
+   "Mỗi filer tự nạp lại khi event của file tới nó, nên giữa các filer có một khoảng ngắn target khác nhau."
+  ]
+ },
+ "weed/server/filer_grpc_server_sub_meta_scope.go": {
+  "character": "Các wrapper stream và helper cho subscription metadata có phạm vi, bọc quanh SubscribeMetadata/SubscribeLocalMetadata",
+  "what": "metadataSubscriptionScope kiểm tra credential của một lời gọi subscribe: khi jwt.filer_signing.subscribe.key được đặt, caller cần mTLS, admin token (khoá hiện tại hoặc khoá trước đó) hoặc một token subscribe; token subscribe cho ra một scope (tập path prefix và ExpiresAt), các cách kia cho quyền đầy đủ. Với scope, scopeMetadataResponse chỉ giữ event mà CẢ path nguồn và path đích đều trong scope (rename qua ranh giới không lộ phía bên kia), bỏ log file ref, và giữ vị trí của đầu batch bằng một event rỗng. scopedMetadataStream kết thúc ở ExpiresAt của token (errMetadataSubscriptionExpired, Unauthenticated) và, sau MaxUnsyncedEvents event bị giữ lại, gửi một event rỗng mang TsNs để vị trí resume của subscriber vẫn tiến. unusedClientId và scopedClientEpoch = MinInt32 để một subscriber có phạm vi không thay hay chiếm đăng ký của subscriber khác.",
+  "why": "Hệ quả: trước #12767 mọi subscriber đọc được metadata của toàn filer; một ứng dụng chỉ cần theo dõi một thư mục phải được cấp quyền đọc tất cả. Thiết kế: client có phạm vi bị ép ClientSupportsMetadataChunks=false vì log file ref trỏ tới dữ liệu ngoài phạm vi; client id được server chọn vì id do client gửi có thể đè đăng ký của người khác; epoch nhỏ nhất để một đăng ký có phạm vi không bao giờ thắng khi trùng id.",
+  "when": "Mỗi lời gọi SubscribeMetadata và SubscribeLocalMetadata; khi subscribe.key không đặt thì mọi lời gọi đi thẳng như trước.",
+  "ux": "Có thể cấp cho một ứng dụng bên ngoài token chỉ đọc, hết hạn được, để theo dõi thay đổi dưới một vài thư mục.",
+  "if_broken": "Subscriber có phạm vi thấy event ngoài phạm vi (lộ tên file và chunk), stream không dừng khi token hết hạn, hoặc subscriber nội bộ (mount, filer.sync, peer) bị từ chối sau khi bật subscribe.key.",
+  "gotchas": [
+   "Bật jwt.filer_signing.subscribe.key bắt mọi subscriber khác phải có mTLS hoặc admin token; subscriber nội bộ dùng WithMetadataSubscriptionCredentials, thứ chỉ thêm token khi process có cả jwt.filer_signing.key lẫn subscribe.key.",
+   "Event trong phạm vi được gửi nguyên vẹn, gồm danh sách chunk (file id); phạm vi giới hạn metadata, không giới hạn quyền đọc volume.",
+   "Heartbeat (không có EventNotification, không có log ref) đi qua không lọc.",
+   "Cạnh AST từ filer_grpc_server_route.go và filer_grpc_server_traverse_meta.go tới .send() ở đây là trùng tên method; các file đó không dùng scoped stream."
   ]
  }
 }
