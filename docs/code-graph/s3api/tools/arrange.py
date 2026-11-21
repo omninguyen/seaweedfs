@@ -6,7 +6,7 @@ raw = json.load(open(sys.argv[1]))
 layers = json.load(open(sys.argv[2])) if len(sys.argv) > 3 else {}
 out = sys.argv[-1]
 CORE = 'weed/s3api/'
-FILE_PKGS = ('iceberg/', 'lance/', 's3vectors/')     # graphed file by file
+FILE_PKGS = ('s3tables/', 'iceberg/', 'lance/', 's3vectors/')     # graphed file by file
 COLLAPSED_EXTRA = ('weed/worker/tasks/iceberg/', 'weed/filer/abstract_sql/')  # outside s3api, one node
 # Filer files graphed one node per file (lanes 12-19).
 FILER_FILE_DIRS = ('weed/filer/', 'weed/filer/empty_folder_cleanup/', 'weed/pb/filer_pb/')

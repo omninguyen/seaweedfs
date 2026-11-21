@@ -3,10 +3,12 @@ from pathlib import Path
 import graphify
 REPO = Path('/home/user/seaweedfs')
 S3 = REPO / 'weed/s3api'
-NEIGH = ['s3err','s3_constants','policy_engine','s3tables','s3lifecycle','lifecycle_xml','s3bucket','cors','s3lifecycle/scheduler','s3_objectlock','policy']
-# Satellite packages graphed file by file (lanes 8-10), and the Iceberg
-# maintenance worker, which arrange.py collapses to one node (lane 11).
-FILE_PKGS = ['iceberg', 'lance', 's3vectors']
+NEIGH = ['s3err','s3_constants','policy_engine','s3lifecycle','lifecycle_xml','s3bucket','cors','s3lifecycle/scheduler','s3_objectlock','policy']
+# Satellite packages graphed file by file (the S3 Tables catalog, lane 20, and
+# lanes 8-10), and the Iceberg maintenance worker, which arrange.py collapses to
+# one node (lane 11). s3tables/s3tablestest is test support and stays out: only
+# the package's top-level files are globbed.
+FILE_PKGS = ['s3tables', 'iceberg', 'lance', 's3vectors']
 EXTRA_NEIGH = [REPO / 'weed/worker/tasks/iceberg']
 # The filer the gateway stores everything in (lanes 12-19): the filer package's
 # top-level files, its empty-folder cleaner, the hand-written filer_pb client
