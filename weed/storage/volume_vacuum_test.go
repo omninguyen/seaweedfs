@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -179,7 +180,7 @@ func TestCommitCompactDeletionTailKeepsWritable(t *testing.T) {
 
 	// The sole change in the commit window is a deletion, so makeupDiff appends
 	// its tombstone last, putting it at the .dat tail.
-	if _, err := v.deleteNeedle2(newEmptyNeedle(3)); err != nil {
+	if _, err := v.deleteNeedle2(newEmptyNeedle(3), false); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 
@@ -201,6 +202,57 @@ func TestCommitCompactDeletionTailKeepsWritable(t *testing.T) {
 	defer v.Close()
 	if v.noWriteOrDelete {
 		t.Fatal("volume reloaded read-only after a deletion-tail compaction")
+	}
+}
+
+func TestCommitCompactKeepsEmptyNeedleWrittenDuringCompaction(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	for i := uint64(1); i <= 3; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false, false); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+	}
+
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+
+	empty := newEmptyNeedle(10)
+	empty.Cookie = 0x0abcdef0
+	if _, _, _, err := v.writeNeedle2(empty, true, false, false); err != nil {
+		t.Fatalf("write empty needle: %v", err)
+	}
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(11), true, false, false); err != nil {
+		t.Fatalf("write needle 11: %v", err)
+	}
+
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit compact: %v", err)
+	}
+
+	nv, ok := v.nm.Get(empty.Id)
+	if !ok || nv.Size != 0 {
+		t.Fatalf("empty needle index entry after commit: %+v found=%v, want size 0", nv, ok)
+	}
+	record, _, _, err := needle.ReadNeedleHeader(v.DataBackend, v.Version(), nv.Offset.ToActualOffset())
+	if err != nil {
+		t.Fatalf("read compacted record header: %v", err)
+	}
+	if record.Id != empty.Id || record.Cookie != empty.Cookie {
+		t.Fatalf("compacted record is id %d cookie %x, want the written id %d cookie %x", record.Id, record.Cookie, empty.Id, empty.Cookie)
+	}
+
+	read := newEmptyNeedle(10)
+	read.Cookie = empty.Cookie
+	if _, err := v.readNeedle(read, nil, nil); err != nil {
+		t.Fatalf("read empty needle after commit: %v", err)
 	}
 }
 
@@ -301,7 +353,7 @@ func TestCommitCompactMakeupDiffFailureKeepsVolumeLoaded(t *testing.T) {
 		}
 	}
 	// Moves needle 3 in the compacted copy, so reads through its map would miss.
-	if _, err := v.deleteNeedle2(newEmptyNeedle(1)); err != nil {
+	if _, err := v.deleteNeedle2(newEmptyNeedle(1), false); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	delete(written, 1)
@@ -502,6 +554,73 @@ func TestCompactByIndex_DropsDanglingNeedle(t *testing.T) {
 	}
 
 	v.Close()
+}
+
+// A needle whose body fails its CRC is dropped from the compacted index, and
+// the drop is counted per collection.
+func TestCompactByIndex_CountsDroppedCrcDamagedNeedle(t *testing.T) {
+	dir := t.TempDir()
+	const collection = "vacuum_crc_drop"
+
+	v, err := NewVolume(dir, dir, collection, 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	for i := uint64(1); i <= 3; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false, false); err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+	}
+	damagedKey := types.Uint64ToNeedleId(2)
+	nv, ok := v.nm.Get(damagedKey)
+	if !ok {
+		t.Fatalf("needle %d not in index", damagedKey)
+	}
+	// The first body byte follows the header and the 4-byte DataSize field.
+	at := nv.Offset.ToActualOffset() + types.NeedleHeaderSize + 4
+	b := make([]byte, 1)
+	if _, err := v.DataBackend.ReadAt(b, at); err != nil {
+		t.Fatalf("read body byte: %v", err)
+	}
+	b[0] ^= 0xff
+	if _, err := v.DataBackend.WriteAt(b, at); err != nil {
+		t.Fatalf("damage body byte: %v", err)
+	}
+	if err := v.DataBackend.Sync(); err != nil {
+		t.Fatalf("sync .dat: %v", err)
+	}
+	if err := v.nm.Sync(); err != nil {
+		t.Fatalf("sync .idx: %v", err)
+	}
+
+	dropped := stats.VolumeServerVacuumingDroppedNeedlesCounter.WithLabelValues(collection)
+	before := testutil.ToFloat64(dropped)
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("CompactByIndex: %v", err)
+	}
+	if got := testutil.ToFloat64(dropped) - before; got != 1 {
+		t.Fatalf("dropped needle counter moved by %v, want 1", got)
+	}
+
+	cpx, err := os.Open(filepath.Join(dir, collection+"_1.cpx"))
+	if err != nil {
+		t.Fatalf("open .cpx: %v", err)
+	}
+	defer cpx.Close()
+	kept := map[types.NeedleId]bool{}
+	if err := idx.WalkIndexFile(cpx, 0, func(key types.NeedleId, _ types.Offset, size types.Size) error {
+		if !size.IsDeleted() {
+			kept[key] = true
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk .cpx: %v", err)
+	}
+	if kept[damagedKey] || !kept[types.Uint64ToNeedleId(1)] || !kept[types.Uint64ToNeedleId(3)] {
+		t.Fatalf("compacted keys = %v, want 1 and 3 only", kept)
+	}
 }
 
 // TestCompactByIndex_ConcurrentWriteDoesNotFailIntegrityCheck reproduces the
@@ -733,7 +852,7 @@ func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 	if rand.Float64() < 0.03 {
 		toBeDeleted := rand.Intn(i) + 1
 		oldNeedle := newEmptyNeedle(uint64(toBeDeleted))
-		v.deleteNeedle2(oldNeedle)
+		v.deleteNeedle2(oldNeedle, false)
 		// println("deleted file", toBeDeleted)
 		infos[toBeDeleted-1] = &needleInfo{
 			size: 0,

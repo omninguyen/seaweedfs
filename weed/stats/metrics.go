@@ -159,6 +159,14 @@ var (
 			Help:      "Current number of volumes that do not have enough replicas per collection/layout. 0 = healthy.",
 		}, []string{"collection", "disk", "rp", "ttl"})
 
+	MasterWritableVolumesPerDisk = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemMaster,
+			Name:      "writable_volumes_per_disk",
+			Help:      "Number of writable volumes of a volume layout with a replica on the disk; state=crowded counts those past the grow threshold.",
+		}, []string{"collection", "disk", "rp", "ttl", "data_center", "rack", "node", "disk_id", "state"})
+
 	// MasterVolumeCreationCounter counts volume creation (growth) operations by result (success, failure).
 	// Volume growth is orchestrated by the master, so this metric is exported by the master process.
 	MasterVolumeCreationCounter = prometheus.NewCounterVec(
@@ -273,6 +281,51 @@ var (
 			Name:      "subscribe_gap_stalled",
 			Help:      "Number of metadata subscribers currently parked waiting to read past a gap in the metadata log.",
 		}, []string{"scope"})
+
+	// Delivery observability for the metadata subscription paths: lag at send
+	// time, hold durations, ring fall-offs, the delivery claim and the peer
+	// low-watermarks, so a late delivery can be attributed to a mechanism.
+	FilerSubscribeDeliveryLagSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFiler,
+			Name:      "subscribe_delivery_lag_seconds",
+			Help:      "Seconds from a metadata event's mutation until the filer sends it to the subscriber's stream, measured after the send-queue wait and the actual gRPC send (excludes client receipt): scope=local on the filer's own stream, scope=aggregated on the multi-filer stream.",
+			Buckets:   []float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60, 90, 120, 180, 300},
+		}, []string{"scope"})
+
+	FilerSubscribeHoldSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFiler,
+			Name:      "subscribe_hold_seconds",
+			Help:      "How long an aggregated metadata read stayed held at one entry before the peers' watermark released it: scope=memory at the delivery watermark, scope=disk at the flush watermark.",
+			Buckets:   []float64{0.05, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300},
+		}, []string{"scope"})
+
+	FilerSubscribeResumeFromDisk = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFiler,
+			Name:      "subscribe_resume_from_disk",
+			Help:      "Times a metadata subscriber fell off the in-memory ring and resumed from the persisted log (delivery then follows the per-minute flush).",
+		}, []string{"scope"})
+
+	FilerMetaDeliveryClaimAgeSeconds = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFiler,
+			Name:      "meta_delivery_claim_age_seconds",
+			Help:      "Seconds the filer's delivery claim (what it tells peer aggregators it has delivered through) trails the clock: capped by the oldest commit stamp still in flight.",
+		})
+
+	FilerMetaPeerLowWatermarkAgeSeconds = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFiler,
+			Name:      "meta_peer_low_watermark_age_seconds",
+			Help:      "Seconds the peers' low-watermark trails the clock (kind=delivery bounds in-memory aggregated reads, kind=flush bounds persisted-log reads); -1 while a tracked peer has not signalled yet.",
+		}, []string{"kind"})
 
 	FilerMetaAggregatorReplayFailures = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -444,6 +497,14 @@ var (
 			Name:      "vacuuming_commit_count",
 			Help:      "Counter of volume vacuuming commit counter",
 		}, []string{"success"})
+
+	VolumeServerVacuumingDroppedNeedlesCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemVolumeServer,
+			Name:      "vacuuming_dropped_needles",
+			Help:      "Counter of live needles dropped by vacuum because their data could not be read back intact.",
+		}, []string{"collection"})
 
 	VolumeServerVacuumingHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -1081,6 +1142,11 @@ func init() {
 	Gather.MustRegister(FilerSubscribeGapStalledGauge)
 	Gather.MustRegister(FilerSubscribeUnprovenGapCrossings)
 	Gather.MustRegister(FilerSubscribeWatermarkHolds)
+	Gather.MustRegister(FilerSubscribeDeliveryLagSeconds)
+	Gather.MustRegister(FilerSubscribeHoldSeconds)
+	Gather.MustRegister(FilerSubscribeResumeFromDisk)
+	Gather.MustRegister(FilerMetaDeliveryClaimAgeSeconds)
+	Gather.MustRegister(FilerMetaPeerLowWatermarkAgeSeconds)
 	Gather.MustRegister(FilerMetaAggregatorReplayFailures)
 	Gather.MustRegister(FilerObjectSizeBytesHistogram)
 	Gather.MustRegister(collectors.NewGoCollector())
@@ -1094,6 +1160,7 @@ func init() {
 	Gather.MustRegister(VolumeServerVacuumingCompactCounter)
 	Gather.MustRegister(VolumeServerVacuumingCommitCounter)
 	Gather.MustRegister(VolumeServerVacuumingHistogram)
+	Gather.MustRegister(VolumeServerVacuumingDroppedNeedlesCounter)
 	Gather.MustRegister(VolumeServerVolumeGauge)
 	Gather.MustRegister(VolumeServerMaxVolumeCounter)
 	Gather.MustRegister(VolumeServerReadOnlyVolumeGauge)
@@ -1121,6 +1188,7 @@ func init() {
 	Gather.MustRegister(VolumeServerECRebuildCounter)
 	Gather.MustRegister(VolumeServerECReconstructedIntervalCounter)
 	Gather.MustRegister(MasterUnderReplicatedVolumes)
+	Gather.MustRegister(MasterWritableVolumesPerDisk)
 	Gather.MustRegister(MasterVolumeCreationCounter)
 
 	Gather.MustRegister(S3RequestCounter)
@@ -1264,6 +1332,7 @@ func DeleteCollectionMetrics(collection string) {
 	c += MasterVolumeLayoutWritable.DeletePartialMatch(labels)
 	c += MasterVolumeLayoutCrowded.DeletePartialMatch(labels)
 	c += MasterUnderReplicatedVolumes.DeletePartialMatch(labels)
+	c += MasterWritableVolumesPerDisk.DeletePartialMatch(labels)
 	c += VolumeServerDiskSizeGauge.DeletePartialMatch(labels)
 	c += VolumeServerVolumeGauge.DeletePartialMatch(labels)
 	c += VolumeServerReadOnlyVolumeGauge.DeletePartialMatch(labels)

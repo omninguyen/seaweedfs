@@ -1,8 +1,5 @@
 {{- include "seaweedfs.compat" . -}}
 {{- if .Values.vector.enabled }}
-{{- if and .Values.vector.metricsPort (not .Values.vector.imageOverride) (eq (toString (.Values.image.tag | default .Chart.AppVersion)) "4.53") }}
-{{- fail "vector.metricsPort requires vector.imageOverride selecting an engine with metrics support; the default 4.53 image does not support metrics" }}
-{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -153,8 +150,8 @@ spec:
           emptyDir: {}
         {{- if include "seaweedfs.securityConfigEnabled" . }}
         - name: security-config
-          configMap:
-            name: {{ include "seaweedfs.fullname" . }}-security-config
+          secret:
+            secretName: {{ include "seaweedfs.fullname" . }}-security-config
         {{- end }}
         {{- if .Values.global.seaweedfs.enableSecurity }}
         {{- range list "ca" "client" "vector" }}

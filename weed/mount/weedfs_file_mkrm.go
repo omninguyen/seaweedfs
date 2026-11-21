@@ -172,6 +172,7 @@ func (wfs *WFS) openExistingForCreate(ctx context.Context, in *fuse.CreateIn, en
 	wfs.outputPbEntry(&out.EntryOut, inode, entry)
 	out.Fh = uint64(openFh)
 	out.OpenFlags = 0
+	wfs.reportOpenPath(in.Flags, entryFullPath, entry)
 	return fuse.OK
 }
 
@@ -397,13 +398,7 @@ func (wfs *WFS) createRegularFile(ctx context.Context, dirFullPath util.FullPath
 		return 0, nil, fuse.EIO
 	}
 	if !wfs.option.DefaultPermissions {
-		// Map parent dir uid/gid from filer-space to local-space so the
-		// permission check compares like with like (caller uid/gid are local).
-		parentUid, parentGid := parentEntry.Attributes.Uid, parentEntry.Attributes.Gid
-		if wfs.option.UidGidMapper != nil {
-			parentUid, parentGid = wfs.option.UidGidMapper.FilerToLocal(parentUid, parentGid)
-		}
-		if !hasAccess(uid, gid, parentUid, parentGid, parentEntry.Attributes.FileMode, fuse.W_OK|fuse.X_OK) {
+		if !hasAccess(uid, gid, parentEntry.Attributes.Uid, parentEntry.Attributes.Gid, parentEntry.Attributes.FileMode, fuse.W_OK|fuse.X_OK) {
 			return 0, nil, fuse.Status(syscall.EACCES)
 		}
 	}
@@ -442,7 +437,9 @@ func (wfs *WFS) createRegularFile(ctx context.Context, dirFullPath util.FullPath
 		// create checks, stat, readdir).
 		// We use InsertEntry directly instead of applyLocalMetadataEvent to avoid
 		// triggering directory hot-threshold eviction that would wipe the entry.
-		if insertErr := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(string(dirFullPath), newEntry), 0); insertErr != nil {
+		cachedEntry := proto.Clone(newEntry).(*filer_pb.Entry)
+		wfs.mapPbIdFromLocalToFiler(cachedEntry)
+		if insertErr := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(string(dirFullPath), cachedEntry), 0); insertErr != nil {
 			glog.Warningf("createFile %s: insert local entry: %v", entryFullPath, insertErr)
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)

@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +70,8 @@ type DeletionRetryItem struct {
 	ledgerEpoch uint64 // pendingDeletions epoch when the item was queued; expiry forgets only a matching epoch
 	heapIndex   int    // index in the heap (for heap.Interface)
 	inFlight    bool   // true when item is being processed, prevents duplicate additions
+	manifest    *filer_pb.FileChunk
+	fsync       bool
 }
 
 // retryHeap implements heap.Interface for DeletionRetryItem
@@ -165,6 +168,10 @@ func calculateBackoff(retryCount int) time.Duration {
 // AddOrUpdate adds a new failed deletion or updates an existing one
 // Time complexity: O(log N) for insertion/update
 func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string, ledgerEpoch uint64) {
+	q.addOrUpdate(fileId, errorMsg, ledgerEpoch, nil, false)
+}
+
+func (q *DeletionRetryQueue) addOrUpdate(fileId string, errorMsg string, ledgerEpoch uint64, manifest *filer_pb.FileChunk, fsync bool) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
@@ -174,6 +181,7 @@ func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string, ledgerE
 		// The existing retry schedule should proceed.
 		// RetryCount is only incremented in RequeueForRetry when an actual retry is performed.
 		item.LastError = errorMsg
+		item.fsync = item.fsync || fsync
 		// Keep the recorded epoch while the item is in flight: an expiry or
 		// permanent outcome from that attempt must forget only the record it
 		// started with, not a newer enqueue for the same id. This also keeps
@@ -198,6 +206,8 @@ func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string, ledgerE
 		LastError:   errorMsg,
 		ledgerEpoch: ledgerEpoch,
 		inFlight:    false,
+		manifest:    manifest,
+		fsync:       fsync,
 	}
 	heap.Push(&q.heap, item)
 	q.itemIndex[fileId] = item
@@ -270,6 +280,22 @@ func (q *DeletionRetryQueue) Remove(item *DeletionRetryItem) {
 
 	// Item was already removed from heap by GetReadyItems, just remove from index
 	delete(q.itemIndex, item.FileId)
+}
+
+func (q *DeletionRetryQueue) fsyncOf(item *DeletionRetryItem) bool {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	return item.fsync
+}
+
+func (q *DeletionRetryQueue) removeUnlessFsyncChanged(item *DeletionRetryItem, fsync bool) bool {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	if item.fsync != fsync {
+		return false
+	}
+	delete(q.itemIndex, item.FileId)
+	return true
 }
 
 // Size returns the current size of the retry queue
@@ -362,7 +388,8 @@ func (f *Filer) processDeletionBatch(ctx context.Context, toDeleteFileIds []stri
 	}
 
 	// Delete files and classify outcomes
-	outcomes := deleteFilesAndClassify(ctx, f.volumeGrpcDialOption(), uniqueFileIdsSlice, lookupFunc)
+	fsyncIds := f.fsyncDeletionIds(uniqueFileIdsSlice)
+	outcomes := deleteFilesAndClassify(ctx, f.volumeGrpcDialOption(), uniqueFileIdsSlice, fsyncIds, lookupFunc)
 
 	// Process outcomes
 	var successCount, notFoundCount, retryableErrorCount, permanentErrorCount int
@@ -370,14 +397,15 @@ func (f *Filer) processDeletionBatch(ctx context.Context, toDeleteFileIds []stri
 
 	for _, fileId := range uniqueFileIdsSlice {
 		outcome := outcomes[fileId]
+		_, fsynced := fsyncIds[fileId]
 
 		switch outcome.status {
 		case deletionOutcomeSuccess:
 			successCount++
-			f.forgetDeletion(fileId) // confirmed gone: drop from durable ledger
+			f.forgetDeletion(fileId, fsynced) // confirmed gone: drop from durable ledger
 		case deletionOutcomeNotFound:
 			notFoundCount++
-			f.forgetDeletion(fileId) // already gone: drop from durable ledger
+			f.forgetDeletion(fileId, fsynced) // already gone: drop from durable ledger
 		case deletionOutcomeRetryable, deletionOutcomeNoResult:
 			retryableErrorCount++
 			// Keep in the durable ledger: not confirmed, must survive restarts.
@@ -432,10 +460,24 @@ type deletionOutcome struct {
 	errorMsg string
 }
 
-// deleteFilesAndClassify performs deletion and classifies outcomes for a list of file IDs
-func deleteFilesAndClassify(ctx context.Context, grpcDialOption grpc.DialOption, fileIds []string, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) map[string]deletionOutcome {
-	// Perform deletion
-	results := operation.DeleteFileIdsWithLookupVolumeId(ctx, grpcDialOption, fileIds, lookupFunc)
+// deleteFilesAndClassify performs deletion and classifies outcomes for a list of file IDs.
+// Ids in fsyncIds are deleted durably.
+func deleteFilesAndClassify(ctx context.Context, grpcDialOption grpc.DialOption, fileIds []string, fsyncIds map[string]struct{}, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) map[string]deletionOutcome {
+	var plainIds, syncedIds []string
+	for _, fileId := range fileIds {
+		if _, ok := fsyncIds[fileId]; ok {
+			syncedIds = append(syncedIds, fileId)
+		} else {
+			plainIds = append(plainIds, fileId)
+		}
+	}
+	var results []*volume_server_pb.DeleteResult
+	if len(plainIds) > 0 {
+		results = operation.DeleteFileIdsWithLookupVolumeId(ctx, grpcDialOption, plainIds, false, lookupFunc)
+	}
+	if len(syncedIds) > 0 {
+		results = append(results, operation.DeleteFileIdsWithLookupVolumeId(ctx, grpcDialOption, syncedIds, true, lookupFunc)...)
+	}
 
 	// Group results by file ID to handle multiple results for replicated volumes
 	resultsByFileId := make(map[string][]*volume_server_pb.DeleteResult)
@@ -446,7 +488,8 @@ func deleteFilesAndClassify(ctx context.Context, grpcDialOption grpc.DialOption,
 	// Classify outcome for each file
 	outcomes := make(map[string]deletionOutcome, len(fileIds))
 	for _, fileId := range fileIds {
-		outcomes[fileId] = classifyDeletionOutcome(fileId, resultsByFileId)
+		_, durable := fsyncIds[fileId]
+		outcomes[fileId] = classifyDeletionOutcome(fileId, resultsByFileId, durable)
 	}
 
 	return outcomes
@@ -455,7 +498,9 @@ func deleteFilesAndClassify(ctx context.Context, grpcDialOption grpc.DialOption,
 // classifyDeletionOutcome examines all deletion results for a file ID and determines the overall outcome
 // Uses a single pass through results with early return for permanent errors (highest priority)
 // Priority: Permanent > Retryable > Success > Not Found
-func classifyDeletionOutcome(fileId string, resultsByFileId map[string][]*volume_server_pb.DeleteResult) deletionOutcome {
+// A durable delete the volume server could not sync is rolled back and
+// answered with a 5xx, so for a durable delete that answer stays retryable.
+func classifyDeletionOutcome(fileId string, resultsByFileId map[string][]*volume_server_pb.DeleteResult, durable bool) deletionOutcome {
 	fileIdResults, found := resultsByFileId[fileId]
 	if !found || len(fileIdResults) == 0 {
 		return deletionOutcome{
@@ -476,7 +521,7 @@ func classifyDeletionOutcome(fileId string, resultsByFileId map[string][]*volume
 			continue
 		}
 
-		if isRetryableError(res.Error) {
+		if isRetryableError(res.Error) || (durable && res.Status >= http.StatusInternalServerError) {
 			if firstRetryableError == "" {
 				firstRetryableError = res.Error
 			}
@@ -536,6 +581,12 @@ func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[strin
 
 	ticker := time.NewTicker(DeletionRetryPollInterval)
 	defer ticker.Stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		<-f.deletionQuit
+		cancel()
+	}()
 
 	for {
 		select {
@@ -553,7 +604,7 @@ func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[strin
 					// recorded. A surviving newer record still needs work, so
 					// it goes back through the hot queue.
 					if !f.forgetDeletionEpoch(item.FileId, item.ledgerEpoch) {
-						f.queueDeletions(item.FileId)
+						f.queueDeletions(false, item.FileId)
 					}
 				}
 				if len(readyItems) == 0 {
@@ -567,6 +618,7 @@ func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[strin
 			if totalProcessed > 0 {
 				glog.V(1).Infof("retried deletion of %d files", totalProcessed)
 			}
+			f.processManifestRetries(ctx)
 		}
 	}
 }
@@ -582,23 +634,25 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 	}
 
 	// Delete files and classify outcomes
-	outcomes := deleteFilesAndClassify(context.Background(), f.volumeGrpcDialOption(), fileIds, lookupFunc)
+	fsyncIds := f.fsyncDeletionIds(fileIds)
+	outcomes := deleteFilesAndClassify(context.Background(), f.volumeGrpcDialOption(), fileIds, fsyncIds, lookupFunc)
 
 	// Process outcomes - iterate over readyItems to ensure all items are accounted for
 	var successCount, notFoundCount, retryCount, permanentErrorCount int
 	for _, item := range readyItems {
 		outcome := outcomes[item.FileId]
+		_, fsynced := fsyncIds[item.FileId]
 
 		switch outcome.status {
 		case deletionOutcomeSuccess:
 			successCount++
-			f.DeletionRetryQueue.Remove(item) // Remove from queue (success)
-			f.forgetDeletion(item.FileId)     // confirmed gone: drop from durable ledger
+			f.DeletionRetryQueue.Remove(item)      // Remove from queue (success)
+			f.forgetDeletion(item.FileId, fsynced) // confirmed gone: drop from durable ledger
 			glog.V(2).Infof("retry successful for %s after %d attempts", item.FileId, item.RetryCount)
 		case deletionOutcomeNotFound:
 			notFoundCount++
-			f.DeletionRetryQueue.Remove(item) // Remove from queue (already deleted)
-			f.forgetDeletion(item.FileId)     // already gone: drop from durable ledger
+			f.DeletionRetryQueue.Remove(item)      // Remove from queue (already deleted)
+			f.forgetDeletion(item.FileId, fsynced) // already gone: drop from durable ledger
 		case deletionOutcomeRetryable, deletionOutcomeNoResult:
 			retryCount++
 			if outcome.status == deletionOutcomeNoResult {
@@ -612,7 +666,7 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 			// gave up: drop the record, unless the id was re-queued meanwhile
 			// — a surviving newer record goes back through the hot queue.
 			if !f.forgetDeletionEpoch(item.FileId, item.ledgerEpoch) {
-				f.queueDeletions(item.FileId)
+				f.queueDeletions(false, item.FileId)
 			}
 			glog.Warningf("permanent error on retry for %s after %d attempts: %s", item.FileId, item.RetryCount, outcome.errorMsg)
 		}
@@ -630,7 +684,7 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 }
 
 func (f *Filer) DeleteUncommittedChunks(ctx context.Context, chunks []*filer_pb.FileChunk) {
-	f.doDeleteChunks(ctx, chunks)
+	f.doDeleteChunks(ctx, chunks, false)
 }
 
 func (f *Filer) DeleteChunks(ctx context.Context, fullpath util.FullPath, chunks []*filer_pb.FileChunk) {
@@ -638,33 +692,114 @@ func (f *Filer) DeleteChunks(ctx context.Context, fullpath util.FullPath, chunks
 	if rule.DisableChunkDeletion {
 		return
 	}
-	f.doDeleteChunks(ctx, chunks)
+	f.doDeleteChunks(ctx, chunks, rule.GetFsync())
 }
 
-func (f *Filer) doDeleteChunks(ctx context.Context, chunks []*filer_pb.FileChunk) {
+func (f *Filer) doDeleteChunks(ctx context.Context, chunks []*filer_pb.FileChunk, fsync bool) {
 	for _, chunk := range chunks {
 		if !chunk.IsChunkManifest {
-			f.queueDeletions(chunk.GetFileIdString())
+			f.queueDeletions(fsync, chunk.GetFileIdString())
 			continue
 		}
-		dataChunks, manifestResolveErr := ResolveOneChunkManifest(ctx, f.MasterClient.LookupFileId, chunk, f.MasterClient)
-		if manifestResolveErr != nil {
-			glog.V(0).InfofCtx(ctx, "failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
+		// The manifest needle is the only record of its sub-chunks, so it
+		// stays until they are queued.
+		fileIds, err := f.manifestFileIds(ctx, chunk)
+		if err != nil {
+			glog.WarningfCtx(ctx, "failed to resolve manifest %s, will retry: %v", chunk.GetFileIdString(), err)
+			f.manifestRetries().addOrUpdate(chunk.GetFileIdString(), err.Error(), 0, chunk, fsync)
+			continue
 		}
-		for _, dChunk := range dataChunks {
-			f.queueDeletions(dChunk.GetFileIdString())
+		f.queueDeletions(fsync, fileIds...)
+	}
+}
+
+// manifestFileIds resolves a manifest and any nested manifests, listing each
+// sub-chunk ahead of the manifest that holds it.
+func (f *Filer) manifestFileIds(ctx context.Context, manifest *filer_pb.FileChunk) ([]string, error) {
+	dataChunks, err := ResolveOneChunkManifest(ctx, f.MasterClient.GetLookupFileIdFunction(), manifest, f.MasterClient)
+	if err != nil {
+		return nil, err
+	}
+	var fileIds []string
+	for _, chunk := range dataChunks {
+		if !chunk.IsChunkManifest {
+			fileIds = append(fileIds, chunk.GetFileIdString())
+			continue
 		}
-		f.queueDeletions(chunk.GetFileIdString())
+		nested, err := f.manifestFileIds(ctx, chunk)
+		if err != nil {
+			return nil, err
+		}
+		fileIds = append(fileIds, nested...)
+	}
+	return append(fileIds, manifest.GetFileIdString()), nil
+}
+
+func (f *Filer) manifestRetries() *DeletionRetryQueue {
+	f.manifestRetryOnce.Do(func() {
+		f.manifestRetryQueue = NewDeletionRetryQueue()
+	})
+	return f.manifestRetryQueue
+}
+
+// processManifestRetries resolves manifests that failed to resolve on delete.
+// One that never resolves within MaxRetryAttempts is deleted alone, leaving
+// its sub-chunks to volume.fsck. A pass stops after manifestRetryTimeout and
+// leaves the rest queued, so the shared retry loop gets its turn.
+func (f *Filer) processManifestRetries(ctx context.Context) {
+	q := f.manifestRetries()
+	passCtx, cancel := context.WithTimeout(ctx, manifestRetryTimeout)
+	defer cancel()
+	for passCtx.Err() == nil {
+		ready, expired := q.GetReadyItems(1)
+		for _, item := range expired {
+			f.queueDeletions(item.fsync, item.FileId)
+		}
+		if len(ready) == 0 {
+			if len(expired) == 0 {
+				return
+			}
+			continue
+		}
+		f.retryManifest(ctx, q, ready[0])
+	}
+}
+
+// manifestRetryTimeout bounds one manifest read so a stalled volume server
+// cannot hold up the shared retry loop.
+var manifestRetryTimeout = 1 * time.Minute
+
+// retryManifest queues the resolved ids again, without rereading the manifest
+// it already queued, when a durable delete arrived during the attempt.
+func (f *Filer) retryManifest(ctx context.Context, q *DeletionRetryQueue, item *DeletionRetryItem) {
+	attemptCtx, cancel := context.WithTimeout(ctx, manifestRetryTimeout)
+	fileIds, err := f.manifestFileIds(attemptCtx, item.manifest)
+	cancel()
+	if err != nil {
+		q.RequeueForRetry(item, err.Error())
+		return
+	}
+	for {
+		fsync := q.fsyncOf(item)
+		f.queueDeletions(fsync, fileIds...)
+		if q.removeUnlessFsyncChanged(item, fsync) {
+			return
+		}
 	}
 }
 
 func (f *Filer) DeleteChunksNotRecursive(chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
-		f.queueDeletions(chunk.GetFileIdString())
+		f.queueDeletions(false, chunk.GetFileIdString())
 	}
 }
 
 func (f *Filer) deleteChunksIfNotNew(ctx context.Context, oldEntry, newEntry *Entry) {
+	if f.hardLinkStillHeld(ctx, oldEntry, newEntry) {
+		// newEntry replaced one name of a hard-linked file; the other names
+		// still read every chunk oldEntry has
+		return
+	}
 	var oldChunks, newChunks []*filer_pb.FileChunk
 	if oldEntry != nil {
 		oldChunks = oldEntry.GetChunks()

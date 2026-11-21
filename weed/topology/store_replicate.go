@@ -236,10 +236,11 @@ func replicateTo(ctx context.Context, uploader *operation.Uploader, data []byte,
 }
 
 // ReplicatedDelete deletes a needle from the local volume and sends delete
-// requests to all remote replica locations. Replica deletes use
+// requests to all remote replica locations; with alreadyDeleted the needle is
+// already gone here and only the replicas are asked. Replica deletes use
 // context.Background() so that a client disconnect does not orphan replica
 // deletes.
-func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, store *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request) (size types.Size, err error) {
+func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, store *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request, alreadyDeleted bool) (size types.Size, err error) {
 
 	//check JWT
 	jwt := security.GetJwt(r)
@@ -267,10 +268,13 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 		}(time.Now())
 	}
 
-	size, err = store.DeleteVolumeNeedle(volumeId, n)
-	if err != nil {
-		glog.V(0).Infoln("delete error:", err)
-		return
+	fsync := r.FormValue("fsync") == "true"
+	if !alreadyDeleted {
+		size, err = store.DeleteVolumeNeedle(volumeId, n, fsync)
+		if err != nil {
+			glog.V(0).Infoln("delete error:", err)
+			return
+		}
 	}
 
 	// Observe replication targets histogram for all operations (including zero)
@@ -279,7 +283,11 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 	if replicaCount > 0 { //send to other replica locations
 		// background, not r.Context(): a client disconnect must not orphan replica deletes
 		if err = DistributedOperation(context.Background(), remoteLocations, func(ctx context.Context, location operation.Location) error {
-			url, normalizeErr := util_http.GetGlobalHttpClient().NormalizeHttpScheme(location.Url + r.URL.Path + "?type=replicate")
+			query := "?type=replicate"
+			if fsync {
+				query += "&fsync=true"
+			}
+			url, normalizeErr := util_http.GetGlobalHttpClient().NormalizeHttpScheme(location.Url + r.URL.Path + query)
 			if normalizeErr != nil {
 				return normalizeErr
 			}

@@ -247,6 +247,8 @@ func buildSeaweedFileSystem(option *MountOptions, p fileSystemParams) *mount.WFS
 		WritebackCache:              option.writebackCache != nil && *option.writebackCache,
 		EagerFilerCreate:            p.eagerFilerCreate,
 		PosixDirNlink:               option.posixDirNlink != nil && *option.posixDirNlink,
+		AccessReport:                option.accessReport != nil && *option.accessReport,
+		AccessReportInterval:        *option.accessReportInterval,
 		// Peer chunk sharing
 		PeerEnabled:    option.peerEnabled != nil && *option.peerEnabled,
 		PeerListen:     peerStringOrEmpty(option.peerListen),
@@ -294,6 +296,9 @@ func ensureMountRootDirectory(ctx context.Context, filerClient filer_pb.FilerCli
 		// than match the error.
 		entry, _, _, lookupErr := filer_pb.GetEntry(ctx, filerClient, mountRootPath)
 		if lookupErr != nil {
+			if errors.Is(lookupErr, filer_pb.ErrNotFound) {
+				return fmt.Errorf("mount root %s does not exist and could not be created: %w", mountRoot, err)
+			}
 			return err
 		}
 		return mountRootMustBeDirectory(mountRoot, entry)

@@ -165,8 +165,10 @@ impl SourceReadRequest {
     fn served_from_source(&self, n: &Needle) -> bool {
         if self.is_head {
             // HEAD is meta-only unless the payload is needed to expand a
-            // manifest or to answer an image transform's length.
-            return !self.has_image_ops && !(n.is_chunk_manifest() && !self.bypass_cm);
+            // manifest or to answer a decoded or transformed length.
+            return !self.has_image_ops
+                && !n.is_compressed()
+                && !(n.is_chunk_manifest() && !self.bypass_cm);
         }
         self.direct(n) && (self.has_range || n.data_size > STREAMING_THRESHOLD)
     }
@@ -483,6 +485,18 @@ fn extract_file_id(path: &str) -> String {
     format!("{},{}", parsed.vid, fid)
 }
 
+fn is_multipart_form_data(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|media_type| {
+            media_type
+                .trim()
+                .eq_ignore_ascii_case("multipart/form-data")
+        })
+}
+
 fn streaming_chunk_size(read_buffer_size_bytes: usize, data_size: usize) -> usize {
     std::cmp::min(
         read_buffer_size_bytes.max(DEFAULT_STREAMING_CHUNK_SIZE),
@@ -671,6 +685,7 @@ async fn batch_delete_file_ids(
             .batch_delete(volume_server_pb::BatchDeleteRequest {
                 file_ids: batch.clone(),
                 skip_cookie_check: true,
+                fsync: false,
             })
             .await
             .map_err(|e| format!("batch delete {}: {}", grpc_addr, e))?
@@ -846,7 +861,12 @@ async fn do_replicated_request(
 
         futures.push(async move {
             match req_builder.send().await {
-                Ok(r) if r.status().is_success() => Ok(()),
+                Ok(r)
+                    if r.status().is_success()
+                        || (allow_delete && r.status() == StatusCode::NOT_FOUND) =>
+                {
+                    Ok(())
+                }
                 Ok(r) => {
                     crate::metrics::UPLOAD_ERROR_COUNTER
                         .with_label_values(&[&r.status().as_u16().to_string()])
@@ -913,7 +933,6 @@ async fn proxy_or_redirect_to_target(
     state: &VolumeServerState,
     info: ProxyRequestInfo,
     vid: VolumeId,
-    allow_local_redirect: bool,
 ) -> Response {
     // Look up volume locations from master
     let locations = match lookup_volume(
@@ -961,10 +980,7 @@ async fn proxy_or_redirect_to_target(
     match state.read_mode {
         ReadMode::Proxy => proxy_request(state, &info, target).await,
         ReadMode::Redirect => redirect_request(&info, target, &state.outgoing_http_scheme),
-        ReadMode::Local if allow_local_redirect => {
-            redirect_request(&info, target, &state.outgoing_http_scheme)
-        }
-        ReadMode::Local => unreachable!(),
+        ReadMode::Local => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
@@ -1333,6 +1349,7 @@ async fn get_or_head_handler_inner(
         &query,
         &ext,
         request_kind.has_image_ops,
+        request_kind.has_range,
         &mut response_headers,
     ) {
         ControlFlow::Continue(data) => data,
@@ -1431,7 +1448,7 @@ async fn proxy_missing_volume(
         None => return StatusCode::NOT_FOUND.into_response(),
     };
 
-    proxy_or_redirect_to_target(state, info, vid, false).await
+    proxy_or_redirect_to_target(state, info, vid).await
 }
 
 /// Go's `proxied` query param check (loop prevention).
@@ -1464,8 +1481,10 @@ async fn check_download_limit(
 
         // Go tries proxy to replica once before the wait loop
         // (checkDownloadLimit); it does not retry on each wakeup.
-        let should_try_replica =
-            !is_proxied_query(&query_string) && !state.current_master().await.is_empty() && {
+        let should_try_replica = state.read_mode != ReadMode::Local
+            && !is_proxied_query(&query_string)
+            && !state.current_master().await.is_empty()
+            && {
                 let store = state.store.read().unwrap();
                 store
                     .find_volume(vid)
@@ -1475,24 +1494,23 @@ async fn check_download_limit(
             && let Some(info) =
                 build_proxy_request_info(path, request_headers, &query_string, method)
         {
-            return ControlFlow::Break(proxy_or_redirect_to_target(state, info, vid, true).await);
+            return ControlFlow::Break(proxy_or_redirect_to_target(state, info, vid).await);
         }
 
         // Blocking wait loop (Go's waitForDownloadSlot)
         loop {
-            if tokio::time::timeout_at(deadline, state.download_notify.notified())
-                .await
-                .is_err()
+            let notified = state.download_notify.notified();
+            if state.inflight_download_bytes.load(Ordering::Relaxed)
+                <= state.concurrent_download_limit
             {
+                break;
+            }
+            if tokio::time::timeout_at(deadline, notified).await.is_err() {
                 return ControlFlow::Break(json_error_with_query(
                     StatusCode::TOO_MANY_REQUESTS,
                     "download limit exceeded",
                     uri.query(),
                 ));
-            }
-            let current = state.inflight_download_bytes.load(Ordering::Relaxed);
-            if current <= state.concurrent_download_limit {
-                break;
             }
         }
     }
@@ -1633,8 +1651,8 @@ async fn read_volume_needle(
 
     let can_stream =
         can_direct_source_read && n.data_size > STREAMING_THRESHOLD && !has_range && !is_head;
-    // HEAD is meta-only when served_from_source loaded no payload. A chunk
-    // manifest without cm=false is read in full so expansion can run.
+    // HEAD is meta-only when served_from_source loaded no payload. A compressed
+    // needle, or a chunk manifest without cm=false, is read in full.
     let can_handle_head_from_meta = stream_info.is_some() && is_head;
     let can_handle_range_from_source = can_direct_source_read && has_range;
 
@@ -2029,6 +2047,7 @@ fn buffered_payload(
     query: &ReadQueryParams,
     ext: &str,
     needs_image_ops: bool,
+    has_range: bool,
     response_headers: &mut HeaderMap,
 ) -> ControlFlow<Response, Vec<u8>> {
     // Handle compressed data: if needle is compressed, either pass through or decompress
@@ -2057,7 +2076,9 @@ fn buffered_payload(
                 .get(header::ACCEPT_ENCODING)
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("");
-            if accept_encoding.contains("gzip")
+            // A range is over the decoded bytes, so only a whole read passes gzip through.
+            if !has_range
+                && accept_encoding.contains("gzip")
                 && data.len() >= 2
                 && data[0] == 0x1f
                 && data[1] == 0x8b
@@ -2780,14 +2801,33 @@ pub async fn post_handler(
     // JWT check for writes
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if state
-        .guard
-        .read()
-        .unwrap()
-        .check_jwt_for_file(token.as_deref(), &file_id, true)
-        .is_err()
-    {
-        return json_error_with_query(StatusCode::UNAUTHORIZED, "wrong jwt", Some(&query));
+    let expired_jwt = {
+        let guard = state.guard.read().unwrap();
+        match guard.check_jwt_for_file(token.as_deref(), &file_id, true) {
+            Ok(()) => None,
+            Err(_) => Some(
+                is_multipart_form_data(&headers)
+                    && token.as_deref().is_some_and(|token| {
+                        crate::security::is_expired_volume_jwt(
+                            &guard.signing_key,
+                            token,
+                            &file_id,
+                            &[&guard.previous_signing_key],
+                        )
+                    }),
+            ),
+        }
+    };
+    if let Some(expired_jwt) = expired_jwt {
+        let mut response =
+            json_error_with_query(StatusCode::UNAUTHORIZED, "wrong jwt", Some(&query));
+        if expired_jwt {
+            response.headers_mut().insert(
+                "x-seaweed-write-outcome",
+                header::HeaderValue::from_static("expired-jwt-before-append"),
+            );
+        }
+        return response;
     }
 
     // Upload throttling: check inflight bytes against limit
@@ -3657,22 +3697,30 @@ pub async fn delete_handler(
 
     // Read needle first to validate cookie (matching Go behavior)
     let original_cookie = cookie;
-    let is_replicate = serde_urlencoded::from_str::<Vec<(String, String)>>(&del_query)
-        .unwrap_or_default()
-        .into_iter()
-        .find(|(name, _)| name == "type")
-        .is_some_and(|(_, value)| value == "replicate");
+    let del_fields =
+        serde_urlencoded::from_str::<Vec<(String, String)>>(&del_query).unwrap_or_default();
+    let del_field = |key: &str| {
+        del_fields
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.as_str())
+    };
+    let is_replicate = del_field("type") == Some("replicate");
+    let fsync = del_field("fsync") == Some("true");
     {
         let vol = {
             let store = state.store.read().unwrap();
             store.find_volume(vid).map(|(_, vol)| vol)
         };
+        let replicated = vol
+            .as_ref()
+            .is_some_and(|v| v.super_block().replica_placement.get_copy_count() > 1);
         let mut found = vol
             .as_ref()
             .ok_or(crate::storage::volume::VolumeError::NotFound)
             .and_then(|vol| vol.read_needle_with_option(&mut n, &mut delete_read_option()));
         if found.is_err()
-            && is_replicate
+            && (is_replicate || replicated)
             && let Some(vol) = &vol
         {
             // the write this delete undoes can still be queued here
@@ -3681,7 +3729,42 @@ pub async fn delete_handler(
         }
         match found {
             Ok(_) => {}
-            Err(_) => {
+            Err(e) => {
+                // 404 tells the forwarding replica the needle is gone here, so a
+                // read that failed for any other reason must not answer it
+                if !matches!(
+                    e,
+                    crate::storage::volume::VolumeError::NotFound
+                        | crate::storage::volume::VolumeError::Deleted
+                ) {
+                    return json_error_with_query(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Deletion Failed: {}", e),
+                        Some(&del_query),
+                    );
+                }
+                // a retry of a delete whose replica fan-out failed finds nothing
+                // here, but the other replicas may still hold the needle
+                if !is_replicate
+                    && replicated
+                    && let Err(e) = do_replicated_request(
+                        &state,
+                        vid.0,
+                        Method::DELETE,
+                        &path,
+                        &del_query,
+                        &headers,
+                        None,
+                    )
+                    .await
+                {
+                    tracing::error!("replicated delete failed: {}", e);
+                    return json_error_with_query(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("replication failed: {}", e),
+                        Some(&del_query),
+                    );
+                }
                 let result = DeleteResult { size: 0 };
                 return json_response_with_params(
                     StatusCode::NOT_FOUND,
@@ -3763,7 +3846,16 @@ pub async fn delete_handler(
             Ok(vol) if vol.is_no_write_or_delete() => {
                 Err(crate::storage::volume::VolumeError::ReadOnly(vid))
             }
-            Ok(vol) => vol.delete_needle(&mut n),
+            Ok(vol) if fsync => {
+                tokio::task::spawn_blocking(move || vol.delete_needle(&mut n, true))
+                    .await
+                    .unwrap_or_else(|e| {
+                        Err(crate::storage::volume::VolumeError::Io(
+                            std::io::Error::other(e),
+                        ))
+                    })
+            }
+            Ok(vol) => vol.delete_needle(&mut n, false),
         }
     };
 
@@ -4972,13 +5064,13 @@ fn try_gzip_data(data: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn maybe_decompress_gzip(data: &[u8]) -> Result<Vec<u8>, GunzipError> {
-    use flate2::read::GzDecoder;
+    use flate2::read::MultiGzDecoder;
     use std::io::Read;
     // Cap the output so a crafted, highly-compressible (gzip-bomb) needle cannot
     // OOM the server when decompressed on read or upload. take(limit+1) lets us
     // tell "exactly at the limit" apart from "over it", which we reject as
     // TooLarge so callers fail the request instead of silently using raw bytes.
-    let mut decoder = GzDecoder::new(data).take(MAX_EXPANSION_BYTES + 1);
+    let mut decoder = MultiGzDecoder::new(data).take(MAX_EXPANSION_BYTES + 1);
     let mut decompressed = Vec::new();
     decoder
         .read_to_end(&mut decompressed)
@@ -5065,6 +5157,34 @@ mod tests {
             }
         });
         (addr, receipts)
+    }
+
+    /// A replica that no longer holds the needle answers a forwarded delete
+    /// with 404, which means it is gone there too.
+    #[tokio::test]
+    async fn test_replicated_delete_takes_a_replica_404_as_done() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let app = axum::Router::new().fallback(|| async { StatusCode::NOT_FOUND });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let state = remote_manifest_state(&tmp, spawn_lookup(peer).await);
+        for (method, done) in [
+            (axum::http::Method::DELETE, true),
+            (axum::http::Method::POST, false),
+        ] {
+            let sent = do_replicated_request(
+                &state,
+                1,
+                method.clone(),
+                "/1,01ab",
+                "",
+                &axum::http::HeaderMap::new(),
+                None,
+            )
+            .await;
+            assert_eq!(sent.is_ok(), done, "{method}: {sent:?}");
+        }
     }
 
     /// The whole replicated write path, not only the request builder: the
@@ -5466,6 +5586,83 @@ mod tests {
         let headers = HeaderMap::new();
         let uri: axum::http::Uri = "/test".parse().unwrap();
         assert_eq!(extract_jwt(&headers, &uri), None);
+    }
+
+    #[tokio::test]
+    async fn http_expired_write_jwt_is_marked_before_append() {
+        use crate::security::SigningKey;
+        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+        use tower::ServiceExt;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let key = SigningKey(b"write-secret".to_vec());
+        state.guard.write().unwrap().signing_key = key.clone();
+        let volume = state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1;
+        let before = volume.dat_file_size().unwrap();
+        let fid = format!("1,{:x}{TEST_COOKIE:08x}", 0x6e7a_0c09u64);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let sign = |key: &[u8]| {
+            encode(
+                &Header::new(Algorithm::HS256),
+                &serde_json::json!({"fid": fid, "exp": now - 10}),
+                &EncodingKey::from_secret(key),
+            )
+            .unwrap()
+        };
+        let boundary = "expiredjwtboundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a\"\r\n\r\nexpired-bytes\r\n--{boundary}--\r\n"
+        );
+        for (token, content_type, marked) in [
+            (
+                sign(&key.0),
+                format!("multipart/form-data; boundary={boundary}"),
+                true,
+            ),
+            (
+                sign(b"other-secret"),
+                format!("multipart/form-data; boundary={boundary}"),
+                false,
+            ),
+            (sign(&key.0), "application/octet-stream".to_string(), false),
+        ] {
+            let response = super::super::volume_server::build_admin_router(state.clone())
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(format!("/{fid}"))
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .header(header::CONTENT_TYPE, &content_type)
+                        .body(Body::from(body.clone()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::UNAUTHORIZED,
+                "{content_type}"
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get("x-seaweed-write-outcome")
+                    .map(|value| value.to_str().unwrap()),
+                marked.then_some("expired-jwt-before-append"),
+                "{content_type}"
+            );
+        }
+        assert_eq!(volume.dat_file_size().unwrap(), before);
     }
 
     #[test]
@@ -6281,6 +6478,7 @@ mod tests {
             security_file: String::new(),
             cli_white_list: vec![],
             state_file_path: String::new(),
+            ec_lifecycle_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
             ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
             volume_copies_in_flight: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
@@ -6360,6 +6558,88 @@ mod tests {
             .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
             .unwrap();
         test_state_with_store(store)
+    }
+
+    #[tokio::test]
+    async fn download_limit_local_read_mode_waits_instead_of_proxying() {
+        use crate::storage::super_block::ReplicaPlacement;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.read_mode = ReadMode::Local;
+            s.concurrent_download_limit = 1;
+            s.inflight_download_data_timeout = std::time::Duration::from_millis(50);
+        }
+        *state.current_master_url.write().await = "127.0.0.1:1".to_string();
+        state.inflight_download_bytes.store(2, Ordering::Relaxed);
+        state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1
+            .set_replica_placement(ReplicaPlacement::from_string("001").unwrap())
+            .unwrap();
+
+        let path = "/1,0123456789abcdef";
+        let uri: axum::http::Uri = path.parse().unwrap();
+        let flow = check_download_limit(
+            &state,
+            &uri,
+            &HeaderMap::new(),
+            path,
+            VolumeId(1),
+            &Method::GET,
+        )
+        .await;
+        match flow {
+            ControlFlow::Break(resp) => assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS),
+            ControlFlow::Continue(_) => panic!("read over the download limit must not proceed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn download_limit_wait_sees_release_before_waiting() {
+        let mut state = streaming_test_state();
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.read_mode = ReadMode::Proxy;
+            s.concurrent_download_limit = 1;
+            s.inflight_download_data_timeout = std::time::Duration::from_secs(5);
+        }
+        *state.current_master_url.write().await = "127.0.0.1:1".to_string();
+        state.inflight_download_bytes.store(2, Ordering::Relaxed);
+
+        let master_guard = state.current_master_url.write().await;
+        let waiter = tokio::spawn({
+            let state = state.clone();
+            async move {
+                let path = "/1,0123456789abcdef";
+                let uri: axum::http::Uri = path.parse().unwrap();
+                check_download_limit(
+                    &state,
+                    &uri,
+                    &HeaderMap::new(),
+                    path,
+                    VolumeId(1),
+                    &Method::GET,
+                )
+                .await
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        state.inflight_download_bytes.store(0, Ordering::Relaxed);
+        state.download_notify.notify_waiters();
+        drop(master_guard);
+
+        let flow = tokio::time::timeout(std::time::Duration::from_secs(2), waiter)
+            .await
+            .expect("waiter missed the released download slot")
+            .unwrap();
+        assert!(matches!(flow, ControlFlow::Continue(true)));
     }
 
     /// Write a needle to volume 1 and return its URL path.
@@ -7229,6 +7509,28 @@ mod tests {
             assert_eq!(status, StatusCode::OK, "{path}");
             assert_eq!(body, data, "{path}");
         }
+    }
+
+    /// A needle of concatenated gzip members decodes to all of them, as Go's
+    /// gzip reader does, so a range spans the whole decoded content.
+    #[tokio::test]
+    async fn test_get_range_over_multi_member_gzip_needle() {
+        const ID: u64 = 0x6e7a_0503;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let mut gz = try_gzip_data(b"hello").unwrap();
+        gz.extend(try_gzip_data(b"world").unwrap());
+        let path = put_test_needle_with(&state, ID, &gz, |n| n.set_is_compressed());
+
+        let (status, headers, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=3-7")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"lowor");
+        assert_eq!(headers["Content-Range"], "bytes 3-7/10");
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"helloworld");
     }
 
     /// An EC needle is served from memory: its GET parses Range like any
@@ -8577,7 +8879,7 @@ mod tests {
             .store
             .write()
             .unwrap()
-            .delete_volume_needle(VolumeId(1), &mut filler)
+            .delete_volume_needle(VolumeId(1), &mut filler, false)
             .unwrap();
         let data_offset = || {
             let mut plan = crate::storage::store::Store::needle_read_plan(
@@ -8765,6 +9067,119 @@ mod tests {
             assert_eq!(stored.data, payload);
             master_server.abort();
             peer_server.abort();
+        }
+    }
+
+    /// A delete whose fan-out failed was already applied here, so the
+    /// client's retry finds nothing locally; it must still reach the replica
+    /// that kept the needle, or the replicas stay different.
+    #[tokio::test]
+    async fn test_delete_retry_reaches_the_replica_after_a_failed_fan_out() {
+        use crate::storage::super_block::ReplicaPlacement;
+        use axum::response::IntoResponse;
+        use axum::{Json, Router, middleware, routing::get};
+
+        let replicated = |state: &Arc<VolumeServerState>| {
+            let vol = state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .unwrap()
+                .1;
+            vol.set_replica_placement(ReplicaPlacement::from_string("001").unwrap())
+                .unwrap();
+            vol
+        };
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        Arc::get_mut(&mut state).unwrap().self_url = "127.0.0.1:8080".to_string();
+        let volume = replicated(&state);
+        let peer_tmp = tempfile::TempDir::new().unwrap();
+        let peer = volume_test_state(&peer_tmp);
+        let peer_volume = replicated(&peer);
+
+        let id = 0x6e7a_0c06u64;
+        let path = put_test_needle(&state, id, b"replicated delete");
+        put_test_needle(&peer, id, b"replicated delete");
+        let live = |vol: &Arc<crate::storage::volume::Volume>| {
+            vol.read_needle(&mut Needle {
+                id: NeedleId(id),
+                ..Needle::default()
+            })
+            .is_ok()
+        };
+
+        let fail_next = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let app = super::super::volume_server::build_admin_router(peer).layer(middleware::from_fn(
+            move |request: Request<Body>, next: middleware::Next| {
+                let fail = fail_next.swap(false, Ordering::SeqCst);
+                async move {
+                    if fail {
+                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    }
+                    next.run(request).await
+                }
+            },
+        ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = listener.local_addr().unwrap();
+        let peer_server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let master = Router::new().route(
+            "/dir/lookup",
+            get(move || async move {
+                Json(serde_json::json!({"locations": [
+                    {"url": "127.0.0.1:8080"},
+                    {"url": peer_addr.to_string()}
+                ]}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        *state.current_master_url.write().await = listener.local_addr().unwrap().to_string();
+        let master_server =
+            tokio::spawn(async move { axum::serve(listener, master).await.unwrap() });
+
+        assert_eq!(
+            send_delete(&state, &path).await,
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert!(!live(&volume));
+        assert!(live(&peer_volume));
+
+        assert_eq!(send_delete(&state, &path).await, StatusCode::NOT_FOUND);
+        assert!(!live(&peer_volume));
+        master_server.abort();
+        peer_server.abort();
+    }
+
+    /// A forwarding replica takes a 404 as the needle being gone here, so a
+    /// delete whose read fails for another reason answers 500.
+    #[tokio::test]
+    async fn test_delete_whose_read_fails_is_not_a_404() {
+        use std::io::{Seek, SeekFrom, Write};
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let id = 0x6e7a_0c07u64;
+        let path = put_test_needle(&state, id, b"unreadable");
+        let dat = state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1
+            .dat_path();
+        let mut file = std::fs::OpenOptions::new().write(true).open(dat).unwrap();
+        // the needle's size field, right after the superblock, cookie and id
+        file.seek(SeekFrom::Start(8 + 4 + 8)).unwrap();
+        file.write_all(&u32::MAX.to_be_bytes()).unwrap();
+        file.sync_all().unwrap();
+        for query in ["", "?type=replicate"] {
+            assert_eq!(
+                send_delete(&state, &format!("{path}{query}")).await,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "{query}"
+            );
         }
     }
 
@@ -9241,8 +9656,8 @@ mod tests {
     /// replicate delete of it finds nothing. The delete cancels the write, so
     /// it is taken back when it lands instead of reviving the needle on this
     /// copy alone, even when its handler was dropped while it waited in the
-    /// durable queue. A plain delete that finds nothing is not sent on to the
-    /// replicas, so it leaves the write alone.
+    /// durable queue. A plain delete on an unreplicated volume that finds
+    /// nothing leaves the write alone.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[allow(clippy::await_holding_lock)]
     async fn test_replicate_delete_cancels_a_queued_write() {

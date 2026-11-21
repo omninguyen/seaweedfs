@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -67,7 +69,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 
 	isReadHttpCall := r.Method == http.MethodGet || r.Method == http.MethodHead
 	if !fs.maybeCheckJwtAuthorization(r, !isReadHttpCall) {
-		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
+		fs.writeUnauthorized(w, r)
 		return
 	}
 
@@ -213,7 +215,7 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if !fs.maybeCheckJwtAuthorization(r, false) {
-		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
+		fs.writeUnauthorized(w, r)
 		return
 	}
 
@@ -256,19 +258,23 @@ func (fs *FilerServer) checkJwtAuthorization(r *http.Request, isWrite bool, scop
 }
 
 // authenticateFilerJwt verifies the JWT signature and method claims. A nil claims
-// with ok true means authentication is disabled for this access level. Splitting
+// with ok true means authentication is disabled for this access level, or the
+// request passed Basic Auth, which grants every access level. With Basic Auth
+// on, an access level without a signing key is no longer open. Splitting
 // authentication from path authorization lets a handler load an indirect resource
 // (the TUS session target) only after the caller's credential is verified.
 func (fs *FilerServer) authenticateFilerJwt(r *http.Request, isWrite bool) (*security.SeaweedFilerClaims, bool) {
-
-	var signingKey security.SigningKey
-	if isWrite {
-		signingKey = fs.filerGuard.SigningKey()
-	} else {
-		signingKey = fs.filerGuard.ReadSigningKey()
-	}
-	if len(signingKey) == 0 {
+	basicAuth := fs.basicAuth.Load()
+	if basicAuth != nil && basicAuth.Allows(r) && fs.basicAuthOriginAllowed(r) {
 		return nil, true
+	}
+
+	signingKey, previousSigningKey := fs.filerGuard.VerificationKeys(isWrite)
+	if len(signingKey) == 0 {
+		// Reload turns the new credential on before the old one off, so
+		// loading Basic Auth on both sides of the key read never sees both off
+		// while a switch is in flight.
+		return nil, basicAuth == nil && fs.basicAuth.Load() == nil
 	}
 
 	tokenStr := security.GetJwt(r)
@@ -277,7 +283,7 @@ func (fs *FilerServer) authenticateFilerJwt(r *http.Request, isWrite bool) (*sec
 		return nil, false
 	}
 
-	token, err := security.DecodeJwt(signingKey, tokenStr, &security.SeaweedFilerClaims{})
+	token, err := security.DecodeJwt(signingKey, tokenStr, &security.SeaweedFilerClaims{}, previousSigningKey)
 	if err != nil {
 		glog.V(1).Infof("jwt verification error from %s: %v", r.RemoteAddr, err)
 		return nil, false
@@ -312,6 +318,37 @@ func (fs *FilerServer) authenticateFilerJwt(r *http.Request, isWrite bool) (*sec
 	}
 
 	return claims, true
+}
+
+// basicAuthOriginAllowed keeps other websites from riding on Basic credentials
+// a browser cached for the filer: a request with an Origin header must come
+// from the filer's own host or an origin listed in cors.allowed_origins.
+func (fs *FilerServer) basicAuthOriginAllowed(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	if u, err := url.Parse(origin); err == nil && u.Host != "" && strings.EqualFold(u.Host, r.Host) {
+		return true
+	}
+	if fs.option != nil {
+		for _, allowed := range fs.option.AllowedOrigins {
+			if allowed != "*" && origin == allowed {
+				return true
+			}
+		}
+	}
+	glog.V(1).Infof("basic auth refused for origin %q from %s", origin, r.RemoteAddr)
+	return false
+}
+
+// writeUnauthorized answers a request that failed authentication. With Basic
+// Auth on, the challenge makes browsers prompt for the credentials.
+func (fs *FilerServer) writeUnauthorized(w http.ResponseWriter, r *http.Request) {
+	if fs.basicAuth.Load() != nil {
+		w.Header().Set("WWW-Authenticate", `Basic realm="SeaweedFS Filer", charset="UTF-8"`)
+	}
+	writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
 }
 
 // authorizeFilerJwtPaths checks the resource scope after authentication. A
@@ -390,12 +427,68 @@ func pathHasComponentPrefix(reqPath, prefix string) bool {
 	return strings.HasPrefix(cleanedPath, cleanedPrefix+"/")
 }
 
+// lockRingUnhealthyGracePeriod covers the first ring update after announcing
+// and the master's ring-change batching delay.
+const lockRingUnhealthyGracePeriod = 30 * time.Second
+
+// lockRingHealthy reports false once this filer has been missing from its own
+// lock ring past the grace period: locked writes cannot be routed to it, and
+// a restart re-registers it with the master.
+func (fs *FilerServer) lockRingHealthy() bool {
+	dlm := fs.filer.Dlm
+	if dlm == nil || dlm.LockRing == nil || dlm.LockRing.Ring == nil {
+		return true
+	}
+	if announce := fs.option.AnnounceCh; announce != nil {
+		select {
+		case <-announce:
+		default:
+			return true
+		}
+	}
+	absent := fs.lockRingAbsence(func() bool { return slices.Contains(dlm.LockRing.Ring.GetServers(), dlm.Host) })
+	if absent < lockRingUnhealthyGracePeriod {
+		return true
+	}
+	glog.Warningf("filerHealthz: %s absent from lock ring for %v (ring: %v)",
+		dlm.Host, absent.Round(time.Second), dlm.LockRing.Ring.GetServers())
+	return false
+}
+
+// lockRingAbsence returns how long inRing has reported this filer missing,
+// or 0 while it is in the ring.
+func (fs *FilerServer) lockRingAbsence(inRing func() bool) time.Duration {
+	since := fs.lockRingUnhealthySince.Load()
+	if inRing() {
+		fs.resetLockRingClock()
+		return 0
+	}
+	// A rejoin after the load has stored a new reset value, so the clock
+	// neither starts nor is read across it.
+	if since <= 0 {
+		fs.lockRingUnhealthySince.CompareAndSwap(since, time.Now().UnixNano())
+		return 0
+	}
+	if fs.lockRingUnhealthySince.Load() != since {
+		return 0
+	}
+	return time.Since(time.Unix(0, since))
+}
+
+func (fs *FilerServer) resetLockRingClock() {
+	fs.lockRingUnhealthySince.Store(-fs.lockRingResets.Add(1))
+}
+
 func (fs *FilerServer) filerHealthzHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Server", "SeaweedFS "+version.VERSION)
 	if _, err := fs.filer.Store.FindEntry(context.Background(), filer.TopicsDir); err != nil && err != filer_pb.ErrNotFound {
 		glog.Warningf("filerHealthzHandler FindEntry: %+v", err)
 		w.WriteHeader(http.StatusServiceUnavailable)
-	} else {
-		w.WriteHeader(http.StatusOK)
+		return
 	}
+	if !fs.lockRingHealthy() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }

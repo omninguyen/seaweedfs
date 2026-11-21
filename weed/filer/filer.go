@@ -80,6 +80,7 @@ type Filer struct {
 	RemoteStorage                 *FilerRemoteStorage
 	BuildGuardedRemoteClient      RemoteStorageClientBuilder
 	AllowUntrustedRemoteEndpoints bool
+	webhooks                      managedWebhooks
 	lazyFetchGroup                singleflight.Group
 	lazyListGroup                 singleflight.Group
 	Dlm                           *lock_manager.DistributedLockManager
@@ -88,6 +89,8 @@ type Filer struct {
 	DeletionRetryQueue            *DeletionRetryQueue
 	EmptyFolderCleaner            *empty_folder_cleanup.EmptyFolderCleaner
 	EmptyFolderCleanupDelay       time.Duration
+	manifestRetryOnce             sync.Once
+	manifestRetryQueue            *DeletionRetryQueue
 	persistedLogCache             *persistedLogCache
 	metaLogInflight               metaLogInflight
 	remoteTombstones              *remoteDeletionTombstones
@@ -106,9 +109,11 @@ type Filer struct {
 	// to the store so a restart does not leak chunks. Guarded by
 	// deletionLedgerLock; nil-safe for Filer literals in tests.
 	// pendingDeletions maps each id to its enqueue epoch so an expiry-forget
-	// cannot erase a re-queued id.
+	// cannot erase a re-queued id. fsyncDeletions marks pending ids whose
+	// volume deletes must be durable.
 	deletionLedgerLock  sync.Mutex
 	pendingDeletions    map[string]uint64
+	fsyncDeletions      map[string]struct{}
 	deletionSeq         uint64
 	deletionLedgerDirty bool
 	deletionLedgerParts int
@@ -698,9 +703,11 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 				glog.V(3).InfofCtx(ctx, "mkdir %s: %v", dirPath, mkdirErr)
 				return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
 			}
-		} else if !strings.HasPrefix("/"+util.Join(dirParts[:]...), SystemLogDir) {
+		} else if !metadataEventsSuppressed(ctx) && !strings.HasPrefix("/"+util.Join(dirParts[:]...), SystemLogDir) {
 			f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
 		} else {
+			// No event adopts this stamp: a suppressing caller (rename) covers
+			// only its own entry, not the parents created on the way.
 			f.releaseEntryCommitTsNs(dirEntry.CommitTsNs)
 		}
 
@@ -726,7 +733,11 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 			f.releaseEntryCommitTsNs(dirEntry.CommitTsNs)
 			return fmt.Errorf("promote %s to directory: %v", dirPath, updateErr)
 		}
-		f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
+		if metadataEventsSuppressed(ctx) {
+			f.releaseEntryCommitTsNs(dirEntry.CommitTsNs)
+		} else {
+			f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
+		}
 	}
 
 	return nil

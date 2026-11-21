@@ -593,7 +593,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 			}
 		}
 		//updated needle
-		if !increIdxEntry.offset.IsZero() && increIdxEntry.size != 0 && increIdxEntry.size.IsValid() {
+		if !increIdxEntry.offset.IsZero() && !increIdxEntry.size.IsDeleted() {
 			//even the needle cache in memory is hit, the need_bytes is correct
 			glog.V(4).Infof("file %d offset %d size %d", key, increIdxEntry.offset.ToActualOffset(), increIdxEntry.size)
 			var needleBytes []byte
@@ -602,7 +602,9 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 				v.checkReadWriteError(err)
 				return fmt.Errorf("ReadNeedleBlob %s key %d offset %d size %d failed: %w", oldDatFile.Name(), key, increIdxEntry.offset.ToActualOffset(), increIdxEntry.size, err)
 			}
-			dstDatBackend.Write(needleBytes)
+			if _, err = dstDatBackend.Write(needleBytes); err != nil {
+				return fmt.Errorf("write %s key %d failed: %w", dst.Name(), key, err)
+			}
 			idxEntryBytes = needle_map.ToBytes(key, ToOffset(offset), increIdxEntry.size)
 		} else { //deleted needle
 			//fakeDelNeedle's default Data field is nil
@@ -700,13 +702,17 @@ func (v *Volume) copyDataAndGenerateIndexFile(opts *CompactOptions) (err error) 
 		return err
 	}
 
-	return nm.SaveToIdx(opts.destIdxPath)
+	if err = nm.SaveToIdx(opts.destIdxPath); err != nil {
+		return err
+	}
+	return v.loadTmpNeedleMap(opts.destIdxPath)
 }
 
 func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	var (
 		srcDatBackend, dstDatBackend backend.BackendStorageFile
 		dataFile                     *os.File
+		skippedNeedles               int
 	)
 	if dstDatBackend, err = backend.CreateVolumeFile(opts.destDatPath, opts.PreallocateBytes, 0); err != nil {
 		return err
@@ -718,6 +724,9 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 		// of leaving a half-written .cpd that CommitCompact would rename live.
 		if closeErr := dstDatBackend.Close(); closeErr != nil && err == nil {
 			err = fmt.Errorf("close compacted dat %s: %v", opts.destDatPath, closeErr)
+		}
+		if err == nil && skippedNeedles > 0 {
+			stats.VolumeServerVacuumingDroppedNeedlesCounter.WithLabelValues(v.Collection).Add(float64(skippedNeedles))
 		}
 	}()
 
@@ -744,7 +753,6 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 
 	writeThrottler := util.NewWriteThrottler(opts.MaxBytesPerSecond)
 	var (
-		skippedNeedles    int
 		skippedDataBytes  uint64
 		expectedLiveBytes uint64
 	)
@@ -777,7 +785,7 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 			if size.IsValid() {
 				skippedDataBytes += uint64(size)
 			}
-			glog.Warningf("vacuum volume %d: dropping unreadable needle key=%d offset=%d size=%d: %v",
+			glog.Errorf("vacuum volume %d: dropping unreadable needle key=%d offset=%d size=%d: %v",
 				v.Id, value.Key, offset.ToActualOffset(), size, err)
 			return nil
 		}
@@ -825,15 +833,21 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	if err != nil {
 		return err
 	}
+	return v.loadTmpNeedleMap(opts.destIdxPath)
+}
 
-	indexFile, err := os.OpenFile(opts.destIdxPath, os.O_RDWR|os.O_CREATE, 0644)
+// loadTmpNeedleMap loads the compacted index into v.tmpNm. CommitCompact's
+// makeupDiff applies the writes and deletes that landed during the copy on top
+// of it, so every compaction path must build it.
+func (v *Volume) loadTmpNeedleMap(idxPath string) (err error) {
+	indexFile, err := os.OpenFile(idxPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
-		glog.Errorf("cannot open Volume Index %s: %v", opts.destIdxPath, err)
+		glog.Errorf("cannot open Volume Index %s: %v", idxPath, err)
 		return err
 	}
 	defer func() {
 		if syncErr := indexFile.Sync(); syncErr != nil && err == nil {
-			err = fmt.Errorf("sync compacted idx %s: %v", opts.destIdxPath, syncErr)
+			err = fmt.Errorf("sync compacted idx %s: %v", idxPath, syncErr)
 		}
 		indexFile.Close()
 	}()

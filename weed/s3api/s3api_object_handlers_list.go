@@ -69,6 +69,13 @@ type listBucketResultV1 struct {
 }
 
 func toListBucketResultV1(in ListBucketResult) listBucketResultV1 {
+	if in.EncodingType == s3.EncodingTypeUrl {
+		// botocore does not decode the V1 Prefix, so it stays raw unless XML cannot carry it.
+		if !isXMLText(in.Prefix) {
+			in.Prefix = urlPathEscape(in.Prefix)
+		}
+		in.Delimiter = urlPathEscape(in.Delimiter)
+	}
 	return listBucketResultV1{
 		Metadata:       in.Metadata,
 		Name:           in.Name,
@@ -155,6 +162,8 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	if encodingTypeUrl {
 		responseV2.EncodingType = s3.EncodingTypeUrl
 		responseV2.StartAfter = urlPathEscape(startAfter)
+		responseV2.Prefix = urlPathEscape(response.Prefix)
+		responseV2.Delimiter = urlPathEscape(response.Delimiter)
 	}
 
 	glog.V(3).Infof("ListObjectsV2Handler response: %+v", responseV2)
@@ -1611,7 +1620,9 @@ func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter stri
 	token = OptionalString{set: values.Has("continuation-token"), string: values.Get("continuation-token")}
 	startAfter = values.Get("start-after")
 	delimiter = values.Get("delimiter")
-	encodingTypeUrl = values.Get("encoding-type") == s3.EncodingTypeUrl
+	if encodingTypeUrl, errCode = parseEncodingType(values); errCode != s3err.ErrNone {
+		return
+	}
 	maxkeys, errCode = parseMaxKeys(values.Get("max-keys"))
 	if errCode != s3err.ErrNone {
 		return
@@ -1626,7 +1637,9 @@ func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, 
 	prefix = values.Get("prefix")
 	marker = values.Get("marker")
 	delimiter = values.Get("delimiter")
-	encodingTypeUrl = values.Get("encoding-type") == "url"
+	if encodingTypeUrl, errCode = parseEncodingType(values); errCode != s3err.ErrNone {
+		return
+	}
 	maxkeys, errCode = parseMaxKeys(values.Get("max-keys"))
 	if errCode != s3err.ErrNone {
 		return
@@ -1634,6 +1647,18 @@ func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, 
 	allowUnordered = values.Get("allow-unordered") == "true"
 	errCode = s3err.ErrNone
 	return
+}
+
+// parseEncodingType reports whether encoding-type=url was requested. AWS
+// accepts no other encoding and answers anything else with InvalidArgument.
+func parseEncodingType(values url.Values) (bool, s3err.ErrorCode) {
+	switch values.Get("encoding-type") {
+	case "":
+		return false, s3err.ErrNone
+	case s3.EncodingTypeUrl:
+		return true, s3err.ErrNone
+	}
+	return false, s3err.ErrInvalidEncodingMethod
 }
 
 // parseMaxKeys parses the max-keys query parameter. Like AWS S3, any integer in

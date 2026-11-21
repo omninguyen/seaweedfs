@@ -112,7 +112,7 @@ func GetAuthenticated(ctx context.Context, url, jwt string) ([]byte, bool, error
 	response, err := GetGlobalHttpClient().Do(request)
 	if err != nil {
 		if ctx.Err() == nil {
-			recordUnreachable(request.URL.Host)
+			recordUnreachable(request.URL.Host, err)
 		}
 		return nil, true, err
 	}
@@ -188,6 +188,9 @@ func Delete(url string, jwt string) error {
 		if s, ok := m["error"].(string); ok {
 			return errors.New(s)
 		}
+	}
+	if len(body) == 0 {
+		return errors.New(resp.Status)
 	}
 	return errors.New(string(body))
 }
@@ -401,7 +404,7 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 	r, err := GetGlobalHttpClient().Do(req)
 	if err != nil {
 		if ctx.Err() == nil {
-			recordUnreachable(req.URL.Host)
+			recordUnreachable(req.URL.Host, err)
 		}
 		return true, err
 	}
@@ -680,14 +683,6 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 				urlString = url.PathEscape(urlString)
 			}
 			shouldRetry, err = ReadUrlAsStream(ctx, AppendQueryParameter(urlString, "readDeleted", "true"), string(jwt), cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
-				// Check for context cancellation during data processing
-				select {
-				case <-ctx.Done():
-					// Stop processing data when context is cancelled
-					return
-				default:
-				}
-
 				if n < len(buffer) {
 					x := copy(buffer[n:], data)
 					n += x
@@ -801,7 +796,7 @@ func readUrlDirectToBuffer(ctx context.Context, fileUrl, jwt string, buffer []by
 	r, err := GetGlobalHttpClient().Do(req)
 	if err != nil {
 		if ctx.Err() == nil {
-			recordUnreachable(req.URL.Host)
+			recordUnreachable(req.URL.Host, err)
 		}
 		return 0, true, err
 	}

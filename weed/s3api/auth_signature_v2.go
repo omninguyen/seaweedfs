@@ -81,7 +81,11 @@ var resourceList = []string{
 }
 
 // Verify if request has AWS Signature Version '2'.
+// SigV2 signs with HMAC-SHA1, so it is refused under fips140=only.
 func (iam *IdentityAccessManagement) isReqAuthenticatedV2(r *http.Request) (*Identity, s3err.ErrorCode) {
+	if fips140Enforced() {
+		return nil, s3err.ErrSignatureVersionNotSupported
+	}
 	var identity *Identity
 	var errCode s3err.ErrorCode
 	if isRequestSignatureV2(r) {
@@ -95,7 +99,12 @@ func (iam *IdentityAccessManagement) isReqAuthenticatedV2(r *http.Request) (*Ide
 	return identity, bindSignedPayload(r, unsignedPayload)
 }
 
+// doesPolicySignatureV2Match verifies a SigV2 POST policy signature. It signs
+// with HMAC-SHA1, so it is refused under fips140=only.
 func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(ctx context.Context, formValues http.Header) (*Identity, s3err.ErrorCode) {
+	if fips140Enforced() {
+		return nil, s3err.ErrSignatureVersionNotSupported
+	}
 
 	accessKey := formValues.Get("AWSAccessKeyId")
 	if accessKey == "" {
@@ -171,7 +180,11 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 		return nil, s3err.ErrAccessDenied
 	}
 
-	expectedAuth := signatureV2(cred, r.Method, r.URL.EscapedPath(), r.URL.Query().Encode(), r.Header)
+	resource, errCode := iam.encodedResourceV2(r)
+	if errCode != s3err.ErrNone {
+		return nil, errCode
+	}
+	expectedAuth := signatureV2(cred, r.Method, resource, r.URL.Query().Encode(), r.Header)
 
 	// Extract signatures from both auth headers
 	v2Signature := ""
@@ -250,7 +263,11 @@ func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request
 		return nil, s3err.ErrAccessDenied
 	}
 
-	expectedSignature := preSignatureV2(cred, r.Method, r.URL.EscapedPath(), r.URL.Query().Encode(), r.Header, expires)
+	resource, errCode := iam.encodedResourceV2(r)
+	if errCode != s3err.ErrNone {
+		return nil, errCode
+	}
+	expectedSignature := preSignatureV2(cred, r.Method, resource, r.URL.Query().Encode(), r.Header, expires)
 	if !compareSignatureV2(signature, expectedSignature) {
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
@@ -260,6 +277,19 @@ func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request
 }
 
 // validateV2AuthHeader validates AWS Signature Version '2' authentication header.
+// encodedResourceV2 returns the request path with the virtual-hosted bucket
+// prefixed, as signature V2 signs it.
+func (iam *IdentityAccessManagement) encodedResourceV2(r *http.Request) (string, s3err.ErrorCode) {
+	bucket, ok := bucketFromVirtualHost(r.Host, iam.domain)
+	if !ok {
+		return r.URL.EscapedPath(), s3err.ErrNone
+	}
+	if routedBucket, _ := s3_constants.GetBucketAndObject(r); routedBucket != "" && routedBucket != bucket {
+		return "", s3err.ErrAccessDenied
+	}
+	return "/" + bucket + r.URL.EscapedPath(), s3err.ErrNone
+}
+
 func validateV2AuthHeader(v2Auth string) (accessKey string, errCode s3err.ErrorCode) {
 	if v2Auth == "" {
 		return "", s3err.ErrAuthHeaderEmpty

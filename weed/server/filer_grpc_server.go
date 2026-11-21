@@ -245,6 +245,12 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	newEntry.Chunks = chunks
 	so, err := fs.applyStorageDefaultsToEntry(ctx, newEntry)
 	if err != nil {
+		if errors.Is(err, ErrReadOnly) {
+			// A verdict, reported like AssignVolume does. As a status-less error
+			// it reached clients as codes.Unknown, which they retry like a filer
+			// outage: a mount held every close() of a new file for 7 s.
+			return &filer_pb.CreateEntryResponse{Error: err.Error(), ErrorCode: filer_pb.FilerError_READ_ONLY}, nil
+		}
 		return nil, err
 	}
 
@@ -283,12 +289,21 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		existing = current
 	}
 
+	if req.Fsync {
+		ctx = filer.WithSyncWrite(ctx)
+	}
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	createErr := fs.filer.CreateEntry(ctx, newEntry, existing, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory, so.MaxFileNameLength)
 
 	if createErr == nil {
-		fs.filer.DeleteChunksNotRecursive(garbage)
 		resp.MetadataEvent = eventSink.Last()
+		// garbage holds chunks the request's own list covers; when the
+		// create replaced one name of a hard-linked file, the ones the file
+		// still has stay for its other names
+		if replaced := resp.MetadataEvent.GetEventNotification().GetOldEntry(); replaced != nil {
+			garbage = fs.filer.KeepHardLinkedChunks(ctx, filer.FromPbEntry(req.Directory, replaced), newEntry, garbage)
+		}
+		fs.filer.DeleteChunksNotRecursive(garbage)
 	} else {
 		glog.V(3).InfofCtx(ctx, "CreateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), createErr)
 		resp.Error = createErr.Error()
@@ -992,6 +1007,9 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	resp := &filer_pb.UpdateEntryResponse{LogTsNs: logTsNs, LogSignature: fs.filer.Signature}
 	fs.filer.StampEntryCommitTsNs(newEntry)
 	if err = fs.filer.UpdateEntry(ctx, entry, newEntry, req.IsFromOtherCluster); err == nil {
+		// an update that is not the same hard link as entry dropped entry's
+		// link; the file's other names still read entry's chunks
+		garbage = fs.filer.KeepHardLinkedChunks(ctx, entry, newEntry, garbage)
 		fs.filer.DeleteChunksNotRecursive(garbage)
 
 		fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, req.IsFromOtherCluster, req.Signatures)
@@ -1079,11 +1097,12 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	fullpath := util.NewFullPath(req.Directory, req.EntryName)
 
 	lockClient := cluster.NewLockClient(fs.grpcDialOption, fs.option.Host)
-	lock := lockClient.NewShortLivedLock(string(fullpath), string(fs.option.Host))
+	lock := lockClient.NewBlockingLongLivedLock(string(fullpath), string(fs.option.Host), 0)
 	if lock == nil {
 		return nil, fmt.Errorf("failed to acquire lock for %s", fullpath)
 	}
-	defer lock.StopShortLivedLock()
+	defer lock.Stop()
+	generation := lock.Generation()
 
 	// The cluster lock serializes appenders across filers; the path lock makes
 	// this read-modify-write atomic against conditional updates and deletes on
@@ -1119,10 +1138,19 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 		glog.WarningfCtx(ctx, "applyStorageDefaultsToEntry: %v", err)
 		return &filer_pb.AppendToEntryResponse{}, err
 	}
-	entry.Chunks, err = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), fs.filer.DeleteChunksNotRecursive, entry.GetChunks())
+	appended := entry.GetChunks()
+	entry.Chunks, err = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), fs.filer.DeleteChunksNotRecursive, appended)
 	if err != nil {
 		// the append is still correct with the flat list
 		glog.V(0).InfofCtx(ctx, "MaybeManifestize %s: %v", fullpath, err)
+	}
+
+	// Best effort: a lock lost, or lost and taken again, since the entry was
+	// read means another filer may have appended in between. The store write
+	// is not conditional, so a lapse after this check still goes unnoticed.
+	if !lock.IsLocked() || lock.Generation() != generation {
+		fs.filer.DeleteChunksNotRecursive(filer.DoMinusChunks(entry.GetChunks(), appended))
+		return &filer_pb.AppendToEntryResponse{}, fmt.Errorf("lost distributed lock for %s; retry the request", fullpath)
 	}
 
 	err = fs.filer.CreateEntry(context.Background(), entry, nil, false, false, nil, false, fs.filer.MaxFilenameLength)

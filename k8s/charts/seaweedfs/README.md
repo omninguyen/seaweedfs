@@ -30,10 +30,12 @@ so your deployment will be spread/HA.
 
 The chart's templates render with Helm 3.16.3 and newer versions tested in CI.
 Earlier Helm versions are not covered by this chart's compatibility checks.
-When JWT signing is enabled, a live upgrade reuses keys from the existing
-security ConfigMap (including the legacy ConfigMap name); a key absent from
-that ConfigMap is generated. Plain `helm template` does not read cluster state;
-use an install and upgrade against a cluster to check key persistence.
+When JWT signing is enabled, `security.toml` is kept in the
+`<fullname>-security-config` Secret. A live upgrade reuses keys from that
+Secret, or from the security ConfigMap of earlier chart versions (including
+the legacy ConfigMap name); a key absent from them is generated. Plain
+`helm template` does not read cluster state; use an install and upgrade
+against a cluster to check key persistence.
 
 The key reader supports single-line quoted TOML strings in JWT sections,
 including indented assignments, quoted key names, and bare or simply quoted
@@ -569,6 +571,8 @@ s3:
 
 With `rules` left empty the route sends all traffic to the component's own Service and port. A rule may set `matches`, `filters`, `timeouts` and `backendRefs`, and a rule without `backendRefs` still routes to that Service. In all-in-one mode the master, volume, filer and s3 routes target the all-in-one Service. When S3 runs only on the filer (`filer.s3.enabled` without `s3.enabled`), the s3 route uses `filer.s3.port`.
 
+Outside all-in-one mode, the volume Ingress and the default volume route target the `client-volume` Service, which lists only Ready volume pods. The `volume` Service also publishes pods that are not Ready yet, so their DNS records can exist before readiness. An explicit `backendRefs` entry that names the `volume` Service can therefore reach a volume server before it is Ready. Name the `client-volume` Service instead, with `volume.port`, and copy its `metadata.name` from `helm template` because long release names are truncated.
+
 ## Network Policies
 
 In a namespace with a default-deny policy the install hangs: the components cannot resolve each other, and the post-install bucket hook waits on the master and filer until it gives up. `networkPolicy.enabled` renders one `NetworkPolicy` per component, selecting its pods by the standard `app.kubernetes.io/{name,instance,component}` labels and admitting traffic from the other pods of the release on the ports that component listens on.
@@ -718,7 +722,7 @@ The bundled engine images support Linux amd64 and arm64. Use `vector.imageOverri
 
 `global.seaweedfs.enableSecurity` provisions and mounts the vector certificate and shared security configuration. With external certificates, provide the `<fullname>-vector-cert` secret (`my-seaweedfs-vector-cert` for release `my`). `fullname` follows `seaweedfs.fullname`, including `fullnameOverride`, `nameOverride`, and DNS-name truncation. Provide this secret alongside the existing CA and client secrets.
 
-The default `vector.metricsPort: 0` and TCP probes support existing engine images. The default 4.53 image does not accept metrics flags; enabling metrics with it is rejected at render time. For engine builds with `/metrics`, `/health`, and `/ready`, set `vector.imageOverride` to that compatible image and `vector.metricsPort: 9329`; readiness then checks master registration. Enabling `global.seaweedfs.monitoring.enabled` also creates the vector ServiceMonitor. NetworkPolicy includes the configured gRPC and metrics ports.
+The default `vector.metricsPort: 0` keeps TCP probes. Set `vector.metricsPort: 9329` to serve `/metrics`, `/health`, and `/ready` from the engine; readiness then checks master registration. Images older than 4.54 do not accept the metrics flag, so leave metrics off when pinning `image.tag` or `vector.imageOverride` to one. Enabling `global.seaweedfs.monitoring.enabled` also creates the vector ServiceMonitor. NetworkPolicy includes the configured gRPC and metrics ports.
 
 
 To provision vector buckets during installation and upgrades, set:

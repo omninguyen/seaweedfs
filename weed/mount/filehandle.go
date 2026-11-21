@@ -149,6 +149,25 @@ func (fh *FileHandle) GetEntry() *LockedEntry {
 	return fh.entry
 }
 
+// entrySnapshot copies the handle's entry under the locks of both of its
+// writers, as GetAttr reads it: Write and the metadata flush change size,
+// times and chunks under the handle lock, while async upload workers append
+// chunks under the LockedEntry lock.
+func (fh *FileHandle) entrySnapshot(dir string) *filer.Entry {
+	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("entrySnapshot", fh.fh, util.SharedLock)
+	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+	fh.entry.RLock()
+	var snapshot *filer_pb.Entry
+	if fh.entry.Entry != nil {
+		snapshot = proto.Clone(fh.entry.Entry).(*filer_pb.Entry)
+	}
+	fh.entry.RUnlock()
+	if snapshot == nil {
+		return nil
+	}
+	return filer.FromPbEntry(dir, snapshot)
+}
+
 func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 	if entry != nil {
 		fileSize := filer.FileSize(entry)
@@ -222,6 +241,40 @@ func (fh *FileHandle) rebaseEntry(merged, sent *filer_pb.Entry) {
 		}
 		fh.chunkViewStale.Store(err != nil)
 	})
+}
+
+// installRewrittenChunks replaces the chunks a merge rewrote, taken from
+// snapshot, with rewritten, and moves the read view to the result: the filer
+// deletes the replaced chunks once the merge is committed, and a view still
+// naming them would send reads to needles a vacuum removes. Chunks attached
+// after snapshot was taken were not part of the merge and stay.
+func (fh *FileHandle) installRewrittenChunks(snapshot, rewritten []*filer_pb.FileChunk) {
+	fh.UpdateEntry(func(e *filer_pb.Entry) {
+		chunks := withChunksAttachedSince(snapshot, rewritten, e.Chunks)
+		e.Chunks = chunks
+		err := fh.entryChunkGroup.SetChunks(chunks)
+		if err != nil {
+			glog.Warningf("merge %s: resolve chunks: %v", fh.FullPath(), err)
+		}
+		fh.chunkViewStale.Store(err != nil)
+	})
+}
+
+// withChunksAttachedSince returns processed, the chunks a flush made from
+// snapshot, followed by the chunks uploads attached to current after snapshot
+// was taken: they attach without the handle lock.
+func withChunksAttachedSince(snapshot, processed, current []*filer_pb.FileChunk) []*filer_pb.FileChunk {
+	inSnapshot := make(map[string]bool, len(snapshot))
+	for _, c := range snapshot {
+		inSnapshot[contentFileIdKey(c)] = true
+	}
+	chunks := append([]*filer_pb.FileChunk{}, processed...)
+	for _, c := range current {
+		if !inSnapshot[contentFileIdKey(c)] {
+			chunks = append(chunks, c)
+		}
+	}
+	return chunks
 }
 
 // refreshChunkView retries a read view whose manifest resolution failed.

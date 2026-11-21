@@ -1,6 +1,8 @@
 package plugin
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -86,7 +88,7 @@ func TestPluginPersistsMonitorStateAfterJobUpdates(t *testing.T) {
 		Success:     true,
 		Result:      &plugin_pb.JobResult{Summary: "done"},
 		CompletedAt: timestamppb.New(time.Now().UTC()),
-	})
+	}, nil)
 	pluginSvc.Shutdown()
 
 	store, err := NewConfigStore(dataDir)
@@ -230,6 +232,62 @@ func TestHandleJobProgressUpdateCarriesWorkerIDInActivities(t *testing.T) {
 	}
 }
 
+// A worker that leaves the state out of its progress (as seaweed-worker did)
+// must still have its completion applied.
+func TestProgressWithoutStateKeepsJobRunningUntilCompleted(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	job := &plugin_pb.JobSpec{JobId: "job-no-state", JobType: "lance_vector_index"}
+	pluginSvc.trackExecutionStart("req-no-state", "worker-a", job, 1)
+
+	pluginSvc.handleJobProgressUpdate("worker-a", &plugin_pb.JobProgressUpdate{
+		RequestId:       "req-no-state",
+		JobId:           "job-no-state",
+		JobType:         "lance_vector_index",
+		ProgressPercent: 10,
+		Stage:           "indexing",
+	})
+	tracked, ok := pluginSvc.GetTrackedJob("job-no-state")
+	if !ok || tracked.State != "job_state_running" {
+		t.Fatalf("state after progress = %+v, want job_state_running", tracked)
+	}
+
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		RequestId: "req-no-state",
+		JobId:     "job-no-state",
+		JobType:   "lance_vector_index",
+		Success:   true,
+		Result:    &plugin_pb.JobResult{Summary: "indexed"},
+	}, nil)
+
+	tracked, ok = pluginSvc.GetTrackedJob("job-no-state")
+	if !ok || tracked.State != "job_state_succeeded" || tracked.Progress != 100 {
+		t.Fatalf("state after completion = %+v, want job_state_succeeded at 100", tracked)
+	}
+	foundCompletion := false
+	for _, activity := range pluginSvc.ListActivities("lance_vector_index", 0) {
+		if activity.JobID == "job-no-state" && activity.Source == "worker_completion" {
+			foundCompletion = true
+		}
+	}
+	if !foundCompletion {
+		t.Fatalf("expected a worker_completion activity")
+	}
+	history, err := pluginSvc.store.LoadRunHistory("lance_vector_index")
+	if err != nil {
+		t.Fatalf("LoadRunHistory: %v", err)
+	}
+	if history == nil || len(history.SuccessfulRuns) != 1 {
+		t.Fatalf("run history = %+v, want one successful run", history)
+	}
+}
+
 func TestHandleJobProgressUpdateWithoutJobIDTracksDetectionActivities(t *testing.T) {
 	t.Parallel()
 
@@ -315,7 +373,7 @@ func TestHandleJobCompletedCarriesWorkerIDInActivitiesAndRunHistory(t *testing.T
 			},
 		},
 		CompletedAt: timestamppb.Now(),
-	})
+	}, nil)
 	pluginSvc.Shutdown()
 
 	activities := pluginSvc.ListActivities("vacuum", 0)
@@ -570,7 +628,7 @@ func TestBuildJobDetailIncludesActivitiesAndRunRecord(t *testing.T) {
 			},
 		},
 		CompletedAt: timestamppb.Now(),
-	})
+	}, nil)
 	pluginSvc.Shutdown()
 
 	detail, found, err := pluginSvc.BuildJobDetail("job-detail", 100, 5)
@@ -591,6 +649,164 @@ func TestBuildJobDetailIncludesActivitiesAndRunRecord(t *testing.T) {
 	}
 	if detail.Job.ResultOutputValues == nil {
 		t.Fatalf("expected result output values")
+	}
+}
+
+func TestBuildJobDetailFallsBackToRunRecordAfterPrune(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.trackExecutionStart("req-pruned", "worker-p", &plugin_pb.JobSpec{
+		JobId:   "job-pruned",
+		JobType: "vacuum",
+	}, 1)
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		RequestId:    "req-pruned",
+		JobId:        "job-pruned",
+		JobType:      "vacuum",
+		Success:      false,
+		ErrorMessage: "volume busy",
+		CompletedAt:  timestamppb.Now(),
+	}, nil)
+
+	// What pruneTrackedJobsLocked does once newer jobs push this one out.
+	pluginSvc.jobsMu.Lock()
+	delete(pluginSvc.jobs, "job-pruned")
+	pluginSvc.jobsMu.Unlock()
+	if err := pluginSvc.store.DeleteJobDetail("job-pruned"); err != nil {
+		t.Fatalf("DeleteJobDetail: %v", err)
+	}
+
+	detail, found, err := pluginSvc.BuildJobDetail("job-pruned", 100, 5)
+	if err != nil {
+		t.Fatalf("BuildJobDetail error: %v", err)
+	}
+	if !found || detail == nil || detail.Job == nil {
+		t.Fatalf("expected a detail built from the run record")
+	}
+	if detail.Job.JobType != "vacuum" || detail.Job.WorkerID != "worker-p" || detail.Job.State != StateFailed {
+		t.Fatalf("unexpected job from run record: %+v", detail.Job)
+	}
+	if detail.RunRecord == nil || detail.RunRecord.Outcome != RunOutcomeError {
+		t.Fatalf("expected the error run record, got=%+v", detail.RunRecord)
+	}
+
+	if detail.Job.Progress != 0 {
+		t.Fatalf("failed job progress = %v, want 0", detail.Job.Progress)
+	}
+
+	pluginSvc.trackExecutionStart("req-pruned-ok", "worker-p", &plugin_pb.JobSpec{
+		JobId:   "job-pruned-ok",
+		JobType: "vacuum",
+	}, 1)
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		RequestId:   "req-pruned-ok",
+		JobId:       "job-pruned-ok",
+		JobType:     "vacuum",
+		Success:     true,
+		CompletedAt: timestamppb.Now(),
+	}, nil)
+	pluginSvc.jobsMu.Lock()
+	delete(pluginSvc.jobs, "job-pruned-ok")
+	pluginSvc.jobsMu.Unlock()
+	if err := pluginSvc.store.DeleteJobDetail("job-pruned-ok"); err != nil {
+		t.Fatalf("DeleteJobDetail: %v", err)
+	}
+	detail, found, err = pluginSvc.BuildJobDetail("job-pruned-ok", 100, 0)
+	if err != nil || !found || detail == nil || detail.Job == nil {
+		t.Fatalf("pruned successful job: found=%v err=%v", found, err)
+	}
+	if detail.Job.State != StateSucceeded || detail.Job.Progress != 100 {
+		t.Fatalf("pruned successful job: state=%q progress=%v", detail.Job.State, detail.Job.Progress)
+	}
+
+	if _, found, err := pluginSvc.BuildJobDetail("job-unknown", 100, 0); err != nil || found {
+		t.Fatalf("unknown job: found=%v err=%v", found, err)
+	}
+}
+
+func TestBuildJobDetailUsesNewestRunRecord(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	first := time.Now().UTC().Add(-time.Minute)
+	second := first.Add(30 * time.Second)
+	for _, record := range []*JobRunRecord{
+		{RunID: "req-1", JobID: "job-rerun", JobType: "vacuum", Outcome: RunOutcomeSuccess, CompletedAt: &first},
+		{RunID: "req-2", JobID: "job-rerun", JobType: "vacuum", Outcome: RunOutcomeError, Message: "volume busy", CompletedAt: &second},
+	} {
+		if err := pluginSvc.store.AppendRunRecord("vacuum", record); err != nil {
+			t.Fatalf("AppendRunRecord: %v", err)
+		}
+	}
+
+	detail, found, err := pluginSvc.BuildJobDetail("job-rerun", 100, 0)
+	if err != nil || !found || detail == nil || detail.Job == nil {
+		t.Fatalf("BuildJobDetail: found=%v err=%v", found, err)
+	}
+	if detail.Job.State != StateFailed {
+		t.Fatalf("job state = %q, want %q", detail.Job.State, StateFailed)
+	}
+	if detail.RunRecord == nil || detail.RunRecord.RunID != "req-2" {
+		t.Fatalf("expected the newer error run, got=%+v", detail.RunRecord)
+	}
+
+	third := second.Add(30 * time.Second)
+	if err := pluginSvc.store.AppendRunRecord("volume_balance", &JobRunRecord{
+		RunID: "req-3", JobID: "job-rerun", JobType: "volume_balance", Outcome: RunOutcomeSuccess, CompletedAt: &third,
+	}); err != nil {
+		t.Fatalf("AppendRunRecord: %v", err)
+	}
+	detail, found, err = pluginSvc.BuildJobDetail("job-rerun", 100, 0)
+	if err != nil || !found || detail == nil || detail.Job == nil {
+		t.Fatalf("BuildJobDetail: found=%v err=%v", found, err)
+	}
+	if detail.Job.JobType != "volume_balance" || detail.RunRecord == nil || detail.RunRecord.RunID != "req-3" {
+		t.Fatalf("expected the newest run across job types, job=%+v record=%+v", detail.Job, detail.RunRecord)
+	}
+}
+
+func TestBuildJobDetailSkipsUnreadableRunHistory(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	brokenDir := filepath.Join(pluginSvc.store.baseDir, jobTypesDirName, "aaa_broken")
+	if err := os.MkdirAll(brokenDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(brokenDir, runsJSONFileName), []byte("{"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := pluginSvc.store.AppendRunRecord("vacuum", &JobRunRecord{
+		RunID: "req-1", JobID: "job-kept", JobType: "vacuum", Outcome: RunOutcomeSuccess,
+	}); err != nil {
+		t.Fatalf("AppendRunRecord: %v", err)
+	}
+
+	detail, found, err := pluginSvc.BuildJobDetail("job-kept", 100, 0)
+	if err != nil || !found || detail == nil || detail.Job == nil {
+		t.Fatalf("BuildJobDetail: found=%v err=%v", found, err)
+	}
+	if detail.Job.JobType != "vacuum" {
+		t.Fatalf("job type = %q, want vacuum", detail.Job.JobType)
+	}
+	if _, found, err := pluginSvc.BuildJobDetail("job-unknown", 100, 0); err == nil || found {
+		t.Fatalf("unknown job with an unreadable history: found=%v err=%v", found, err)
 	}
 }
 
@@ -620,7 +836,7 @@ func TestBuildJobDetailKeepsFailedJobResult(t *testing.T) {
 			},
 		},
 		CompletedAt: timestamppb.Now(),
-	})
+	}, nil)
 	pluginSvc.Shutdown()
 
 	detail, found, err := pluginSvc.BuildJobDetail("job-failed", 100, 5)
@@ -660,7 +876,7 @@ func TestRetryWithoutResultDropsFailedAttemptSummary(t *testing.T) {
 		ErrorMessage: "walk bad-a: filer down",
 		Result:       &plugin_pb.JobResult{Summary: "pass failed"},
 		CompletedAt:  timestamppb.Now(),
-	})
+	}, nil)
 	pluginSvc.trackExecutionStart("req-retry", "worker-r", job, 2)
 	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
 		RequestId:   "req-retry",
@@ -668,7 +884,7 @@ func TestRetryWithoutResultDropsFailedAttemptSummary(t *testing.T) {
 		JobType:     "s3_lifecycle",
 		Success:     true,
 		CompletedAt: timestamppb.Now(),
-	})
+	}, nil)
 	pluginSvc.Shutdown()
 
 	detail, found, err := pluginSvc.BuildJobDetail("job-retry", 100, 5)
@@ -1015,7 +1231,7 @@ func TestExpiredAttemptIgnoresItsLateReports(t *testing.T) {
 		JobType:      jobType,
 		RequestId:    "req-late-1",
 		ErrorMessage: "context canceled",
-	})
+	}, nil)
 
 	got, _ := pluginSvc.GetTrackedJob(jobID)
 	if got == nil || got.State != StateFailed || got.ErrorMessage != "stuck" {
@@ -1035,7 +1251,7 @@ func TestExpiredAttemptIgnoresItsLateReports(t *testing.T) {
 		JobType:   jobType,
 		RequestId: "req-late-2",
 		Success:   true,
-	})
+	}, nil)
 	got, _ = pluginSvc.GetTrackedJob(jobID)
 	if got == nil || got.State != StateSucceeded {
 		t.Fatalf("expected the retry to complete, got %+v", got)

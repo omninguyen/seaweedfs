@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	awsarn "github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/google/uuid"
@@ -1134,6 +1135,10 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", "dimension must be 1..=4096")
 		return
 	}
+	if err := validateMetadataConfiguration(req.MetadataConfiguration); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
 	if err := s3tables.ValidateTagsWithLimit(req.Tags, maxResourceTags); err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
@@ -1536,10 +1541,10 @@ func (s *Server) handlePutVectors(w http.ResponseWriter, r *http.Request) {
 		catalogErr(w, err)
 		return
 	}
-	dimension := indexFromRecord(s, arns.bucket, arns.index, record).Dimension
+	index := indexFromRecord(s, arns.bucket, arns.index, record)
 	vectors := make([]*vector_pb.Vector, 0, len(req.Vectors))
 	for _, v := range req.Vectors {
-		pbVector, err := toPutVector(v, dimension)
+		pbVector, err := toPutVector(v, index.Dimension, index.MetadataConfiguration)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 			return
@@ -1557,12 +1562,18 @@ func (s *Server) handlePutVectors(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &PutVectorsResponse{})
 }
 
-func toPutVector(v *PutInputVector, dimension int32) (*vector_pb.Vector, error) {
+func toPutVector(v *PutInputVector, dimension int32, cfg *MetadataConfiguration) (*vector_pb.Vector, error) {
 	if v == nil {
 		return nil, fmt.Errorf("vectors contains a null element")
 	}
 	if v.Key == "" {
 		return nil, fmt.Errorf("vector key must not be empty")
+	}
+	if n := utf8.RuneCountInString(v.Key); n > vectorKeyMaxLength {
+		return nil, fmt.Errorf("vector key is %d characters, the maximum is %d", n, vectorKeyMaxLength)
+	}
+	if err := checkVectorMetadata(v.Key, v.Metadata, cfg); err != nil {
+		return nil, err
 	}
 	metadata, err := metadataStruct(v.Metadata)
 	if err != nil {
@@ -2100,7 +2111,7 @@ func elementMatch(field string, operand interface{}) (string, error) {
 }
 
 // jsonbString renders s as the JSON text json_extract returns for a stored
-// string: quoted, with the same escapes the jsonb serializer emits.
+// string: quoted, with the escapes serde_json emits.
 func jsonbString(s string) string {
 	var b strings.Builder
 	b.WriteByte('"')
@@ -2116,11 +2127,13 @@ func jsonbString(s string) string {
 			b.WriteString(`\r`)
 		case '\t':
 			b.WriteString(`\t`)
-		case 0:
-			b.WriteString(`\0`)
+		case '\b':
+			b.WriteString(`\b`)
+		case '\f':
+			b.WriteString(`\f`)
 		default:
-			if r < 0x20 || (r >= 0x7f && r <= 0x9f) {
-				fmt.Fprintf(&b, `\u{%x}`, r)
+			if r < 0x20 {
+				fmt.Fprintf(&b, `\u%04x`, r)
 			} else {
 				b.WriteRune(r)
 			}
@@ -2167,6 +2180,10 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 	if req.TopK <= 0 || req.TopK > vectorsMaxTopK {
 		writeError(w, http.StatusBadRequest, "ValidationException",
 			fmt.Sprintf("topK must be between 1 and %d", vectorsMaxTopK))
+		return
+	}
+	if err := checkFilterConstraints(req.Filter); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
 	if _, err := s.authorizeVector(r.Context(), r, "s3vectors:QueryVectors", arns.bucket, arns.index); err != nil {

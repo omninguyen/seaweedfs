@@ -54,10 +54,27 @@ const allowUntrustedRemoteEndpointsUsage = "if true, a read of a remote-only ent
 // that runs the embedded IAM API.
 const iamSelfServiceRequiresGrantUsage = "if true, an identity needs an explicit iam: grant to manage its own access keys (CreateAccessKey, DeleteAccessKey, UpdateAccessKey, ListAccessKeys, GetUser), as on AWS. Default allows it to every authenticated identity."
 
+const s3PreStopSecondsUsage = "seconds to keep serving after SIGTERM, with /status, /healthz and /readyz returning 503, before the S3 gateway shuts down. Gives load balancers and Kubernetes Services time to stop routing to it. 0 shuts down at once"
+
 // allowBackslashInKeyUsage documents the S3 flag keeping '\' a literal
 // object-key character instead of normalizing it to '/'. Repeated '//' in a
 // key still collapses: a filer entry name cannot contain an empty segment.
 const allowBackslashInKeyUsage = "treat backslash as a regular object-key character instead of converting it to '/' (aws-compatible; '//' still collapses)"
+
+// The S3 gateway's filer timeouts, shared by every command that runs it. They
+// decide how long a read waits on a filer it cannot reach, e.g. one across a
+// network partition that drops packets instead of refusing connections.
+const (
+	s3RoutedLookupTimeoutUsage = "deadline for an object's metadata lookup at the key's owner filer when that owner is not the gateway's current filer; past it the read asks the next filer. 0 means no deadline"
+	s3UnreachableOwnerTTLUsage = "how long an owner filer whose read just failed is skipped by owner-first reads. Raise it (e.g. 30s) where a partition can drop packets to filers, so each owner is retried less often"
+	s3VolumeLookupTimeoutUsage = "deadline for each filer's answer to a volume location lookup before the next filer is asked"
+)
+
+const (
+	defaultS3RoutedLookupTimeout = time.Second
+	defaultS3UnreachableOwnerTTL = 2 * time.Second
+	defaultS3VolumeLookupTimeout = 5 * time.Second
+)
 
 type FilerOptions struct {
 	masters                   *pb.ServerDiscovery
@@ -198,6 +215,10 @@ func init() {
 	filerS3Options.allowUntrustedRemoteEndpoints = cmdFiler.Flag.Bool("s3.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 	filerS3Options.allowBackslashInKey = cmdFiler.Flag.Bool("s3.allowBackslashInKey", false, allowBackslashInKeyUsage)
 	filerS3Options.iamSelfServiceRequiresGrant = cmdFiler.Flag.Bool("s3.iam.selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
+	filerS3Options.routedLookupTimeout = cmdFiler.Flag.Duration("s3.routedLookupTimeout", defaultS3RoutedLookupTimeout, s3RoutedLookupTimeoutUsage)
+	filerS3Options.unreachableOwnerTTL = cmdFiler.Flag.Duration("s3.unreachableOwnerTTL", defaultS3UnreachableOwnerTTL, s3UnreachableOwnerTTLUsage)
+	filerS3Options.volumeLookupTimeout = cmdFiler.Flag.Duration("s3.volumeLookupTimeout", defaultS3VolumeLookupTimeout, s3VolumeLookupTimeoutUsage)
+	filerS3Options.preStopSeconds = cmdFiler.Flag.Int("s3.preStopSeconds", 0, s3PreStopSecondsUsage)
 
 	// start webdav on filer
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
@@ -304,10 +325,11 @@ func runFiler(cmd *Command, args []string) bool {
 	// -ip.bind is unset and the bind address falls back to -ip. This must be
 	// captured before startFiler fills *f.bindIp in place.
 	filerBindIpUnset := *f.bindIp == ""
-	filerAddress := pb.NewServerAddress(*f.ip, *f.port, *f.portGrpc).String()
+	filerAddress := embeddedFilerAddress(*f.ip, *f.port, f.portGrpc)
 	startDelay := time.Duration(2)
 	if *filerStartS3 {
 		filerS3Options.filer = &filerAddress
+		filerS3Options.homeFiler = filerAddress
 		filerS3Options.ip = f.ip
 		if *filerS3Options.bindIp == "" {
 			filerS3Options.listenOnLocalhost = &filerBindIpUnset
@@ -514,8 +536,7 @@ func (fo *FilerOptions) startFiler() {
 	// is set. The key does not protect the rest of this port; that needs
 	// [grpc.filer] mTLS.
 	if credentialManager != nil {
-		adminSigningKey := security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key"))
-		iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager, adminSigningKey)
+		iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager, fs.FilerGuard())
 		// The OIDC provider and role RPCs write where S3 servers configured with
 		// filer-typed "oidcProviderStore" and "roleStore" read: this filer, at
 		// the stores' default base paths.
@@ -526,7 +547,7 @@ func (fo *FilerOptions) startFiler() {
 			iamGrpcServer.SetSTSStores(integration.NewFilerOIDCProviderStore(nil, selfAddress), roleStore)
 		}
 		iam_pb.RegisterSeaweedIdentityAccessManagementServer(grpcS, iamGrpcServer)
-		if len(adminSigningKey) == 0 {
+		if len(fs.FilerGuard().SigningKey()) == 0 {
 			glog.Warning("IAM gRPC service on filer is UNAUTHENTICATED: anyone who can reach this port can create users and policies, and its OIDC provider and role RPCs are refused; set jwt.filer_signing.key in security.toml to require an admin Bearer token")
 		} else {
 			glog.V(0).Info("Registered IAM gRPC service on filer (admin Bearer token required)")

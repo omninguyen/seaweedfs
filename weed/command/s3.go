@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -45,6 +46,7 @@ var (
 // When adding a new field, update all four flag registration sites.
 type S3Options struct {
 	filer                     *string
+	homeFiler                 string // set by an embedding command to its own filer; not a flag
 	ip                        *string
 	bindIp                    *string
 	listenOnLocalhost         *bool
@@ -88,6 +90,10 @@ type S3Options struct {
 	allowUntrustedRemoteEndpoints *bool
 	allowBackslashInKey           *bool
 	iamSelfServiceRequiresGrant   *bool
+	preStopSeconds                *int
+	routedLookupTimeout           *time.Duration
+	unreachableOwnerTTL           *time.Duration
+	volumeLookupTimeout           *time.Duration
 	// shutdownCtx, when non-nil, tells startS3Server to gracefully shut down
 	// its HTTP/gRPC servers once the ctx is cancelled, in addition to on
 	// interrupt. Used by weed mini to orchestrate an ordered shutdown.
@@ -148,6 +154,10 @@ func init() {
 	s3StandaloneOptions.allowUntrustedRemoteEndpoints = cmdS3.Flag.Bool("allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 	s3StandaloneOptions.allowBackslashInKey = cmdS3.Flag.Bool("allowBackslashInKey", false, allowBackslashInKeyUsage)
 	s3StandaloneOptions.iamSelfServiceRequiresGrant = cmdS3.Flag.Bool("iam.selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
+	s3StandaloneOptions.preStopSeconds = cmdS3.Flag.Int("preStopSeconds", 0, s3PreStopSecondsUsage)
+	s3StandaloneOptions.routedLookupTimeout = cmdS3.Flag.Duration("routedLookupTimeout", defaultS3RoutedLookupTimeout, s3RoutedLookupTimeoutUsage)
+	s3StandaloneOptions.unreachableOwnerTTL = cmdS3.Flag.Duration("unreachableOwnerTTL", defaultS3UnreachableOwnerTTL, s3UnreachableOwnerTTLUsage)
+	s3StandaloneOptions.volumeLookupTimeout = cmdS3.Flag.Duration("volumeLookupTimeout", defaultS3VolumeLookupTimeout, s3VolumeLookupTimeoutUsage)
 }
 
 var cmdS3 = &Command{
@@ -389,6 +399,7 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	s3ApiServer, s3ApiServer_err = s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
 		Filers:                    filerAddresses,
+		HomeFiler:                 pb.ServerAddress(s3opt.homeFiler),
 		Masters:                   masterAddresses,
 		Port:                      *s3opt.port,
 		Config:                    *s3opt.config,
@@ -420,6 +431,9 @@ func (s3opt *S3Options) startS3Server() bool {
 		AllowUntrustedRemoteEndpoints: *s3opt.allowUntrustedRemoteEndpoints,
 		AllowBackslashInKey:           *s3opt.allowBackslashInKey,
 		IamSelfServiceRequiresGrant:   *s3opt.iamSelfServiceRequiresGrant,
+		RoutedLookupTimeout:           *s3opt.routedLookupTimeout,
+		UnreachableOwnerTTL:           *s3opt.unreachableOwnerTTL,
+		VolumeLookupTimeout:           *s3opt.volumeLookupTimeout,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
@@ -449,17 +463,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	// The Vectors API rides the main -port listener whenever a weed-vector
 	// backend is reachable — /s3vectors/ in the SigV4 credential scope picks
 	// the vectors router.
-	vectorsHandler := http.Handler(router)
-	if vectorsRouter := s3opt.vectorsRouter(s3ApiServer, grpcDialOption, masterAddresses, filerGroup); vectorsRouter != nil {
-		vr, mainRouter := vectorsRouter, router
-		vectorsHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if isVectorsRequest(r) {
-				vr.ServeHTTP(w, r)
-				return
-			}
-			mainRouter.ServeHTTP(w, r)
-		})
-	}
+	vectorsHandler := s3Handler(router, s3opt.vectorsRouter(s3ApiServer, grpcDialOption, masterAddresses, filerGroup))
 
 	if runtime.GOOS != "windows" {
 		localSocket := *s3opt.localSocket
@@ -612,14 +616,45 @@ func (s3opt *S3Options) startS3Server() bool {
 
 func (s3opt *S3Options) newShutdown(stopGrpc func(), s3ApiServer *s3api.S3ApiServer, httpServers []*http.Server) func() {
 	shutdown := newGracefulShutdown(stopGrpc, s3ApiServer.Shutdown, httpServers...)
-	grace.OnInterrupt(shutdown)
+	var cancelled <-chan struct{}
 	if s3opt.shutdownCtx != nil {
+		cancelled = s3opt.shutdownCtx.Done()
 		go func() {
-			<-s3opt.shutdownCtx.Done()
+			<-cancelled
 			shutdown()
 		}()
 	}
+	preStop := sync.OnceFunc(preStopWait(s3ApiServer.StartDraining, s3opt.preStopDelay(), cancelled))
+	// The wait has to finish before weed mini cancels shutdownCtx, and before
+	// weed server shuts down the filer and volume server, whose hooks may be
+	// registered after this one.
+	beforeMiniClientsShutdown(preStop)
+	grace.OnInterruptFirst(preStop)
+	grace.OnInterrupt(shutdown)
 	return shutdown
+}
+
+func (s3opt *S3Options) preStopDelay() time.Duration {
+	if s3opt.preStopSeconds == nil || *s3opt.preStopSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(*s3opt.preStopSeconds) * time.Second
+}
+
+func preStopWait(startDraining func(), delay time.Duration, cancelled <-chan struct{}) func() {
+	return func() {
+		if delay <= 0 {
+			return
+		}
+		startDraining()
+		glog.V(0).Infof("S3 API Server failing health checks for %s before shutdown", delay)
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-cancelled:
+		}
+	}
 }
 
 // vendsCredentials reports whether -iceberg.credentialRole is set, which
@@ -766,6 +801,23 @@ func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOp
 	vectorsServer.SetRequestLimits(int64(*s3opt.concurrentFileUploadLimit), int64(*s3opt.concurrentUploadLimitMB)*1024*1024)
 	vectorsServer.RegisterRoutes(vectorsRouter)
 	return vectorsRouter
+}
+
+// s3Handler serves router, and vectors for Vectors API requests when set. mux
+// matches Queries() before router middleware runs, so the escape wraps the
+// router for routing and authorization to read one query.
+func s3Handler(router, vectors *mux.Router) http.Handler {
+	main := util_http.EscapeSemicolonsInQuery(router)
+	if vectors == nil {
+		return main
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isVectorsRequest(r) {
+			vectors.ServeHTTP(w, r)
+			return
+		}
+		main.ServeHTTP(w, r)
+	})
 }
 
 // isVectorsRequest routes by the SigV4 credential scope — the s3vectors

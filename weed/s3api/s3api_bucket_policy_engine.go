@@ -17,7 +17,7 @@ type BucketPolicyEngine struct {
 	// "aws:kms") that was stored when a multipart upload was initiated.
 	// Returns "" when the upload had no SSE or when the entry cannot be found.
 	// Set by S3ApiServer after construction to give the engine filer access.
-	MultipartSSELookup func(bucket, uploadID string) string
+	MultipartSSELookup func(bucket, object, uploadID string) string
 }
 
 // NewBucketPolicyEngine creates a new bucket policy engine
@@ -147,6 +147,7 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 	if r != nil {
 		args.OriginalGrantConditions = policy_engine.OriginalGrantConditionsFromRequest(r)
 		args.Conditions = bpe.engine.ExtractConditionValuesFromRequest(r)
+		addEmptyListPrefix(args.Conditions, r, Action(action))
 
 		// Extract principal-related variables (aws:username, etc.) from principal ARN
 		principalVars := principalVariables(principal, claims)
@@ -169,7 +170,7 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 		// policy conditions on s3:x-amz-server-side-encryption evaluate correctly.
 		if policy_engine.IsMultipartContinuationAction(s3Action) && bpe.MultipartSSELookup != nil {
 			if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" {
-				args.InheritedSSEAlgorithm = bpe.MultipartSSELookup(bucket, uploadID)
+				args.InheritedSSEAlgorithm = bpe.MultipartSSELookup(bucket, object, uploadID)
 			}
 		}
 	}

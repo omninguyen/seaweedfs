@@ -49,6 +49,7 @@ import (
 
 type S3ApiServerOption struct {
 	Filers                    []pb.ServerAddress
+	HomeFiler                 pb.ServerAddress   // filer of the embedding process, preferred whenever healthy
 	Masters                   []pb.ServerAddress // For filer discovery
 	Port                      int
 	Config                    string
@@ -87,6 +88,16 @@ type S3ApiServerOption struct {
 	// GetUser) need an explicit iam: grant instead of being allowed to every
 	// authenticated identity.
 	IamSelfServiceRequiresGrant bool
+	// RoutedLookupTimeout bounds a route-by-key entry lookup at a key owner
+	// that is not the current filer; past it the read fails over to the next
+	// filer. 0 leaves the lookup unbounded.
+	RoutedLookupTimeout time.Duration
+	// UnreachableOwnerTTL is how long a key owner whose read just failed is
+	// skipped by route-by-key reads. 0 uses defaultUnreachableOwnerTTL.
+	UnreachableOwnerTTL time.Duration
+	// VolumeLookupTimeout bounds each filer's answer to a volume location
+	// lookup before the next filer is asked. 0 uses the FilerClient default.
+	VolumeLookupTimeout time.Duration
 }
 
 // s3ChunkCacheChunkSizeMB is the assumed chunk size (in MiB) used to convert
@@ -115,6 +126,7 @@ type S3ApiServer struct {
 	inFlightDataSize      int64
 	inFlightUploads       int64
 	inFlightDataLimitCond *sync.Cond
+	draining              atomic.Bool
 	embeddedIam           *EmbeddedIamApi // Embedded IAM API server (when enabled)
 	stsHandlers           *STSHandlers    // STS HTTP handlers for AssumeRoleWithWebIdentity
 	// icebergCredentialRole is the role the Iceberg catalog assumes to vend
@@ -247,6 +259,8 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			MasterClient:      masterClient,
 			FilerGroup:        option.FilerGroup,
 			DiscoveryInterval: 5 * time.Minute,
+			HomeFiler:         option.HomeFiler,
+			GrpcTimeout:       option.VolumeLookupTimeout,
 		})
 		masterClient.SetOnPeerUpdateFn(filerClient.OnPeerUpdate)
 		masterClient.SetOnVolumeLocationChangeFn(filerClient.OnVolumeLocationChange)
@@ -258,7 +272,10 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		glog.V(1).Infof("S3 API initialized FilerClient with %d filer(s) and discovery enabled (group: %s, masters: %v)",
 			len(option.Filers), option.FilerGroup, option.Masters)
 	} else {
-		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter)
+		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter, &wdclient.FilerClientOption{
+			HomeFiler:   option.HomeFiler,
+			GrpcTimeout: option.VolumeLookupTimeout,
+		})
 		glog.V(1).Infof("S3 API initialized FilerClient with %d filer(s) (no discovery)", len(option.Filers))
 	}
 
@@ -347,7 +364,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		option:                option,
 		iam:                   iam,
 		randomClientId:        util.RandomInt32(),
-		filerGuard:            security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
+		filerGuard:            security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec, v.GetString("jwt.filer_signing.previous_key"), v.GetString("jwt.filer_signing.read.previous_key")),
 		filerClient:           filerClient,
 		masterClient:          masterClient,
 		cb:                    NewCircuitBreaker(option),
@@ -490,12 +507,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	grace.OnReload(func() {
 		util.LoadConfiguration("security", false)
 		v := util.GetViper()
-		s3ApiServer.filerGuard.UpdateSigningKeys(
-			v.GetString("jwt.filer_signing.key"),
-			v.GetInt("jwt.filer_signing.expires_after_seconds"),
-			v.GetString("jwt.filer_signing.read.key"),
-			v.GetInt("jwt.filer_signing.read.expires_after_seconds"),
-		)
+		s3ApiServer.filerGuard.ReloadSigningKeys("jwt.filer_signing")
 		s3ApiServer.applyTrustedProxies(v)
 		util_http.ReloadJwtSigningReadConfig()
 	})
@@ -962,7 +974,6 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 }
 
 func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
-	// runs before subrouter matching so Queries() matchers see the fixed query
 	router.Use(util_http.EscapeSemicolonsInQuery)
 	// a request naming two subresources routes one way and authorizes another;
 	// reject it rather than guess
@@ -1158,10 +1169,14 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketPolicyStatusHandler, ACTION_READ)), "GET")).Queries("policyStatus", "")
 		// GetBucketAccelerateConfiguration
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketAccelerateConfigurationHandler, ACTION_READ)), "GET")).Queries("accelerate", "")
+		// PutBucketAccelerateConfiguration
+		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketAccelerateConfigurationHandler, ACTION_ADMIN)), "PUT")).Queries("accelerate", "")
 		// GetBucketLogging
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketLoggingHandler, ACTION_READ)), "GET")).Queries("logging", "")
 		// GetBucketNotificationConfiguration
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketNotificationConfigurationHandler, ACTION_READ)), "GET")).Queries("notification", "")
+		// PutBucketNotificationConfiguration
+		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketNotificationConfigurationHandler, ACTION_ADMIN)), "PUT")).Queries("notification", "")
 		// GetBucketReplication
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketReplicationHandler, ACTION_READ)), "GET")).Queries("replication", "")
 		// GetBucketWebsite
