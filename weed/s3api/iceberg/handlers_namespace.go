@@ -196,34 +196,16 @@ func (s *Server) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-// applyNamespacePropertyUpdates applies removals and updates to a copy of
-// current and returns the merged property map alongside the Iceberg REST
-// summary of which keys were removed, updated, or were missing.
-func applyNamespacePropertyUpdates(current map[string]string, removals []string, updates map[string]string) (map[string]string, UpdateNamespacePropertiesResponse) {
-	properties := make(map[string]string, len(current))
-	for k, v := range current {
-		properties[k] = v
-	}
-
+// namespacePropertiesSummary is the Iceberg REST summary of an update:
+// removed and missing as found at the write, and every updated key.
+func namespacePropertiesSummary(removed, missing []string, updates map[string]string) UpdateNamespacePropertiesResponse {
 	summary := UpdateNamespacePropertiesResponse{Removed: []string{}, Updated: []string{}, Missing: []string{}}
-	seen := make(map[string]struct{}, len(removals))
-	for _, key := range removals {
-		if _, dup := seen[key]; dup {
-			continue
-		}
-		seen[key] = struct{}{}
-		if _, ok := properties[key]; ok {
-			delete(properties, key)
-			summary.Removed = append(summary.Removed, key)
-		} else {
-			summary.Missing = append(summary.Missing, key)
-		}
-	}
-	for key, value := range updates {
-		properties[key] = value
+	summary.Removed = append(summary.Removed, removed...)
+	summary.Missing = append(summary.Missing, missing...)
+	for key := range updates {
 		summary.Updated = append(summary.Updated, key)
 	}
-	return properties, summary
+	return summary
 }
 
 // handleUpdateNamespaceProperties applies a set of removals and updates to a
@@ -256,7 +238,8 @@ func (s *Server) handleUpdateNamespaceProperties(w http.ResponseWriter, r *http.
 	bucketARN := buildTableBucketARN(bucketName)
 	identityName := s3_constants.GetIdentityNameFromContext(r)
 
-	// Load the current properties so we can compute the summary and the merged map.
+	// The caller must be allowed to read the namespace as well as update it,
+	// as before the changes moved into the write.
 	getReq := &s3tables.GetNamespaceRequest{TableBucketARN: bucketARN, Namespace: namespace}
 	var getResp s3tables.GetNamespaceResponse
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -268,9 +251,14 @@ func (s *Server) handleUpdateNamespaceProperties(w http.ResponseWriter, r *http.
 		return
 	}
 
-	properties, summary := applyNamespacePropertyUpdates(getResp.Properties, req.Removals, req.Updates)
-
-	updReq := &s3tables.UpdateNamespaceRequest{TableBucketARN: bucketARN, Namespace: namespace, Properties: properties}
+	// The changes are applied to the properties the namespace holds at the
+	// write. Merging them into the copy read above and writing the whole map
+	// back would undo every update that landed in between.
+	updReq := &s3tables.UpdateNamespaceRequest{
+		TableBucketARN:  bucketARN,
+		Namespace:       namespace,
+		PropertyChanges: &s3tables.NamespacePropertyChanges{Updates: req.Updates, Removals: req.Removals},
+	}
 	var updResp s3tables.UpdateNamespaceResponse
 	err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
@@ -281,7 +269,7 @@ func (s *Server) handleUpdateNamespaceProperties(w http.ResponseWriter, r *http.
 		return
 	}
 
-	writeJSON(w, http.StatusOK, summary)
+	writeJSON(w, http.StatusOK, namespacePropertiesSummary(updResp.Removed, updResp.Missing, req.Updates))
 }
 
 // writeNamespaceManagerError maps an s3tables manager error to the matching
