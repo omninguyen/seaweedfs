@@ -30,6 +30,16 @@ def node_key(sf):
     if pkg + '/' in FILE_PKGS: return sf               # satellite file node
     return CORE + pkg + '/'
 nodes = {n['id']: n for n in raw['nodes']}
+# INFERRED calls that graphify resolved by name onto a method in another file,
+# and that the code shows to be something else: each calls a func-typed
+# parameter named write, not copyKeepAlive.write. (source file, caller,
+# callee file, callee)
+NAME_COLLISIONS = {
+    ('weed/s3api/s3tables/filer_ops.go', '.moveCatalogRecord()',
+     'weed/s3api/s3api_object_handlers_copy_keepalive.go', '.write()'),
+    ('weed/worker/tasks/iceberg/row_lineage.go', 'copyFileRows()',
+     'weed/s3api/s3api_object_handlers_copy_keepalive.go', '.write()'),
+}
 fmap = {nid: node_key(n.get('source_file')) for nid, n in nodes.items()}
 agg = collections.defaultdict(lambda: {'w': 0, 'via': []})
 dropped = collections.Counter()
@@ -40,6 +50,10 @@ for e in raw['edges']:
     if s is None or t is None:
         dropped['out_of_scope' if s else 'sourceless_src'] += 1; continue
     if s == t: continue
+    src, dst = nodes[e['source']], nodes[e['target']]
+    if e.get('confidence') == 'INFERRED' and (src.get('source_file'), src.get('label'),
+                                              dst.get('source_file'), dst.get('label')) in NAME_COLLISIONS:
+        dropped['name_collision'] += 1; continue
     r = e['relation']
     # graphify resolves a Go package import to every file of that package. Into a
     # collapsed package node that is one edge; into a package graphed file by

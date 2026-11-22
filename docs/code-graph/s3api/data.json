@@ -148,7 +148,7 @@
    "layer": 14,
    "in": 15,
    "out": 18,
-   "symbols": 38
+   "symbols": 39
   },
   {
    "id": "weed/filer/filer_buckets.go",
@@ -178,7 +178,7 @@
    "layer": 14,
    "in": 7,
    "out": 4,
-   "symbols": 23
+   "symbols": 24
   },
   {
    "id": "weed/filer/filer_deletion.go",
@@ -188,7 +188,7 @@
    "layer": 19,
    "in": 1,
    "out": 5,
-   "symbols": 38
+   "symbols": 42
   },
   {
    "id": "weed/filer/filer_deletion_persist.go",
@@ -358,7 +358,7 @@
    "layer": 15,
    "in": 1,
    "out": 2,
-   "symbols": 5
+   "symbols": 6
   },
   {
    "id": "weed/filer/filerstore_translate_path.go",
@@ -458,7 +458,7 @@
    "layer": 17,
    "in": 3,
    "out": 0,
-   "symbols": 4
+   "symbols": 7
   },
   {
    "id": "weed/filer/metadata_event_sink.go",
@@ -636,7 +636,7 @@
    "file": "weed/pb/filer.proto",
    "kind": "package",
    "layer": 12,
-   "in": 106,
+   "in": 107,
    "out": 0,
    "symbols": 1769
   },
@@ -718,7 +718,7 @@
    "layer": 2,
    "in": 26,
    "out": 15,
-   "symbols": 129
+   "symbols": 133
   },
   {
    "id": "weed/s3api/auth_credentials_policy_document.go",
@@ -806,7 +806,7 @@
    "file": "weed/s3api/chunked_reader_v4.go",
    "kind": "file",
    "layer": 2,
-   "in": 3,
+   "in": 4,
    "out": 4,
    "symbols": 24
   },
@@ -886,9 +886,9 @@
    "file": "weed/s3api/fips140_only.go",
    "kind": "file",
    "layer": 0,
-   "in": 0,
+   "in": 1,
    "out": 0,
-   "symbols": 1
+   "symbols": 2
   },
   {
    "id": "weed/s3api/iceberg/commit_helpers.go",
@@ -1226,7 +1226,7 @@
    "file": "weed/s3api/policy_engine/",
    "kind": "package",
    "layer": 2,
-   "in": 11,
+   "in": 12,
    "out": 1,
    "symbols": 150
   },
@@ -1238,7 +1238,7 @@
    "layer": 0,
    "in": 11,
    "out": 4,
-   "symbols": 10
+   "symbols": 15
   },
   {
    "id": "weed/s3api/s3_action_resolver.go",
@@ -1266,7 +1266,7 @@
    "file": "weed/s3api/s3_constants/",
    "kind": "package",
    "layer": 0,
-   "in": 105,
+   "in": 106,
    "out": 0,
    "symbols": 54
   },
@@ -1316,7 +1316,7 @@
    "file": "weed/s3api/s3_sse_c.go",
    "kind": "file",
    "layer": 5,
-   "in": 8,
+   "in": 9,
    "out": 4,
    "symbols": 19
   },
@@ -1406,7 +1406,7 @@
    "file": "weed/s3api/s3api_auth.go",
    "kind": "file",
    "layer": 2,
-   "in": 10,
+   "in": 9,
    "out": 0,
    "symbols": 10
   },
@@ -1507,8 +1507,8 @@
    "kind": "file",
    "layer": 2,
    "in": 4,
-   "out": 5,
-   "symbols": 11
+   "out": 6,
+   "symbols": 12
   },
   {
    "id": "weed/s3api/s3api_bucket_policy_handlers.go",
@@ -1657,7 +1657,7 @@
    "kind": "file",
    "layer": 2,
    "in": 4,
-   "out": 9,
+   "out": 8,
    "symbols": 9
   },
   {
@@ -1697,8 +1697,18 @@
    "kind": "file",
    "layer": 4,
    "in": 4,
-   "out": 37,
-   "symbols": 85
+   "out": 38,
+   "symbols": 89
+  },
+  {
+   "id": "weed/s3api/s3api_object_handlers_copy_keepalive.go",
+   "label": "s3api_object_handlers_copy_keepalive.go",
+   "file": "weed/s3api/s3api_object_handlers_copy_keepalive.go",
+   "kind": "file",
+   "layer": 4,
+   "in": 1,
+   "out": 6,
+   "symbols": 11
   },
   {
    "id": "weed/s3api/s3api_object_handlers_copy_part_sse.go",
@@ -1706,7 +1716,7 @@
    "file": "weed/s3api/s3api_object_handlers_copy_part_sse.go",
    "kind": "file",
    "layer": 4,
-   "in": 2,
+   "in": 3,
    "out": 12,
    "symbols": 17
   },
@@ -1718,7 +1728,7 @@
    "layer": 4,
    "in": 1,
    "out": 2,
-   "symbols": 4
+   "symbols": 5
   },
   {
    "id": "weed/s3api/s3api_object_handlers_copy_unified.go",
@@ -1788,7 +1798,7 @@
    "layer": 4,
    "in": 9,
    "out": 20,
-   "symbols": 21
+   "symbols": 22
   },
   {
    "id": "weed/s3api/s3api_object_handlers_postpolicy.go",
@@ -1806,8 +1816,8 @@
    "file": "weed/s3api/s3api_object_handlers_put.go",
    "kind": "file",
    "layer": 4,
-   "in": 22,
-   "out": 41,
+   "in": 23,
+   "out": 42,
    "symbols": 68
   },
   {
@@ -1936,9 +1946,9 @@
    "file": "weed/s3api/s3api_public_access_block.go",
    "kind": "file",
    "layer": 2,
-   "in": 5,
-   "out": 3,
-   "symbols": 7
+   "in": 6,
+   "out": 4,
+   "symbols": 16
   },
   {
    "id": "weed/s3api/s3api_put_handlers.go",
@@ -2096,9 +2106,9 @@
    "file": "weed/s3api/s3err/",
    "kind": "package",
    "layer": 0,
-   "in": 72,
+   "in": 73,
    "out": 1,
-   "symbols": 40
+   "symbols": 43
   },
   {
    "id": "weed/s3api/s3lifecycle/",
@@ -2427,8 +2437,8 @@
    "kind": "file",
    "layer": 0,
    "in": 4,
-   "out": 2,
-   "symbols": 5
+   "out": 3,
+   "symbols": 16
   },
   {
    "id": "weed/s3api/tags.go",
@@ -2548,7 +2558,7 @@
    "layer": 13,
    "in": 4,
    "out": 2,
-   "symbols": 8
+   "symbols": 11
   },
   {
    "id": "weed/server/filer_grpc_server_stream_mutate.go",
@@ -3317,9 +3327,10 @@
    "s": "weed/filer/filer.go",
    "t": "weed/filer/metadata_event_context.go",
    "r": "calls",
-   "w": 1,
+   "w": 2,
    "via": [
-    ".ensureParentDirectoryEntry() \u2192 metadataEventsSuppressed()"
+    ".ensureParentDirectoryEntry() \u2192 metadataEventsSuppressed()",
+    ".ensureParentDirectoryEntry() \u2192 recordCreatedParent()"
    ]
   },
   {
@@ -3484,9 +3495,8 @@
    "s": "weed/filer/filer_delete_entry.go",
    "t": "weed/filer/filer_hardlink.go",
    "r": "references",
-   "w": 2,
+   "w": 1,
    "via": [
-    ".maybeDeleteHardLinks() \u2192 HardLinkId",
     ".hardLinkIsOrphaned() \u2192 HardLinkId"
    ]
   },
@@ -3959,8 +3969,10 @@
    "s": "weed/filer/filerstore_hardlink.go",
    "t": "weed/filer/filer_hardlink.go",
    "r": "references",
-   "w": 1,
+   "w": 3,
    "via": [
+    ".handleUpdateToHardLinks() \u2192 HardLinkId",
+    ".dropLink() \u2192 HardLinkId",
     ".DeleteHardLink() \u2192 HardLinkId"
    ]
   },
@@ -4044,12 +4056,12 @@
    "s": "weed/filer/filerstore_wrapper.go",
    "t": "weed/filer/filerstore_hardlink.go",
    "r": "calls",
-   "w": 7,
+   "w": 11,
    "via": [
     ".InsertEntry() \u2192 .handleUpdateToHardLinks()",
+    ".InsertEntry() \u2192 .dropLink()",
     ".InsertEntryKnownAbsent() \u2192 .setHardLink()",
-    ".UpdateEntry() \u2192 .handleUpdateToHardLinks()",
-    ".FindEntry() \u2192 .maybeReadHardLink()"
+    ".UpdateEntry() \u2192 .handleUpdateToHardLinks()"
    ]
   },
   {
@@ -4931,12 +4943,12 @@
    "s": "weed/s3api/auth_credentials.go",
    "t": "weed/s3api/s3api_auth.go",
    "r": "calls",
-   "w": 4,
+   "w": 5,
    "via": [
+    ".isAnonymousRequest() \u2192 getRequestAuthType()",
     ".authenticateRequestInternal() \u2192 getRequestAuthType()",
     ".authenticateRequestInternal() \u2192 isRequestSignatureV4()",
-    ".authenticateRequestInternal() \u2192 isRequestPresignedSignatureV4()",
-    ".authenticateRequestInternal() \u2192 isRequestJWT()"
+    ".authenticateRequestInternal() \u2192 isRequestPresignedSignatureV4()"
    ]
   },
   {
@@ -5035,12 +5047,12 @@
    "s": "weed/s3api/auth_credentials.go",
    "t": "weed/s3api/s3err/",
    "r": "references",
-   "w": 17,
+   "w": 18,
    "via": [
     "IdentityAccessManagement \u2192 ErrorCode",
+    ".authenticateUnsigned() \u2192 ErrorCode",
     "refineDenialForBucketName() \u2192 ErrorCode",
-    "refineDenialForBucketName() \u2192 ErrorCode",
-    ".handleAuthResult() \u2192 ErrorCode"
+    "refineDenialForBucketName() \u2192 ErrorCode"
    ]
   },
   {
@@ -5246,10 +5258,11 @@
    "s": "weed/s3api/auth_signature_v4.go",
    "t": "weed/s3api/request_body.go",
    "r": "calls",
-   "w": 2,
+   "w": 3,
    "via": [
     ".reqSignatureV4Verify() \u2192 bindSignedPayload()",
-    "streamHashRequestBody() \u2192 readRequestBody()"
+    "streamHashRequestBody() \u2192 readRequestBody()",
+    ".verifyV4Signature() \u2192 .verify()"
    ]
   },
   {
@@ -7548,6 +7561,25 @@
   },
   {
    "s": "weed/s3api/request_body.go",
+   "t": "weed/s3api/chunked_reader_v4.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    "parseRequestBodyChecksum() \u2192 getCheckSumWriter()",
+    ".verify() \u2192 getCheckSumWriter()"
+   ]
+  },
+  {
+   "s": "weed/s3api/request_body.go",
+   "t": "weed/s3api/chunked_reader_v4.go",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "requestBodyChecksum \u2192 ChecksumAlgorithm"
+   ]
+  },
+  {
+   "s": "weed/s3api/request_body.go",
    "t": "weed/s3api/s3_constants/",
    "r": "calls",
    "w": 1,
@@ -7561,15 +7593,6 @@
    "r": "imports_from",
    "w": 13,
    "via": []
-  },
-  {
-   "s": "weed/s3api/request_body.go",
-   "t": "weed/s3api/s3api_handlers.go",
-   "r": "calls",
-   "w": 1,
-   "via": [
-    "bindSignedPayload() \u2192 validateContentMd5()"
-   ]
   },
   {
    "s": "weed/s3api/request_body.go",
@@ -7591,9 +7614,10 @@
    "s": "weed/s3api/request_body.go",
    "t": "weed/s3api/s3err/",
    "r": "references",
-   "w": 3,
+   "w": 6,
    "via": [
     "bindSignedPayload() \u2192 ErrorCode",
+    "parseCanonicalContentMd5() \u2192 ErrorCode",
     "requestBodyErrorCode() \u2192 ErrorCode",
     "requestBodyErrorCode() \u2192 ErrorCode"
    ]
@@ -8392,7 +8416,7 @@
    "r": "calls",
    "w": 1,
    "via": [
-    ".newBucketConfigFromEntry() \u2192 parsePublicAccessBlock()"
+    ".newBucketConfigFromEntry() \u2192 storedPublicAccessBlock()"
    ]
   },
   {
@@ -8639,7 +8663,7 @@
    "s": "weed/s3api/s3api_bucket_handlers.go",
    "t": "weed/s3api/auth_credentials.go",
    "r": "calls",
-   "w": 17,
+   "w": 18,
    "via": [
     ".verifyBucketAdmin() \u2192 objectKeyPolicyRequest()",
     ".ListBucketsHandler() \u2192 .isEnabled()",
@@ -9361,6 +9385,15 @@
    ]
   },
   {
+   "s": "weed/s3api/s3api_bucket_policy_engine.go",
+   "t": "weed/s3api/s3api_public_access_block.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".restrictsPublicPolicy() \u2192 isPublicPolicy()"
+   ]
+  },
+  {
    "s": "weed/s3api/s3api_bucket_policy_handlers.go",
    "t": "weed/pb/filer.proto",
    "r": "references",
@@ -9505,8 +9538,10 @@
    "s": "weed/s3api/s3api_bucket_policy_handlers.go",
    "t": "weed/s3api/s3api_public_access_block.go",
    "r": "calls",
-   "w": 1,
+   "w": 3,
    "via": [
+    ".setBucketPolicy() \u2192 storedPublicAccessBlock()",
+    ".setBucketPolicy() \u2192 isPublicPolicy()",
     ".PutPublicAccessBlockHandler() \u2192 parsePublicAccessBlock()"
    ]
   },
@@ -10549,7 +10584,7 @@
    "s": "weed/s3api/s3api_object_anonymous_read.go",
    "t": "weed/s3api/auth_credentials.go",
    "r": "calls",
-   "w": 10,
+   "w": 11,
    "via": [
     ".deferAnonymousObjectRead() \u2192 recordIdentityInContext()",
     ".authorizeAnonymousObjectRead() \u2192 buildPrincipalARN()",
@@ -10584,15 +10619,6 @@
    "r": "imports_from",
    "w": 13,
    "via": []
-  },
-  {
-   "s": "weed/s3api/s3api_object_anonymous_read.go",
-   "t": "weed/s3api/s3api_auth.go",
-   "r": "calls",
-   "w": 1,
-   "via": [
-    ".deferAnonymousObjectRead() \u2192 getRequestAuthType()"
-   ]
   },
   {
    "s": "weed/s3api/s3api_object_anonymous_read.go",
@@ -11407,14 +11433,14 @@
    "r": "calls",
    "w": 1,
    "via": [
-    ".downloadChunkData() \u2192 JwtForVolumeServer()"
+    ".downloadChunkDataFrom() \u2192 JwtForVolumeServer()"
    ]
   },
   {
    "s": "weed/s3api/s3api_object_handlers_copy.go",
    "t": "weed/pb/filer.proto",
    "r": "references",
-   "w": 64,
+   "w": 67,
    "via": [
     ".copyChangesStorageClass() \u2192 Entry",
     "prefixObjectSource() \u2192 Entry",
@@ -11541,9 +11567,9 @@
    "w": 45,
    "via": [
     ".CopyObjectHandler() \u2192 IsSSEKMSRequest()",
+    ".CopyObjectHandler() \u2192 IsSSEKMSEncrypted()",
     ".CopyObjectHandler() \u2192 DetectEncryptionStateWithEntry()",
-    ".CopyObjectHandler() \u2192 DetermineUnifiedCopyStrategy()",
-    ".CopyObjectHandler() \u2192 IsSSEKMSEncrypted()"
+    ".CopyObjectHandler() \u2192 DetermineUnifiedCopyStrategy()"
    ]
   },
   {
@@ -11639,31 +11665,42 @@
    "s": "weed/s3api/s3api_object_handlers_copy.go",
    "t": "weed/s3api/s3api_handlers.go",
    "r": "calls",
-   "w": 4,
+   "w": 3,
    "via": [
     ".CopyObjectHandler() \u2192 writeSuccessResponseXML()",
-    ".CopyObjectPartHandler() \u2192 writeSuccessResponseXML()",
     ".assignNewVolume() \u2192 .WithFilerClient()",
-    ".lookupVolumeUrl() \u2192 .WithFilerClient()"
+    ".lookupVolumeUrls() \u2192 .WithFilerClient()"
    ]
   },
   {
    "s": "weed/s3api/s3api_object_handlers_copy.go",
    "t": "weed/s3api/s3api_object_handlers.go",
    "r": "calls",
-   "w": 7,
+   "w": 4,
    "via": [
-    ".CopyObjectHandler() \u2192 resolvedSourceVersionId()",
-    ".CopyObjectPartHandler() \u2192 resolvedSourceVersionId()",
+    ".fillCopySource() \u2192 resolvedSourceVersionId()",
     "resolveCopySourceVersionId() \u2192 resolvedSourceVersionId()",
-    ".CopyObjectHandler() \u2192 .cacheRemoteObjectForCopy()"
+    ".CopyObjectPartHandler() \u2192 .toFilerPath()",
+    ".copiedRangeMd5() \u2192 .getEncryptedStreamFromVolumes()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_copy.go",
+   "t": "weed/s3api/s3api_object_handlers_copy_keepalive.go",
+   "r": "calls",
+   "w": 6,
+   "via": [
+    ".CopyObjectHandler() \u2192 startCopyKeepAlive()",
+    ".CopyObjectHandler() \u2192 copySourceVersionHeader()",
+    ".CopyObjectPartHandler() \u2192 startCopyKeepAlive()",
+    ".CopyObjectPartHandler() \u2192 partCopyAnswersSSEHeaders()"
    ]
   },
   {
    "s": "weed/s3api/s3api_object_handlers_copy.go",
    "t": "weed/s3api/s3api_object_handlers_copy_part_sse.go",
    "r": "calls",
-   "w": 6,
+   "w": 5,
    "via": [
     "classifyCopySourceError() \u2192 isTransientFilerError()",
     ".CopyObjectPartHandler() \u2192 isTransientFilerError()",
@@ -11687,12 +11724,12 @@
    "s": "weed/s3api/s3api_object_handlers_copy.go",
    "t": "weed/s3api/s3api_object_handlers_copy_unified.go",
    "r": "calls",
-   "w": 6,
+   "w": 5,
    "via": [
     ".CopyObjectHandler() \u2192 applyCopyBucketDefaultEncryptionHeaders()",
     ".CopyObjectHandler() \u2192 .applyCopyBucketDefaultEncryption()",
-    ".CopyObjectHandler() \u2192 .executeUnifiedCopyStrategy()",
-    ".CopyObjectHandler() \u2192 .mapCopyErrorToS3Error()"
+    ".CopyObjectHandler() \u2192 .mapCopyErrorToS3Error()",
+    ".canUseMetadataOnlySelfCopy() \u2192 .applyCopyBucketDefaultEncryption()"
    ]
   },
   {
@@ -11704,7 +11741,7 @@
     ".copyPartLocation() \u2192 .genUploadsFolder()",
     ".CopyObjectPartHandler() \u2192 .checkUploadId()",
     ".CopyObjectPartHandler() \u2192 .genUploadsFolder()",
-    ".CopyObjectPartHandler() \u2192 .checkUploadStillOpen()"
+    ".CopyObjectPartHandler() \u2192 .uploadStillOpen()"
    ]
   },
   {
@@ -11855,12 +11892,12 @@
    "s": "weed/s3api/s3api_object_handlers_copy.go",
    "t": "weed/s3api/s3err/",
    "r": "references",
-   "w": 5,
+   "w": 6,
    "via": [
     "classifyCopySourceError() \u2192 ErrorCode",
+    ".fillCopySource() \u2192 ErrorCode",
     ".applyCopyObjectLockHeaders() \u2192 ErrorCode",
-    ".authorizeCopySource() \u2192 ErrorCode",
-    ".validateConditionalCopyHeaders() \u2192 ErrorCode"
+    ".authorizeCopySource() \u2192 ErrorCode"
    ]
   },
   {
@@ -11871,6 +11908,78 @@
    "via": [
     "processMetadataBytes() \u2192 parseTagsHeader()",
     "processMetadataBytes() \u2192 ValidateTags()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_copy_keepalive.go",
+   "t": "weed/pb/filer.proto",
+   "r": "references",
+   "w": 1,
+   "via": [
+    "partCopyAnswersSSEHeaders() \u2192 Entry"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_copy_keepalive.go",
+   "t": "weed/s3api/s3_constants/",
+   "r": "imports_from",
+   "w": 13,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_copy_keepalive.go",
+   "t": "weed/s3api/s3_sse_c.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "partCopyAnswersSSEHeaders() \u2192 IsSSECEncrypted()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_copy_keepalive.go",
+   "t": "weed/s3api/s3api_handlers.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".writeSuccess() \u2192 writeSuccessResponseXML()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_copy_keepalive.go",
+   "t": "weed/s3api/s3api_object_handlers_copy_part_sse.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "partCopyAnswersSSEHeaders() \u2192 uploadEntryHasSSE()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_copy_keepalive.go",
+   "t": "weed/s3api/s3err/",
+   "r": "calls",
+   "w": 7,
+   "via": [
+    ".run() \u2192 StartStreamingResponse()",
+    ".writeSuccess() \u2192 EncodeXMLBody()",
+    ".writeSuccess() \u2192 PostLog()",
+    ".writeErrorHeaders() \u2192 WriteErrorResponse()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_copy_keepalive.go",
+   "t": "weed/s3api/s3err/",
+   "r": "imports_from",
+   "w": 4,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_copy_keepalive.go",
+   "t": "weed/s3api/s3err/",
+   "r": "references",
+   "w": 2,
+   "via": [
+    ".writeError() \u2192 ErrorCode",
+    ".writeErrorHeaders() \u2192 ErrorCode"
    ]
   },
   {
@@ -12198,8 +12307,10 @@
    "s": "weed/s3api/s3api_object_handlers_delete.go",
    "t": "weed/s3api/request_body.go",
    "r": "calls",
-   "w": 1,
+   "w": 3,
    "via": [
+    ".DeleteMultipleObjectsHandler() \u2192 parseRequestBodyChecksum()",
+    ".DeleteMultipleObjectsHandler() \u2192 readRequestBody()",
     ".DeleteMultipleObjectsHandler() \u2192 requestBodyErrorCode()"
    ]
   },
@@ -12207,7 +12318,7 @@
    "s": "weed/s3api/s3api_object_handlers_delete.go",
    "t": "weed/s3api/s3_constants/",
    "r": "calls",
-   "w": 8,
+   "w": 9,
    "via": [
     "validateDeleteObjectIdentifier() \u2192 IsValidObjectKey()",
     ".resolveDeleteConditionalEntry() \u2192 NormalizeObjectKey()",
@@ -13007,7 +13118,7 @@
    "w": 3,
    "via": [
     ".PutObjectPartHandler() \u2192 .uploadFiler()",
-    ".checkUploadStillOpen() \u2192 .uploadFiler()",
+    ".uploadStillOpen() \u2192 .uploadFiler()",
     ".getMultipartSSEAlgorithm() \u2192 .uploadFiler()"
    ]
   },
@@ -13062,8 +13173,9 @@
    "s": "weed/s3api/s3api_object_handlers_multipart.go",
    "t": "weed/s3api/s3err/",
    "r": "references",
-   "w": 2,
+   "w": 3,
    "via": [
+    ".uploadStillOpen() \u2192 ErrorCode",
     "getBucketMultipartResources() \u2192 ErrorCode",
     "getObjectResources() \u2192 ErrorCode"
    ]
@@ -13363,6 +13475,16 @@
     ".putToFiler() \u2192 .getCollectionName()",
     ".putToFiler() \u2192 .rmObject()",
     ".createAfterAmbiguousRoute() \u2192 .rmObject()"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_object_handlers_put.go",
+   "t": "weed/s3api/fips140_only.go",
+   "r": "calls",
+   "w": 2,
+   "via": [
+    ".PutObjectHandler() \u2192 contentMd5Matches()",
+    ".putToFiler() \u2192 contentMd5Matches()"
    ]
   },
   {
@@ -13715,8 +13837,9 @@
    "s": "weed/s3api/s3api_object_handlers_put.go",
    "t": "weed/s3api/stats.go",
    "r": "calls",
-   "w": 1,
+   "w": 2,
    "via": [
+    ".putToFiler() \u2192 newPutStages()",
     ".putToFiler() \u2192 BucketTrafficReceived()"
    ]
   },
@@ -15217,10 +15340,36 @@
   },
   {
    "s": "weed/s3api/s3api_public_access_block.go",
+   "t": "weed/s3api/policy_engine/",
+   "r": "imports_from",
+   "w": 6,
+   "via": []
+  },
+  {
+   "s": "weed/s3api/s3api_public_access_block.go",
+   "t": "weed/s3api/policy_engine/",
+   "r": "references",
+   "w": 2,
+   "via": [
+    "isPublicPolicy() \u2192 PolicyDocument",
+    "hasRestrictingCondition() \u2192 PolicyConditions"
+   ]
+  },
+  {
+   "s": "weed/s3api/s3api_public_access_block.go",
    "t": "weed/s3api/s3_constants/",
    "r": "imports_from",
    "w": 13,
    "via": []
+  },
+  {
+   "s": "weed/s3api/s3api_public_access_block.go",
+   "t": "weed/s3api/s3api_bucket_config.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    ".restrictsPublicBuckets() \u2192 .getBucketConfig()"
+   ]
   },
   {
    "s": "weed/s3api/s3api_public_access_block.go",
@@ -17957,6 +18106,15 @@
   },
   {
    "s": "weed/s3api/stats.go",
+   "t": "weed/s3api/s3api_object_handlers_put.go",
+   "r": "calls",
+   "w": 1,
+   "via": [
+    "newPutStages() \u2192 isMultipartPartRequest()"
+   ]
+  },
+  {
+   "s": "weed/s3api/stats.go",
    "t": "weed/s3api/s3err/",
    "r": "calls",
    "w": 3,
@@ -18103,12 +18261,12 @@
    "s": "weed/server/filer_grpc_server.go",
    "t": "weed/server/filer_grpc_server_route.go",
    "r": "calls",
-   "w": 15,
+   "w": 12,
    "via": [
     ".CreateEntry() \u2192 entryRouteKey()",
+    ".ObjectTransaction() \u2192 isNotWriteOwner()",
     ".UpdateEntry() \u2192 entryRouteKey()",
-    ".DeleteEntry() \u2192 entryRouteKey()",
-    ".CreateEntry() \u2192 .forwardToWriteOwner()"
+    ".DeleteEntry() \u2192 entryRouteKey()"
    ]
   },
   {
@@ -18453,9 +18611,10 @@
    "s": "weed/server/filer_grpc_server_rename.go",
    "t": "weed/filer/metadata_event_context.go",
    "r": "calls",
-   "w": 1,
+   "w": 2,
    "via": [
-    ".moveSelfEntry() \u2192 WithSuppressedMetadataEvents()"
+    ".moveSelfEntry() \u2192 WithSuppressedMetadataEvents()",
+    ".moveSelfEntry() \u2192 WithCreatedParents()"
    ]
   },
   {

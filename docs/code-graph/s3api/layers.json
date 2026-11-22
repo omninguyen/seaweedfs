@@ -98,6 +98,7 @@
  "weed/s3api/s3api_object_handlers_acl.go": 4,
  "weed/s3api/s3api_object_handlers_attributes.go": 4,
  "weed/s3api/s3api_object_handlers_copy.go": 4,
+ "weed/s3api/s3api_object_handlers_copy_keepalive.go": 4,
  "weed/s3api/s3api_object_handlers_copy_part_sse.go": 4,
  "weed/s3api/s3api_object_handlers_copy_stream.go": 4,
  "weed/s3api/s3api_object_handlers_copy_unified.go": 4,
