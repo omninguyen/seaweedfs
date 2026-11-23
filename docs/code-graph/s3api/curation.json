@@ -5039,5 +5039,161 @@
   "gotchas": [
    "Insert vào đoạn đã có 50000 entry làm panic; điều này không xảy ra vì mỗi đoạn chỉ chứa 50000 khoá khác nhau."
   ]
+ },
+ "weed/storage/needle_map/memdb.go": {
+  "character": "MemDb: bảng key → (offset, size) tạm trên LevelDB trong bộ nhớ",
+  "what": "MemDb dùng LevelDB với MemStorage: Set, Delete, Get, AscendingVisit, DescendingVisit. LoadFromIdx và LoadFilterFromReaderAt nạp một .idx (mặc định bỏ entry offset 0 và entry đã xoá, xoá khoá tương ứng). SaveToIdx ghi lại các entry còn sống theo thứ tự khoá thành một .idx, có fsync và trả lỗi của sync và close (file .cpx tạo ra ở đây được rename thành .idx khi commit).",
+  "why": "Hệ quả: các công cụ so sánh và sửa index (volume.check.disk, volume.fsck, volume.fix.replication, weed fix) dựng index tạm ở đây mà không đụng needle map của volume đang chạy. Thiết kế: LevelDB trong bộ nhớ để có thứ tự khoá sẵn.",
+  "when": "volume.check.disk, volume.fsck, volume.fix.replication của shell; weed fix.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "So sánh replica báo lệch sai, hoặc .idx dựng lại thiếu entry.",
+  "gotchas": [
+   "AscendingVisit và DescendingVisit không Release iterator khi visit trả lỗi giữa chừng."
+  ]
+ },
+ "weed/storage/needle_map_file_pool.go": {
+  "character": "Pool LRU dùng chung 1024 handle .idx và .sdx cho các volume chỉ đọc",
+  "what": "indexFilePool giữ tối đa 1024 handle mở theo đường dẫn (handle đọc và ghi tách riêng), có đếm tham chiếu: borrow trả handle đã có hoặc mở mới ngoài khoá (rồi kiểm tra lại có ai mở trước chưa), release giảm tham chiếu, handle bị LRU đẩy ra chỉ đóng khi không còn ai mượn; discard bỏ handle của một đường dẫn trước khi rename hay xoá.",
+  "why": "Hệ quả: một server có khoảng 600 nghìn volume chỉ đọc (phần lớn đã tier) không hết giới hạn file descriptor, vì volume không ai đọc không giữ handle nào (comment trong file). Thiết kế: mở file ngoài khoá toàn cục để một lần mở chậm không chặn mọi volume.",
+  "when": "Mỗi lần tra needle trên volume chỉ đọc (SortedFileNeedleMap).",
+  "ux": "Server giữ rất nhiều volume chỉ đọc mà không cần tăng ulimit.",
+  "if_broken": "Hết file descriptor, hoặc đọc từ inode cũ sau khi .idx bị rename."
+ },
+ "weed/storage/needle_map_memory.go": {
+  "character": "NeedleMap: needle map trong bộ nhớ (CompactMap) cộng file .idx",
+  "what": "NewCompactNeedleMap bọc CompactMap và đặt offset ghi .idx ở cuối file. LoadCompactNeedleMap duyệt .idx: entry còn sống được Set (ghi đè một entry sống thì tính là một lần xoá), entry offset 0 hay đã xoá thì Delete. Put cập nhật map, số liệu và append vào .idx; Delete đánh dấu xoá trong map và append tombstone. reset bỏ map và số liệu (sau khi rollback một lô ghi). UpdateNeedleMap và DoOffsetLoading dùng khi commit compact: nạp phần .idx mới từ một offset rồi thay needle map của volume.",
+  "why": "Hệ quả: với -index=memory, mọi tra cứu needle đi qua map này và volume load lại bằng cách đọc hết .idx. Thiết kế: .idx chỉ append, map được dựng lại từ đó.",
+  "when": "Load volume với -index=memory; mỗi ghi, xoá, đọc; commit compact.",
+  "ux": "Volume server khởi động lâu hơn khi có nhiều needle, vì phải đọc hết .idx.",
+  "if_broken": "Needle đọc được sau khi xoá, hoặc số file và dung lượng rác báo sai.",
+  "gotchas": [
+   "DoOffsetLoading lặp lại gần như nguyên logic của doLoading.",
+   "NewCompactNeedleMap và UpdateNeedleMap dừng chương trình (glog.Fatalf) khi stat .idx lỗi."
+  ]
+ },
+ "weed/storage/needle_map_leveldb.go": {
+  "character": "LevelDbNeedleMap: needle map trên LevelDB (.ldb) cộng file .idx, có watermark và giải phóng khi rảnh",
+  "what": "NewLevelDbNeedleMap dựng lại .ldb từ .idx khi .ldb cũ hơn .idx (so mtime của file LOG), bắt đầu từ watermark (số entry đã áp, lưu trong khoá idx_entry_watermark; watermark vượt cuối .idx thì dựng lại từ 0), mở LevelDB (thử RecoverFile khi hỏng), rồi tính số liệu từ .idx. Put và Delete ghi .idx trước, rồi LevelDB, cứ 10000 lần ghi thì cập nhật watermark. Với -index.leveldbTimeout > 0, một goroutine kiểm tra mỗi giờ và đóng LevelDB sau từng ấy giờ, lần truy cập sau mở lại (ensureLdbLoaded). UpdateNeedleMap và DoOffsetLoading dùng .cpldb khi commit compact.",
+  "why": "Hệ quả: các mức leveldb, leveldbMedium, leveldbLarge của -index dùng map này để volume nhiều needle không tốn RAM; watermark cho phép khởi động lại chỉ áp phần .idx mới. Thiết kế: .idx là nguồn sự thật, .ldb là cache có thể dựng lại.",
+  "when": "Load volume với -index=leveldb*; mỗi ghi, xoá, đọc; commit compact.",
+  "ux": "Volume server giữ hàng tỉ needle với RAM nhỏ.",
+  "if_broken": "Needle map lệch .idx sau crash, hoặc LevelDB bị đóng mở liên tục.",
+  "gotchas": [
+   "Điều kiện if m.ldbTimeout == 0 trong NewLevelDbNeedleMap được kiểm tra trước khi m.ldbTimeout được gán, nên LevelDB luôn được mở ngay lúc load, kể cả khi bật timeout.",
+   "reloadLdb dừng chương trình (glog.Fatalf) nếu không mở hay khôi phục được LevelDB."
+  ],
+  "issue": "bug",
+  "issue_note": "Cơ chế giải phóng LevelDB khi rảnh không theo dõi truy cập. Tài liệu của cờ -index.leveldbTimeout nói LevelDB được đóng khi không được truy cập trong ngần ấy giờ, nhưng accessFlag chỉ được đặt bằng 1 trong reloadLdb, còn Get, Put và Delete không chạm tới nó. Vì vậy lazyLoadingRoutine thấy volume như rảnh dù đang được dùng liên tục, và đóng LevelDB sau đúng ldbTimeout giờ kể từ lần mở lại gần nhất; request kế tiếp phải mở lại LevelDB (đọc manifest, có thể phải recover) trong lúc giữ khoá ghi. Với một volume bận, đó là một lần đóng mở định kỳ không cần thiết và một đợt trễ cho các request đang chờ."
+ },
+ "weed/storage/needle_map_metric.go": {
+  "character": "Số liệu của needle map: số lần put, số lần xoá, dung lượng, khoá lớn nhất, cuối needle lớn nhất",
+  "what": "mapMetric giữ FileCounter và FileByteCounter (mỗi lần put), DeletionCounter và DeletionByteCounter (mỗi lần xoá hay ghi đè một entry sống), MaximumFileKey và MaximumNeedleEnd (offset + kích thước lớn nhất, dùng để phát hiện .idx trỏ quá cuối .dat, issue #8928), cập nhật bằng atomic. needleMapMetricFromIndexFile đọc .idx ngược từ cuối, dùng bloom filter (tỉ lệ dương tính giả 0,001, hash xxhash) để đếm khoá có bản ghi cuối còn sống, rồi suy ra số đã xoá = số dòng sống - số khoá sống. restoreBatchMetrics khôi phục số liệu khi rollback một lô.",
+  "why": "Hệ quả: master quyết định vacuum theo tỉ lệ rác tính từ các số này, và copy volume so số file với nguồn. Thiết kế: đọc ngược với bloom filter để LevelDB và sorted map có số liệu mà không cần dựng map trong bộ nhớ.",
+  "when": "Load volume; mỗi ghi và xoá; heartbeat; kiểm tra garbage của vacuum.",
+  "ux": "Tỉ lệ rác hiện trong volume.list và quyết định vacuum.",
+  "if_broken": "Vacuum chạy quá sớm hay không bao giờ, hoặc copy báo số file lệch.",
+  "gotchas": [
+   "FileCount là số lần put, không phải số file còn sống; số còn sống là FileCount - DeletedCount.",
+   "Với LevelDB và sorted map, số đã xoá là ước lượng: bloom filter có thể coi một khoá còn sống là đã thấy."
+  ]
+ },
+ "weed/storage/needle_map_sorted_file.go": {
+  "character": "SortedFileNeedleMap: needle map chỉ đọc trên file .sdx đã sắp xếp",
+  "what": "NewSortedFileNeedleMap tạo .sdx (bản .idx đã sắp theo khoá, chỉ gồm các khoá còn sống, mỗi khoá một entry cuối; khoá đã xoá không có trong file) khi .sdx cũ hơn .idx, tính số liệu từ .idx, đặt offset ghi ở cuối .idx, rồi đóng file .idx của caller. Get tìm nhị phân trong .sdx qua pool handle. Put luôn lỗi. Delete tìm khoá, append tombstone vào .idx, rồi đánh dấu xoá ngay trong .sdx. IndexFileSize lấy từ offset ghi; Sync chỉ fsync khi đã có tombstone; truncateIndex cắt .idx nhưng không bỏ được dấu xoá trong .sdx. Close bỏ handle khỏi pool.",
+  "why": "Hệ quả: gần như mọi volume chỉ đọc (nhất là volume đã tier) dùng map này, nên một volume không ai đọc tốn không bộ nhớ và không file descriptor. Thiết kế: vẫn cho phép xoá trên volume chỉ đọc để dữ liệu hết hạn có thể được xoá.",
+  "when": "Load volume chỉ đọc hay đã tier; đọc và xoá needle trên đó.",
+  "ux": "Volume đã tier vẫn xoá được file.",
+  "if_broken": "Volume chỉ đọc trả 404 cho file có thật, hoặc tombstone ghi đè lên các entry cũ của .idx.",
+  "gotchas": [
+   "Một lần xoá đã đánh dấu trong .sdx không thể hoàn tác; caller phải coi lô đó là không khôi phục được."
+  ]
+ },
+ "weed/storage/needle_map/old/compact_map.go": {
+  "character": "Bản CompactMap cũ (theo section, có overflow), chỉ còn cho test so sánh hiệu năng",
+  "what": "CompactMap cũ chia khoá thành các section tối đa 8192 entry, chèn tăng dần vào mảng values, chèn lệch thứ tự trong cửa sổ 1024 entry, còn lại vào mảng overflow; có Set, Delete, Get và AscendingVisit trộn values với overflow.",
+  "why": "Hệ quả: compact_map_perf_test.go trong cùng thư mục dùng nó để so với CompactMap mới. Thiết kế: giữ bản cũ làm mốc so sánh sau khi viết lại CompactMap.",
+  "when": "Chỉ trong test của thư mục old.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Không ảnh hưởng production.",
+  "issue": "dead",
+  "issue_note": "Không có package nào import weed/storage/needle_map/old; chỉ compact_map_test.go và compact_map_perf_test.go trong cùng thư mục dùng nó. Production dùng weed/storage/needle_map/compact_map.go."
+ },
+ "weed/storage/store.go": {
+  "character": "Store: mọi đĩa của một volume server, heartbeat gửi master, và các thao tác cấp store trên volume",
+  "what": "NewStore tạo một DiskLocation cho mỗi -dir và load volume song song trên các đĩa, rồi dọn shard EC dở khi .dat còn ở đĩa khác (#9478), chép metadata EC sang mọi đĩa có shard, gộp shard EC lệch đĩa, nạp state.pb và vid stamp. addVolume (dưới volumeCreateLock) chọn đĩa đúng loại còn chỗ (với preallocate thì đọc dung lượng thật, chừa chỗ cho .vif và .idx) có ít volume ghi được của collection đó nhất, rồi báo master qua NewVolumesChan. ReserveFreeLocation, ReleaseFreeLocation và CommitFreeLocation giữ chỗ cho VolumeCopy. CollectHeartbeat (từng lần một) dựng heartbeat: số volume tối đa theo loại đĩa (đĩa sắp đầy hay chỉ đọc báo số đang dùng), dung lượng đĩa, volume và volume đã đổi (theo digest, chỉ gửi danh sách đầy đủ khi cần), volume đã rời đi, cách ly volume có ba lỗi EIO liên tiếp (ngừng báo và chặn ghi, không xoá), xoá volume TTL đã hết hạn quá 10 phút, xoá EC volume hết hạn và cách ly EC volume lỗi, metric theo collection, state, MaxVolumeIdSeen. Ngoài ra: Write, Delete, ReadVolumeNeedle, MarkVolumeReadonly (chờ các lần append đang chạy) và MarkVolumeWritable (gỡ cách ly), MountVolume với validator, UnmountVolume và DeleteVolume trên mọi đĩa có cùng vid, ConfigureVolume, ConsolidateVolumeIndex, RenameOrCopyFile qua filesystem khác, MaybeAdjustVolumeMax cho đĩa tự tính số volume.",
+  "why": "Hệ quả: đây là trung tâm của volume server; master biết gì về server này đều qua CollectHeartbeat, và mọi RPC volume đi qua store. Thiết kế: xử lý mọi bản cùng vid trên các đĩa (một đĩa cũ gắn lại có thể mang bản trùng), và gửi tin cho master sau khi nhả khoá để channel đầy không gây deadlock.",
+  "when": "Khởi động volume server; mỗi pulse heartbeat; mọi RPC và request HTTP tới volume.",
+  "ux": "Volume mới, volume bị xoá hay chuyển readonly hiện ra ở master gần như ngay.",
+  "if_broken": "Master đếm sai chỗ trống, volume bản trùng sống lại sau khi xoá, hoặc volume trên đĩa hỏng tiếp tục nhận ghi.",
+  "gotchas": [
+   "NewVolumesChan và DeletedVolumesChan có sức chứa 1024 và được gửi blocking; khi mất kết nối master, xoá một collection có hơn 1024 volume trên server làm RPC treo.",
+   "Volume TTL hết hạn được xoá ngay trong CollectHeartbeat, sau 10 phút kể từ lúc hết hạn.",
+   "Đĩa tự tính số volume luôn báo tối thiểu 1, kể cả khi không còn chỗ."
+  ]
+ },
+ "weed/storage/store_state.go": {
+  "character": "State: trạng thái bền của volume server trong state.pb",
+  "what": "NewState đọc state.pb (không có file là trạng thái rỗng); Proto trả bản hiện tại; Save ghi; Update đòi version của request bằng version hiện tại, gộp, tăng version, ghi và khôi phục bản cũ nếu ghi lỗi.",
+  "why": "Hệ quả: cờ maintenance sống qua khởi động lại nhờ file này. Thiết kế: so-và-đổi theo version để hai người sửa cùng lúc không ghi đè nhau.",
+  "when": "Khởi động store; SetState; GetState; mỗi heartbeat đọc state.",
+  "ux": "volumeServer.state đặt maintenance mà không mất sau khởi động lại.",
+  "if_broken": "Maintenance mất sau khởi động lại, hoặc SetState báo lệch version.",
+  "gotchas": [
+   "state.pb nằm trong thư mục index của đĩa đầu tiên (NewStore chọn)."
+  ]
+ },
+ "weed/storage/store_vacuum.go": {
+  "character": "Các bước vacuum ở cấp store: kiểm tra rác, kiểm tra chỗ trống, compact, commit, cleanup, và compact offline",
+  "what": "CheckCompactVolume trả tỉ lệ rác và cờ disk_space_low chỉ khi đĩa sắp đầy là lý do readonly duy nhất. CompactVolume kiểm tra chỗ trống rồi CompactByIndex. compactionSpaceNeeded ước lượng dữ liệu sẽ ghi từ nội dung còn sống cộng khung needle và 1/16 dự phòng (không dùng kích thước hiện tại, vì volume càng nhiều rác thì compact càng ít ghi, issue #11516), không bao giờ vượt kích thước hiện tại; ensureCompactVolumeSpace kiểm tra thư mục data và index (cùng hay khác filesystem). CommitCompactVolume bỏ qua khi server đang dừng. CompactVolumeFiles compact offline một volume chưa mount (sau EC decode), có reconcile khi commit lỗi.",
+  "why": "Hệ quả: một store đầy tới mức volume thành readonly vẫn compact được các volume toàn rác để lấy lại chỗ. Thiết kế: ước lượng theo dữ liệu còn sống thay vì kích thước file.",
+  "when": "Vacuum của master, shell và worker; EC decode.",
+  "ux": "Đĩa đầy vẫn được giải phóng bằng vacuum.",
+  "if_broken": "Compact bị từ chối dù có đủ chỗ, hoặc chạy khi không đủ chỗ và làm đầy đĩa."
+ },
+ "weed/storage/store_vacuum_fs_unix.go": {
+  "character": "Kiểm tra hai thư mục có cùng filesystem không (không phải Windows)",
+  "what": "sameFilesystem so Dev trong stat của hai thư mục; không chắc thì trả true.",
+  "why": "Hệ quả: kiểm tra chỗ trống cho compact và tạo volume cộng phần data và index khi chúng chung một đĩa. Thiết kế: nghi ngờ thì coi là cùng, để kiểm tra đòi tổng.",
+  "when": "Kiểm tra chỗ trống trước compact và trước khi tạo volume có preallocate.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Compact hay tạo volume làm đầy đĩa khi .idx và .dat chung đĩa."
+ },
+ "weed/storage/store_volume_report.go": {
+  "character": "Theo dõi những gì master đã được báo, để heartbeat chỉ gửi volume thay đổi",
+  "what": "volumeReportState nhớ, theo từng (disk, vid), hash lần báo cuối, lượt heartbeat gần nhất thấy volume, và danh tính (collection, loại đĩa, placement, version, TTL, readonly) giữ qua unique.Handle để dùng chung. begin mở một lượt và cho biết cần danh sách đầy đủ không (khi master chưa nhận delta hay vừa yêu cầu); record báo volume có cần gửi không (hash đổi hay mới); commit đóng lượt: bỏ các bản không còn thấy và trả danh sách volume đã rời server hẳn (không tính volume chỉ chuyển đĩa, không trả khi lượt này là danh sách đầy đủ). reset khi kết nối lại; requestFullList khi master yêu cầu.",
+  "why": "Hệ quả: một server hàng triệu volume không gửi cả danh sách mỗi pulse; nhưng heartbeat delta không thể nói gì bằng sự im lặng, nên volume rời đi phải được nêu tên, nếu không master đếm nhầm chỗ trống cho tới khi digest lệch (comment của commit). Thiết kế: trạng thái theo từng kết nối, kết nối mới thì bắt đầu lại từ danh sách đầy đủ.",
+  "when": "Mỗi CollectHeartbeat; mỗi lần kết nối lại master.",
+  "ux": "Không thấy trực tiếp; master tốn ít CPU hơn với cluster lớn.",
+  "if_broken": "Master giữ volume đã rời đi, hoặc không biết volume đã đổi."
+ },
+ "weed/storage/vid_stamp.go": {
+  "character": "Vid stamp: vid lớn nhất server đã thấy và TopologyId, lưu ở mỗi thư mục dữ liệu",
+  "what": "Store giữ maxVolumeIdSeen (tăng bằng CAS từ heartbeat, AllocateVolume, tạo volume và shard EC) và lastSeenTopologyId. Lúc khởi động, bootstrapMaxVolumeIdSeen lấy max của stamp đã lưu và mọi vid volume, EC trên đĩa. saveVidStamps ghi .vid_stamp (JSON) vào mọi thư mục data không chỉ đọc bằng file tạm, fsync, rename và fsync thư mục; ghi lỗi thì đánh dấu dirty để lần sau ghi lại.",
+  "why": "Hệ quả: heartbeat báo MaxVolumeIdSeen và LastSeenTopologyId để một master mới (hay mất dữ liệu Raft) không cấp lại vid đã dùng. Thiết kế: lưu ở mọi đĩa, vì một đĩa có thể bị gỡ.",
+  "when": "Khởi động store; mỗi lần vid lớn nhất tăng hay TopologyId đổi.",
+  "ux": "Không thấy trực tiếp; tránh hai volume khác nhau cùng một vid sau sự cố master.",
+  "if_broken": "Master cấp lại một vid đã có, hai volume khác nhau cùng số hiệu."
+ },
+ "weed/storage/volume_report_hash.go": {
+  "character": "Hash của báo cáo một volume, dùng chung giữa volume server và master",
+  "what": "VolumeInfo.ReportHash băm bằng xxhash mọi trường mà heartbeat báo (id, kích thước, số file, số xoá, byte đã xoá, placement, version, TTL, compact revision, disk id, readonly, mtime, collection, loại đĩa, tên backend remote), gộp các chuỗi theo thứ tự để đổi chỗ hai trường không bị bỏ qua.",
+  "why": "Hệ quả: volume server băm thứ nó sắp gửi, master băm thứ nó đang giữ; hai bên khớp nhau thì master được coi là cập nhật, nên một trường bị bỏ sót ở đây là một thay đổi master không bao giờ biết. Thiết kế: cùng một hàm ở hai đầu.",
+  "when": "Mỗi CollectHeartbeat; master so digest khi nhận heartbeat.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Master giữ thông tin volume cũ mãi, hoặc yêu cầu danh sách đầy đủ liên tục.",
+  "gotchas": [
+   "remote_storage_key không nằm trong hash vì VolumeInfo không giữ nó."
+  ]
+ },
+ "weed/storage/volume_info.go": {
+  "character": "VolumeInfo: thông tin một volume mà master giữ và volume server báo",
+  "what": "VolumeInfo gồm collection, loại đĩa, tên backend remote, placement, TTL, kích thước, byte đã xoá, mtime, id, disk id, compact revision, số file và số xoá (uint32, chặn ở trần thay vì tràn), version, readonly. NewVolumeInfo và NewVolumeInfoFromShort chuyển từ message heartbeat; ToVolumeInformationMessage chuyển ngược. internVolumeString dùng chung một bản chuỗi cho collection, loại đĩa và backend.",
+  "why": "Hệ quả: master giữ một VolumeInfo cho mỗi replica của cluster, nên bố cục trường và việc intern chuỗi quyết định bộ nhớ của master. Thiết kế: không giữ khoá remote (duy nhất cho mỗi volume) vì master không dùng nó.",
+  "when": "Master xử lý heartbeat; volume server dựng /status và trang UI.",
+  "ux": "volume.list hiện các trường này.",
+  "if_broken": "Master tốn nhiều bộ nhớ, hoặc hiển thị số liệu volume sai.",
+  "gotchas": [
+   "Bảng intern chỉ lớn lên, nên chỉ dùng cho giá trị lặp lại ít (collection, loại đĩa, backend)."
+  ]
  }
 }
