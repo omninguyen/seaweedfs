@@ -5733,5 +5733,394 @@
   "gotchas": [
    "ScrubEcVolume (không gộp) dùng FindEcVolume khớp đầu tiên, nên trên server nhiều đĩa có thể quét một lần encode cũ hơn; bản gộp tránh được việc này."
   ]
+ },
+ "weed/admin/topology/active_topology.go": {
+  "character": "NewActiveTopology: hàm dựng ActiveTopology rỗng",
+  "what": "Tạo các map nodes, disks, volumeIndex, ecShardIndex và ba map task (pending, assigned, recent); cửa sổ task gần đây mặc định 10 giây nếu truyền số không dương.",
+  "why": "Hệ quả: điểm vào của package; mọi thứ khác được nạp qua UpdateTopology. Thiết kế: Hai nơi dựng ActiveTopology: maintenance của admin (sống lâu, giữ phần đặt chỗ của task qua nhiều chu kỳ) và plugin worker (volume_metrics.go dựng mới mỗi lần phát hiện).",
+  "when": "Khi maintenance của admin khởi tạo; mỗi lần plugin worker lấy số liệu volume để phát hiện task.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Không ảnh hưởng đáng kể ngoài việc map nil gây panic khi dùng."
+ },
+ "weed/admin/topology/types.go": {
+  "character": "Kiểu task, trạng thái và StorageSlotChange (thay đổi slot volume và slot shard)",
+  "what": "TaskType (vacuum, balance, erasure_coding, replication, ec_balance), TaskStatus (pending, in_progress, completed). Ba hằng giới hạn tải mỗi đĩa đều là 0, tức tắt. StorageSlotChange có VolumeSlots và ShardSlots với Add, Subtract, IsZero; ShardsPerVolumeSlot = 10 (DataShardsCount); ToVolumeSlots chia nguyên ShardSlots cho 10; ToShardSlots nhân VolumeSlots với 10; CanAccommodate so hai bên theo slot shard.",
+  "why": "Hệ quả: đơn vị chung cho mọi phép tính chỗ trống của admin và worker. Thiết kế: đếm EC theo slot shard để một task chỉ chiếm vài shard không bị làm tròn thành cả volume.",
+  "when": "Mọi phép tính chỗ trống trong ActiveTopology.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Chỗ trống bị tính sai, task bị đặt lên đĩa đầy hoặc bị từ chối.",
+  "gotchas": [
+   "ToVolumeSlots cắt bỏ phần lẻ: 9 slot shard đã giữ được tính là 0 volume, nên các view theo volume không thấy phần đặt chỗ nhỏ hơn một volume (GetEffectiveAvailableEcShardSlots tồn tại để tránh việc này)."
+  ]
+ },
+ "weed/admin/topology/structs.go": {
+  "character": "Cấu trúc của ActiveTopology: đĩa, node, task nhiều nguồn nhiều đích, kế hoạch đích",
+  "what": "TaskSource và TaskDestination (server, đĩa, StorageChange, kích thước ước tính). taskState gom VolumeID, loại, trạng thái, thời điểm và danh sách nguồn, đích. DiskInfo công khai (NodeID, Address dùng để suy ra máy vật lý, DiskID, loại, DC, rack, DiskInfo của master, LoadCount). activeDisk thêm ba danh sách task; activeNode giữ đĩa theo DiskID. ActiveTopology có topologyInfo, map node và đĩa (khoá \"NodeID:DiskID\"), chỉ mục volume và shard EC theo vid, ba map task và RWMutex. DestinationPlan, MultiDestinationPlan và VolumeReplica (ShardIds chỉ có ở GetECShardLocations).",
+  "why": "Hệ quả: định nghĩa dữ liệu mà detection của balance, EC, ec_balance và ecbalancer.FromActiveTopology đọc. Thiết kế: một task luôn có mảng nguồn và đích, kể cả task một nguồn một đích.",
+  "when": "Mọi lần đọc hay ghi ActiveTopology.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Không ảnh hưởng đáng kể (chỉ là khai báo)."
+ },
+ "weed/admin/topology/internal.go": {
+  "character": "Gắn task vào từng đĩa nguồn và đích, và dọn task đã xong",
+  "what": "reassignTaskStates xoá ba danh sách task của mọi đĩa rồi gắn lại toàn bộ task pending, assigned, recent. assignTaskToDisk gắn task vào mỗi đĩa nguồn và đích có trong topology (một lần mỗi đĩa) theo trạng thái. isDiskAvailable chỉ chặn khi MaxConcurrentTasksPerDisk > 0, mà hằng này đang là 0, nên luôn trả true; taskType không được xét (an toàn theo volume do HasAnyTask lo, #9147). cleanupRecentTasks bỏ task xong quá cửa sổ.",
+  "why": "Hệ quả: phần đặt chỗ chỉ có hiệu lực khi task được gắn vào đĩa; sau mỗi UpdateTopology mọi task được gắn lại vào đĩa mới. Thiết kế: dựng lại từ đầu thay vì cập nhật dần, để không lệch khi topology đổi.",
+  "when": "Sau UpdateTopology, AssignTask, CompleteTask.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Phần đặt chỗ biến mất hoặc bị đếm hai lần trên một đĩa.",
+  "gotchas": [
+   "Task có đĩa không còn trong topology (server rời cụm) không được gắn vào đâu, nên phần đặt chỗ của nó lặng lẽ không còn tác dụng."
+  ]
+ },
+ "weed/admin/topology/storage_impact.go": {
+  "character": "Mức thay đổi slot mặc định của từng loại task",
+  "what": "CalculateTaskStorageImpact: balance là nguồn −1 volume, đích +1; vacuum 0; replication đích +1; ec_balance nguồn −1 shard, đích +1 shard; erasure_coding trả 0 cho cả hai (EC nhiều đích phải tự truyền mức thay đổi cho từng đích); loại lạ thì cảnh báo và cho đích +1 volume. CalculateECShardStorageImpact là shardCount slot shard; CalculateECShardCleanupImpact là −14 slot shard (TotalShardsCount).",
+  "why": "Hệ quả: AddPendingTask dùng các giá trị này khi caller không ghi đè. Thiết kế: dấu âm là giải phóng, dấu dương là chiếm.",
+  "when": "Mỗi lần AddPendingTask không có StorageImpact ghi đè.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Task được đặt chỗ sai, nhiều task dồn vào một đĩa hoặc đĩa bị coi là đầy.",
+  "gotchas": [
+   "Nguồn của balance được tính −1 ngay khi task còn pending: chỗ trống của đĩa nguồn tăng trước khi volume thật sự rời đi.",
+   "CalculateECShardCleanupImpact luôn giả định đủ 14 shard, bất kể đĩa giữ bao nhiêu."
+  ]
+ },
+ "weed/admin/topology/capacity.go": {
+  "character": "Chỗ trống hiệu dụng của đĩa sau khi trừ các task đang chờ và đang chạy",
+  "what": "calculateTaskStorageImpact cộng StorageChange của mọi task pending và assigned có nguồn hoặc đích là đĩa này (task xong thì không tính). getEffectiveAvailableCapacityUnsafe lấy MaxVolumeCount − VolumeCount (đĩa trống hoàn toàn báo max=0 thì cho tạm 1 slot) trừ tác động đổi ra volume. Các hàm công khai: GetEffectiveAvailableCapacity (số volume), bản Detailed, GetEffectiveAvailableEcShardSlots (tính theo slot shard của tỉ lệ đích, làm tròn lên phần giữ chỗ lẻ, không trừ shard EC đã có trên đĩa), GetEffectiveCapacityImpact, GetDisksWithEffectiveCapacity và GetDisksForPlanning (trả bản sao DiskInfo với VolumeCount = Max − chỗ trống hiệu dụng), CanAccommodateTask.",
+  "why": "Hệ quả: detection của balance, EC và ecbalancer.FromActiveTopology chọn đích dựa vào con số này; một phần giữ chỗ bị bỏ sót là hai task cùng nhắm vào slot cuối. Thiết kế: giữ chỗ ngay khi task còn pending để các lần phát hiện trong cùng chu kỳ không chọn trùng.",
+  "when": "Mỗi lần detection chọn đĩa đích; mỗi lần AssignTask.",
+  "ux": "Không thấy trực tiếp; ảnh hưởng chỗ volume và shard được dời tới.",
+  "if_broken": "Nhiều task nhắm vào cùng một slot cuối, hoặc đĩa còn chỗ bị bỏ qua.",
+  "gotchas": [
+   "GetDisksWithEffectiveCapacity và GetDisksForPlanning có cùng phép tính; hai hàm chỉ khác tên của giới hạn tải, mà cả hai giới hạn đều đang tắt.",
+   "Bản sao DiskInfo dùng chung slice VolumeInfos và EcShardInfos với bản gốc."
+  ]
+ },
+ "weed/admin/topology/task_management.go": {
+  "character": "Vòng đời task trong ActiveTopology: thêm pending, giao, hoàn tất, khôi phục, tra theo volume",
+  "what": "AddPendingTask dựng taskState từ TaskSpec (StorageChange tự tính theo loại task, hoặc lấy giá trị ghi đè; nguồn EC có thể là xoá bản replica hay xoá shard EC cũ), đưa vào pendingTasks và gắn vào đĩa. AssignTask kiểm từng đĩa đích còn đủ chỗ cho StorageChange của đích (bỏ kiểm nếu topology chưa có đĩa; lỗi nếu đĩa đích không có trong topology), rồi chuyển sang assigned. CompleteTask chuyển task (assigned hoặc pending) sang recent, giải phóng chỗ đã giữ, dọn recent cũ. ApplyActualStorageChange cộng thẳng vào VolumeCount. RestoreMaintenanceTask nạp lại task pending hay in_progress từ lưu trữ. HasTask, HasAnyTask tra theo vid; GetTaskServerAdjustments cho mỗi server số volume sắp mất hoặc sắp nhận theo loại task.",
+  "why": "Hệ quả: maintenance của admin dựa vào đây để không giao hai task trùng volume và không dồn task lên một đĩa. Thiết kế: giữ chỗ từ lúc pending, giải phóng ngay khi hoàn tất; số VolumeCount thật do master cập nhật sau.",
+  "when": "Detection của balance và EC (AddPendingTask); maintenance_queue khi giao task cho worker (AssignTask) và khi task xong (CompleteTask); khôi phục task lúc admin khởi động.",
+  "ux": "Log \"Failed to update ActiveTopology for task assignment … Rolling back assignment\" trong admin khi AssignTask lỗi.",
+  "if_broken": "Task bị giao trùng, đĩa bị đặt quá tải, hoặc task kẹt ở pending.",
+  "gotchas": [
+   "RestoreMaintenanceTask đặt StartedAt là thời điểm khôi phục chứ không phải lúc task bắt đầu thật.",
+   "CompleteTask nhận cả task còn pending, để huỷ một task chưa giao cũng giải phóng chỗ."
+  ],
+  "issue": "bug",
+  "issue_note": "AssignTask kiểm chỗ trống của đĩa đích bằng getEffectiveAvailableCapacityUnsafe, mà con số này đã trừ phần giữ chỗ của chính task đó (AddPendingTask đã gắn task vào pendingTasks của đĩa). Kết quả là task cần gấp đôi chỗ nó giữ. Đã tái hiện bằng test tạm (không commit): đĩa đích Max 10, đang có 9 volume, nên còn 1 slot; AddPendingTask một task balance tới đó làm chỗ trống còn 0; AssignTask trả lỗi \"insufficient capacity on target disk dst:8080:0. Available: {VolumeSlots:0 ShardSlots:0}, Required: {VolumeSlots:1 ShardSlots:0}\". Trong maintenance_queue.go, lỗi này làm hoàn tác lần giao và để task ở pending; mỗi lần thử giao sau đó lại lỗi y như vậy, cho tới khi đĩa đích có thêm chỗ vì lý do khác. Chỉ đường maintenance của admin gọi AssignTask; plugin worker không gọi."
+ },
+ "weed/admin/topology/topology_management.go": {
+  "character": "UpdateTopology: dựng lại node, đĩa vật lý và chỉ mục volume từ TopologyInfo của master",
+  "what": "UpdateTopology từ chối topology nil, không có DC, hoặc 0 node khi đang có node (giữ bản tốt gần nhất, ví dụ lúc master khởi động lại). Sau đó dựng lại map node và đĩa: DiskInfos của master khoá theo loại đĩa, nên mỗi loại được tách thành từng đĩa vật lý bằng SplitByPhysicalDisk, khoá \"NodeID:DiskID\". Mục \"phantom\" (một loại đĩa rỗng hoàn toàn trên node có loại khác thật sự có dữ liệu, do master cũ công bố) bị bỏ qua. rebuildIndexes dựng chỉ mục vid tới đĩa cho volume và shard EC; reassignTaskStates gắn lại task. Các hàm đọc: GetAvailableDisks, HasRecentTaskForVolume, GetAllNodes, GetTopologyInfo, GetNodeDisks, GetDiskCount, GetVolumeLocations và GetECShardLocations (lọc theo collection; bản EC trả ShardIds của đĩa và bỏ đĩa có bitmap rỗng). CountTopologyResources đếm DC, node, đĩa vật lý.",
+  "why": "Hệ quả: mọi detection đọc topology qua đây; một đĩa phantom lọt vào là một đích \"trống\" thuộc loại đĩa mà node không có. Thiết kế: chỉ mục suy ra từ cùng phép tách đĩa với map đĩa, để disk id 0 (trùng giá trị mặc định) vẫn trỏ đúng đĩa.",
+  "when": "Mỗi chu kỳ maintenance của admin; mỗi lần plugin worker dựng ActiveTopology để phát hiện task.",
+  "ux": "Log \"UpdateTopology received … preserving last-known-good topology\" khi bản cập nhật bị từ chối.",
+  "if_broken": "Detection thấy sai đĩa, sai vị trí volume, hoặc thấy cụm trống trong lúc master khởi động lại.",
+  "gotchas": [
+   "rebuildIndexes không bỏ qua mục phantom như vòng dựng đĩa, nhưng mục phantom không có volume hay shard nên không thêm gì vào chỉ mục.",
+   "Một topology rỗng sẽ không bao giờ thay được topology đang có node: muốn về 0 node phải dựng ActiveTopology mới."
+  ]
+ },
+ "weed/worker/types/config_types.go": {
+  "character": "Cấu hình worker (WorkerConfig) và các kiểu cấu hình, thống kê maintenance cũ",
+  "what": "WorkerConfig: địa chỉ admin, capabilities, MaxConcurrent, chu kỳ heartbeat và xin task, thư mục làm việc, tham số tuỳ chỉnh, tuỳ chọn gRPC. DefaultWorkerConfig: admin localhost:9333, 2 task song song, heartbeat 30 giây, xin task mỗi 5 giây, capabilities lấy từ GetDefaultCapabilities. Ngoài ra là các kiểu MaintenanceConfig, MaintenancePolicy, GlobalMaintenanceSettings, MaintenanceStats, QueueStats và ba kiểu dữ liệu cho UI.",
+  "why": "Hệ quả: weed/worker/worker.go dùng WorkerConfig, và gọi DefaultWorkerConfig khi được truyền config nil. Thiết kế: các kiểu maintenance ở đây có bản riêng trong weed/admin/maintenance, nên phần này không còn ai dùng.",
+  "when": "Khi tạo worker kiểu cũ (weed/worker).",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Worker kiểu cũ khởi động với cấu hình sai (địa chỉ admin, số task song song).",
+  "gotchas": [
+   "defaultCapabilities không được gán ở đâu cả, nên GetDefaultCapabilities luôn trả slice rỗng và DefaultWorkerConfig luôn có Capabilities rỗng.",
+   "MaintenanceConfig, MaintenancePolicy, GlobalMaintenanceSettings, MaintenanceStats, QueueStats, MaintenanceConfigData, MaintenanceQueueData, MaintenanceWorkersData không được package nào ngoài weed/worker/types dùng."
+  ]
+ },
+ "weed/worker/types/data_types.go": {
+  "character": "Dữ liệu đầu vào của detection: ClusterInfo, VolumeHealthMetrics, vị trí replica",
+  "what": "ReplicaLocation (DC, rack, node, host vật lý). ClusterInfo: danh sách server, tổng volume và server, ActiveTopology để chọn đích, VolumeReplicaMap theo vid, replication mặc định của master (dùng khi volume không ghi replication), và tuỳ chọn gRPC cho detector cần gọi RPC (detector EC dọn bản replica mồ côi, #9448). VolumeHealthMetrics: mỗi volume trên mỗi server, gồm kích thước, byte đã xoá, tỉ lệ rác, tuổi, số replica thực tế và mong đợi, readonly, có bản remote, là EC, độ đầy. VolumeServerInfo.",
+  "why": "Hệ quả: mọi detector (balance, vacuum, EC, ec_balance) nhận đúng hai thứ này; một trường thiếu là detector quyết định sai. Thiết kế: metrics phẳng theo volume và server để detector chỉ cần lọc.",
+  "when": "Mỗi chu kỳ phát hiện task, ở maintenance của admin và ở plugin worker.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Detector tạo task thừa hoặc bỏ sót, ví dụ vacuum volume chưa đủ rác hay EC volume đang thiếu replica."
+ },
+ "weed/worker/types/factory.go": {
+  "character": "Interface factory tạo task (TaskFactory) và các factory chung chưa dùng",
+  "what": "Factory[T, C] chung (Create, Type, Description, Capabilities); TaskFactory tạo types.Task từ worker_pb.TaskParams; TaskCreationConfig, WorkerCreationConfig; WorkerFactory là Factory[Worker, WorkerConfig].",
+  "why": "Hệ quả: TaskFactory là thứ weed/worker/tasks/registry.go lưu theo loại task và worker kiểu cũ dùng để tạo task. Thiết kế: phần Factory chung được viết sẵn cho một lần hợp nhất chưa làm.",
+  "when": "Khi worker kiểu cũ tạo task từ tham số admin gửi.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Worker không tạo được task cho một loại task.",
+  "gotchas": [
+   "Chỉ TaskFactory được dùng; Factory, WorkerFactory, TaskCreationConfig và WorkerCreationConfig không có ai dùng."
+  ]
+ },
+ "weed/worker/types/task.go": {
+  "character": "Interface Task chung của worker và Logger, kèm logger dự phòng ghi qua glog",
+  "what": "Task: ID, Type, Execute, Validate, EstimateTime, Cancel, IsCancellable, GetProgress, SetProgressCallback, thư mục làm việc. Logger (Info, Warning, Error, Debug, WithFields). GlogFallbackLogger ghi qua glog (Debug ở V(1), WithFields bỏ qua trường). Khai báo thêm TaskWithLogging, NoOpLogger, LogLevel, LoggerConfig, LoggerFactory.",
+  "why": "Hệ quả: mọi task balance, EC, ec_balance, vacuum đều cài interface này. Thiết kế: logger mặc định là glog để task chưa gắn logger file vẫn có log.",
+  "when": "Mỗi task worker kiểu cũ chạy.",
+  "ux": "Log task ra glog khi chưa có logger file.",
+  "if_broken": "Task không biên dịch hay không được worker chạy được.",
+  "gotchas": [
+   "NoOpLogger không có phương thức nào nên không thoả Logger; TaskWithLogging và LoggerFactory không ai dùng."
+  ]
+ },
+ "weed/worker/types/task_detector.go": {
+  "character": "Interface TaskDetector: quét metrics và trả danh sách task cần làm",
+  "what": "TaskDetector: GetTaskType, ScanForTasks(metrics, clusterInfo), ScanInterval, IsEnabled. PolicyConfigurableDetector thêm ConfigureFromPolicy.",
+  "why": "Hệ quả: maintenance của admin gọi ScanForTasks của mọi detector đã đăng ký mỗi chu kỳ quét. Thiết kế: detector không tự lập lịch; nơi gọi quyết định chu kỳ.",
+  "when": "Mỗi chu kỳ quét maintenance.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Không ảnh hưởng đáng kể (chỉ là interface)."
+ },
+ "weed/worker/types/task_registry.go": {
+  "character": "TaskRegistry (types): cặp detector và scheduler theo loại task",
+  "what": "RegisterTask panic nếu detector và scheduler khác loại task; GetDetector, GetScheduler, GetAllDetectors và GetAllSchedulers trả bản sao map.",
+  "why": "Hệ quả: maintenance_integration.go của admin và lệnh liệt kê capabilities (weed/command/maintenance_capabilities.go) đọc registry toàn cục này. Thiết kế: không có khoá; chỉ được ghi lúc init.",
+  "when": "Lúc khởi động (đăng ký trong init của từng loại task); mỗi chu kỳ maintenance (đọc).",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Một loại task không bao giờ được phát hiện hay lập lịch.",
+  "gotchas": [
+   "Map không có khoá: an toàn chỉ vì mọi lần đăng ký chạy trong init trước khi có người đọc."
+  ]
+ },
+ "weed/worker/types/task_scheduler.go": {
+  "character": "Interface TaskScheduler: có được chạy task lúc này không, ưu tiên, giới hạn song song",
+  "what": "TaskScheduler: GetTaskType, CanScheduleNow(task, task đang chạy, worker rảnh), GetPriority, GetMaxConcurrent, GetDefaultRepeatInterval, IsEnabled. PolicyConfigurableScheduler thêm ConfigureFromPolicy.",
+  "why": "Hệ quả: maintenance queue của admin hỏi scheduler trước khi giao task. Thiết kế: mỗi loại task tự quyết giới hạn của mình.",
+  "when": "Mỗi lần maintenance queue chọn task để giao.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Không ảnh hưởng đáng kể (chỉ là interface)."
+ },
+ "weed/worker/types/task_types.go": {
+  "character": "Hằng loại task, trạng thái, ưu tiên, và kiểu TaskInput, TaskDetectionResult",
+  "what": "TaskType: vacuum, erasure_coding, balance, replication, ec_balance, s3_lifecycle (một loại cho cả ba subtype READ, BOOTSTRAP, DRAIN, chạy ở lane lifecycle riêng). TaskStatus từ pending tới cancelled; TaskPriority từ low tới critical. TaskInput là task trong hàng đợi (tham số typed, lần thử, thời điểm). TaskParams cho thực thi. TaskDetectionResult là kết quả detector (TaskID dùng cho vòng đời trong ActiveTopology, lý do, tham số typed, thời điểm hẹn). ClusterReplicationTask.",
+  "why": "Hệ quả: tên loại task ở đây phải khớp với tên job type mà admin plugin và lane scheduler dùng. Thiết kế: TaskDetectionResult mang sẵn worker_pb.TaskParams để admin chuyển thẳng cho worker.",
+  "when": "Mọi lần phát hiện, xếp hàng và giao task.",
+  "ux": "Tên loại task hiện trong admin UI.",
+  "if_broken": "Task bị xếp sai lane hay không khớp handler phía worker.",
+  "gotchas": [
+   "ClusterReplicationTask ở đây không ai dùng; maintenance có bản riêng cùng tên."
+  ]
+ },
+ "weed/worker/types/task_ui.go": {
+  "character": "TaskConfig, TaskUIProvider và UIRegistry cho trang cấu hình task của admin",
+  "what": "TaskConfig: bật tắt, Validate, đổi qua lại với worker_pb.TaskPolicy. TaskUIProvider: tên, mô tả, icon, cấu hình hiện tại, áp TaskPolicy hay TaskConfig. TaskStats. UIRegistry đăng ký provider theo loại task. TaskListData, TaskDetailsData.",
+  "why": "Hệ quả: admin hiển thị và lưu cấu hình từng loại task qua registry này. Thiết kế: cấu hình đi qua protobuf TaskPolicy thay vì map tuỳ ý.",
+  "when": "Khi admin mở hay lưu trang cấu hình task.",
+  "ux": "Trang cấu hình task trong admin UI.",
+  "if_broken": "Trang cấu hình task thiếu loại task hay lưu không có tác dụng.",
+  "gotchas": [
+   "TaskListData và TaskDetailsData không ai dùng."
+  ]
+ },
+ "weed/worker/types/typed_task_interface.go": {
+  "character": "TypedTaskInterface và registry toàn cục cho task typed, cùng TaskLogger tối giản",
+  "what": "ErrTaskTypeNotFound. TaskLogger (Info, Warning, Error, Debug, LogWithFields, Sync, Close) và TaskLoggerConfig, khai báo ở đây để tránh vòng import. TypedTaskInterface: ExecuteTyped, ValidateTyped, EstimateTimeTyped, tiến độ, huỷ, logger. TypedTaskRegistry và globalTypedTaskRegistry với RegisterGlobalTypedTask.",
+  "why": "Hệ quả: chỉ task balance kiểu typed (balance/execution.go) đăng ký vào đây. Thiết kế: một bước chuyển sang task typed chưa hoàn tất.",
+  "when": "Lúc init của package balance.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Không ảnh hưởng: không đường chạy nào đọc registry này.",
+  "gotchas": [
+   "TypedTaskRegistry không có hàm đọc: RegisterGlobalTypedTask ghi vào một registry mà không ai lấy ra, nên task balance typed không bao giờ được tạo để chạy."
+  ]
+ },
+ "weed/worker/types/worker.go": {
+  "character": "Interface Worker hợp nhất (chưa dùng)",
+  "what": "Worker: Start, Stop, HandleTask, GetStatus, GetCapabilities, Configure(WorkerCreationConfig).",
+  "why": "Hệ quả: không có. Thiết kế: viết sẵn để thay WorkerInterface cũ, theo chú thích đầu file.",
+  "when": "Không bao giờ.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Không ảnh hưởng.",
+  "issue": "dead",
+  "issue_note": "Không package nào cài hay dùng interface Worker: chỉ WorkerFactory (factory.go) và trường Workers []*Worker của MaintenanceQueueData (config_types.go) nhắc tới nó, và cả hai đều không có ai dùng ngoài weed/worker/types. Tìm \"types.Worker\" trong weed (trừ test) không ra kết quả nào."
+ },
+ "weed/worker/types/worker_types.go": {
+  "character": "Dữ liệu về worker: WorkerData, WorkerStatus, và các kiểu thống kê",
+  "what": "WorkerData (id, địa chỉ, heartbeat cuối, trạng thái, task hiện tại, capabilities, tải). WorkerStatus (trạng thái worker tự báo, task đang chạy, uptime, số task xong và lỗi). WorkerDetailsData, WorkerPerformance, RegistryStats, WorkerSummary.",
+  "why": "Hệ quả: scheduler dùng WorkerData để biết worker nào còn chỗ; worker kiểu cũ trả WorkerStatus. Thiết kế: kiểu dữ liệu thuần, không phương thức.",
+  "when": "Mỗi lần maintenance chọn worker; khi worker báo trạng thái.",
+  "ux": "Danh sách worker trong admin UI.",
+  "if_broken": "Task bị giao cho worker đã đầy hoặc worker rảnh bị bỏ qua.",
+  "gotchas": [
+   "RegistryStats, WorkerSummary và WorkerPerformance không ai dùng ngoài package."
+  ]
+ },
+ "weed/worker/types/base/task.go": {
+  "character": "BaseTask: phần dùng chung của mọi task (id, loại, tiến độ theo giai đoạn, huỷ, logger, thư mục)",
+  "what": "NewBaseTask gắn GlogFallbackLogger mặc định. ReportProgress và ReportProgressWithStage gọi callback kèm tên giai đoạn. Cancel chỉ đặt cờ cancelled (không đồng bộ); IsCancellable luôn true. Execute, Validate, EstimateTime và GetProgress là bản rỗng, task cụ thể phải ghi đè.",
+  "why": "Hệ quả: task balance, EC, ec_balance, vacuum nhúng BaseTask để có tiến độ và logger. Thiết kế: tối thiểu, mọi logic nằm ở task cụ thể.",
+  "when": "Mỗi task worker kiểu cũ.",
+  "ux": "Tiến độ và tên giai đoạn của task trong admin UI.",
+  "if_broken": "Tiến độ không cập nhật hoặc task không huỷ được.",
+  "gotchas": [
+   "cancelled và currentStage không có khoá: Cancel từ goroutine khác trong lúc task đọc cờ là data race.",
+   "Execute mặc định trả nil: task quên ghi đè sẽ \"thành công\" mà không làm gì."
+  ]
+ },
+ "weed/worker/tasks/registry.go": {
+  "character": "Ba registry toàn cục của worker: factory task, detector và scheduler, UI provider",
+  "what": "GetGlobalTypesRegistry, GetGlobalUIRegistry, GetGlobalTaskRegistry tạo singleton bằng sync.Once. AutoRegister, AutoRegisterTypes, AutoRegisterUI là hàm tiện cho init của từng loại task. TaskRegistry ở đây giữ TaskFactory theo loại, có khoá đọc ghi, Get và GetAll.",
+  "why": "Hệ quả: base.RegisterTask đổ mọi loại task vào ba registry này; maintenance của admin đọc registry types và UI, worker kiểu cũ đọc registry factory. Thiết kế: đăng ký qua import side effect trong init.",
+  "when": "Lúc init; maintenance của admin và worker kiểu cũ đọc khi chạy.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Một loại task biến mất khỏi admin hay worker."
+ },
+ "weed/worker/tasks/task.go": {
+  "character": "BaseTaskFactory và vài kiểu lỗi chung của package tasks",
+  "what": "BaseTaskFactory giữ loại task, capabilities, mô tả. UnsupportedTaskTypeError, ValidationError (chỉ là struct). getServerFromSources lấy Node của nguồn đầu tiên.",
+  "why": "Hệ quả: base.GenericFactory nhúng BaseTaskFactory; task_logger.go dùng getServerFromSources. Thiết kế: phần chung nhỏ.",
+  "when": "Khi tạo factory lúc init; khi tạo logger task.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Không ảnh hưởng đáng kể.",
+  "gotchas": [
+   "UnsupportedTaskTypeError và ValidationError không có phương thức Error nên không phải là error; các chỗ có tên ValidationError khác trong weed là kiểu riêng của package khác."
+  ]
+ },
+ "weed/worker/tasks/schema_provider.go": {
+  "character": "Registry schema cấu hình task (chỉ ghi)",
+  "what": "TaskConfigSchema nhúng config.Schema cùng tên, mô tả, icon. TaskConfigSchemaProvider. globalSchemaRegistry giữ provider theo loại task; RegisterTaskConfigSchema ghi vào đó.",
+  "why": "Hệ quả: base.RegisterTask đăng ký mỗi loại task vào đây. Thiết kế: UI lấy schema qua BaseUIProvider (ui_base.go) chứ không qua registry này.",
+  "when": "Lúc init.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Không ảnh hưởng: không ai đọc registry.",
+  "gotchas": [
+   "Không có hàm đọc globalSchemaRegistry; schema thật đến UI qua schemaFunc của BaseUIProvider."
+  ]
+ },
+ "weed/worker/tasks/config_update_registry.go": {
+  "character": "Registry hàm nạp cấu hình task từ lưu trữ, gọi một lần khi admin khởi động",
+  "what": "ConfigUpdateRegistry giữ ConfigUpdateFunc theo loại task (singleton qua sync.Once, có khoá). UpdateAllConfigs chép map rồi gọi từng hàm với configPersistence, chỉ cảnh báo khi lỗi. AutoRegisterConfigUpdater tiện cho init.",
+  "why": "Hệ quả: admin_server.go gọi UpdateAllConfigs trong loadTaskConfigurationsFromPersistence, trước khi tạo maintenance manager; hàm này thay nguyên đối tượng cấu hình của từng task. Thiết kế: mỗi loại task tự biết đọc cấu hình của mình.",
+  "when": "Một lần khi admin khởi động.",
+  "ux": "Log \"Failed to load … configuration from persistence\".",
+  "if_broken": "Cấu hình đã lưu của một loại task không được nạp lại sau khi admin khởi động lại."
+ },
+ "weed/worker/tasks/ui_base.go": {
+  "character": "BaseUIProvider: cài TaskUIProvider bằng các hàm truyền vào",
+  "what": "NewBaseUIProvider nhận loại task, tên, mô tả, icon và bốn hàm (schema, cấu hình hiện tại, áp TaskPolicy, áp TaskConfig); các phương thức chỉ trả lại hay gọi các hàm đó. RegisterUIFunc là kiểu hàm đăng ký chung.",
+  "why": "Hệ quả: base.RegisterTask dựng một BaseUIProvider cho mỗi loại task và đăng ký vào UIRegistry. Thiết kế: tránh mỗi task tự viết provider.",
+  "when": "Khi admin mở hay lưu trang cấu hình task.",
+  "ux": "Trang cấu hình task trong admin UI.",
+  "if_broken": "Trang cấu hình không hiện hay không lưu được.",
+  "gotchas": [
+   "RegisterUIFunc không ai dùng."
+  ]
+ },
+ "weed/worker/tasks/util/address.go": {
+  "character": "ResolveServerAddress: đổi id server thành địa chỉ có cổng gRPC",
+  "what": "Tìm node trong ActiveTopology.GetAllNodes và trả pb.NewServerAddressFromDataNode, tức địa chỉ kèm cổng gRPC thật nếu khác 0, thay vì cộng 10000 mặc định.",
+  "why": "Hệ quả: detection của balance, EC, vacuum dùng để điền địa chỉ nguồn và đích vào tham số task. Thiết kế: id node có thể là id mờ nên phải tra topology.",
+  "when": "Mỗi lần detection tạo tham số task.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Worker gọi gRPC sai cổng hay sai máy."
+ },
+ "weed/worker/tasks/task_logger.go": {
+  "character": "FileTaskLogger: log JSON theo từng task trong một thư mục riêng, kèm metadata.json",
+  "what": "NewTaskLogger tạo thư mục <taskID>_<loại>_<worker>_<thời điểm> dưới BaseLogDir, mở task.log (mỗi dòng một JSON), ghi metadata.json (trạng thái, tiến độ, vid, server, collection), rồi dọn các thư mục cũ trong goroutine nếu vượt MaxTasks (xoá theo thời gian sửa). Info, Warning, Error, Debug, LogProgress, LogStatus, LogWithFields ghi một dòng; chỉ ERROR và WARNING được chuyển sang glog khi EnableConsole. Close ghi thời điểm kết thúc, thời lượng, đổi \"started\" thành \"completed\". GetTaskLogMetadata và ReadTaskLogs đọc lại (bỏ phần cuối hỏng).",
+  "why": "Hệ quả: là nguồn log mà admin xem cho từng task chạy trên worker. Thiết kế: một thư mục mỗi lần chạy để đọc lại dễ và dọn theo số lượng.",
+  "when": "Mỗi task worker kiểu cũ chạy (worker.go tạo logger); khi admin xin log.",
+  "ux": "Log và metadata của task trong admin UI.",
+  "if_broken": "Admin không xem được log task, hoặc thư mục log phình mãi.",
+  "gotchas": [
+   "NewTaskLogger đọc params.TypedParams.Sources mà không kiểm nil: TaskParams không có TypedParams sẽ làm panic.",
+   "saveMetadata đọc l.metadata mà không giữ khoá trong LogProgress và LogStatus, nên chạy song song với lần cập nhật khác là data race.",
+   "MaxLogSizeMB không được dùng ở đâu: file log không bị giới hạn kích thước."
+  ]
+ },
+ "weed/worker/tasks/task_log_handler.go": {
+  "character": "TaskLogHandler: trả log của một task cho admin theo yêu cầu",
+  "what": "NewTaskLogHandler tạo thư mục gốc (mặc định /tmp/seaweedfs/task_logs). HandleLogRequest tìm thư mục có tên bắt đầu bằng \"<taskID>_\", đọc metadata nếu được hỏi, đọc các dòng log rồi lọc theo mức, khoảng thời gian, giữ MaxEntries dòng mới nhất, đổi sang worker_pb. Không tìm thấy thì trả hai dòng chẩn đoán và Success=false.",
+  "why": "Hệ quả: worker.go gọi khi admin gửi TaskLogRequest qua kênh gRPC. Thiết kế: đọc thẳng file, không giữ gì trong bộ nhớ.",
+  "when": "Khi người dùng mở log của task trong admin.",
+  "ux": "Trang log task trong admin UI.",
+  "if_broken": "Admin báo không có log cho task đã chạy.",
+  "gotchas": [
+   "Thư mục đầu tiên khớp tiền tố được trả về, và os.ReadDir sắp theo tên: nếu cùng task chạy lại trên cùng worker, admin thấy log của lần chạy sớm nhất."
+  ]
+ },
+ "weed/worker/tasks/base/generic_components.go": {
+  "character": "GenericDetector và GenericScheduler: cài detector và scheduler từ TaskDefinition",
+  "what": "GenericDetector gọi DetectionFunc của định nghĩa (nil thì không có task), chu kỳ quét mặc định 30 phút, bật tắt theo Config. GenericScheduler dùng SchedulingFunc nếu có, không thì mặc định: task đã bật, số task cùng loại đang chạy dưới MaxConcurrent (mặc định 1), và có worker còn chỗ với capability phù hợp. Chu kỳ lặp mặc định 24 giờ. SetEnabled ở cả hai và SetMaxConcurrent để chính sách maintenance áp vào được qua type assertion.",
+  "why": "Hệ quả: mọi loại task đã đăng ký đều chạy qua hai kiểu này; thiếu SetEnabled thì chính sách bật tắt của admin không bao giờ tới cờ thật (lý do nó được thêm). Thiết kế: detector và scheduler dùng chung một TaskDefinition nên chung một cờ bật.",
+  "when": "Mỗi chu kỳ quét và mỗi lần giao task của maintenance.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Task bị phát hiện khi đã tắt, hoặc chạy quá giới hạn song song.",
+  "gotchas": [
+   "SetMaxConcurrent bỏ qua giá trị không dương thay vì đổi về mặc định 1."
+  ]
+ },
+ "weed/worker/tasks/base/registration.go": {
+  "character": "base.RegisterTask: đăng ký một TaskDefinition vào mọi registry cùng lúc",
+  "what": "validateTaskDefinition đòi có Type, Name, Config và CreateTask (lỗi thì chỉ log và bỏ qua). RegisterTask đăng ký GenericFactory (registry factory), cặp GenericDetector và GenericScheduler (registry types), GenericSchemaProvider (registry schema), và một BaseUIProvider dựng từ GenericUIProvider (registry UI). GenericUIProvider áp TaskConfig bằng cách đổi qua TaskPolicy rồi FromTaskPolicy.",
+  "why": "Hệ quả: register.go của balance, erasure_coding, ec_balance, vacuum gọi hàm này trong init. Thiết kế: một nơi duy nhất nối một loại task vào worker, admin và UI.",
+  "when": "Lúc init của từng package task.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Một loại task không xuất hiện ở admin hay worker; định nghĩa lỗi chỉ để lại một dòng log."
+ },
+ "weed/worker/tasks/base/task_definition.go": {
+  "character": "TaskDefinition và BaseConfig: mọi thứ để mô tả một loại task",
+  "what": "TaskDefinition: loại, tên, tên hiển thị, mô tả, icon, capabilities, Config, ConfigSpec (các trường schema), CreateTask, DetectionFunc với ScanInterval, SchedulingFunc với MaxConcurrent và RepeatInterval. TaskConfig interface (ConfigWithDefaults, bật tắt, đổi với TaskPolicy). BaseConfig: Enabled, ScanIntervalSeconds, MaxConcurrent; ToTaskPolicy ghi ScanIntervalSeconds vào cả RepeatIntervalSeconds lẫn CheckIntervalSeconds; FromTaskPolicy đọc lại từ RepeatIntervalSeconds; ApplySchemaDefaults qua reflection.",
+  "why": "Hệ quả: mỗi loại task điền một TaskDefinition; Config của nó là thứ admin chỉnh. Thiết kế: cấu hình cụ thể nhúng BaseConfig và ghi đè ToTaskPolicy, FromTaskPolicy.",
+  "when": "Lúc init; mỗi lần cấu hình task được đọc hay ghi.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Cấu hình task bị mất trường khi lưu và nạp lại.",
+  "gotchas": [
+   "BaseConfig.ScanIntervalSeconds đi ra hai trường của TaskPolicy nhưng chỉ đọc vào từ RepeatIntervalSeconds; sửa CheckIntervalSeconds riêng không có tác dụng."
+  ]
+ },
+ "weed/worker/tasks/base/volume_utils.go": {
+  "character": "FindVolumeDisk: tìm disk id của một volume trên một server",
+  "what": "Dùng ActiveTopology.GetVolumeLocations (chỉ mục theo vid, lọc collection) và trả DiskID của bản trên server cần tìm.",
+  "why": "Hệ quả: detection của balance và vacuum điền disk nguồn vào tham số task. Thiết kế: dùng chỉ mục thay vì duyệt cả topology.",
+  "when": "Mỗi lần detection tạo task cho một volume.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Task nhắm sai đĩa, hoặc dùng disk 0 khi không tìm thấy."
+ },
+ "weed/worker/tasks/base/typed_task.go": {
+  "character": "BaseTypedTask: phần chung cho task typed (tiến độ, huỷ, logger file)",
+  "what": "Giữ loại task, id, tiến độ, giai đoạn, cờ huỷ (có khoá) và logger. NewBaseTypedTask đặt thư mục log /data/task_logs. InitializeTaskLogger tạo FileTaskLogger. LogInfo và các hàm log khác chỉ ghi khi đã có logger. ValidateTyped đòi params khác nil, có volume_id và ít nhất một nguồn. EstimateTimeTyped mặc định 5 phút; ExecuteTyped panic nếu task không ghi đè.",
+  "why": "Hệ quả: chỉ TypedTask của balance (balance/execution.go) nhúng kiểu này, và task đó chỉ được đăng ký vào globalTypedTaskRegistry. Thiết kế: một bước chuyển sang task typed chưa hoàn tất.",
+  "when": "Không bao giờ trên đường chạy thật.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Không ảnh hưởng.",
+  "issue": "dead",
+  "issue_note": "BaseTypedTask chỉ được nhúng bởi TypedTask trong weed/worker/tasks/balance/execution.go. NewTypedTask của balance chỉ được truyền vào types.RegisterGlobalTypedTask, mà TypedTaskRegistry (weed/worker/types/typed_task_interface.go) không có hàm đọc nào, nên không đường chạy nào tạo hay chạy task này. Worker thật tạo task qua TaskFactory của tasks.TaskRegistry."
+ },
+ "weed/worker/log_adapter.go": {
+  "character": "taskLoggerAdapter: cho task ghi log có trường vào file log của task",
+  "what": "Bọc một tasks.TaskLogger thành types.Logger. WithFields trả adapter mới mang bản sao các trường; Info, Warning, Error, Debug ghi qua LogWithFields khi có trường, không thì qua hàm log thường; logger gốc nil thì bỏ qua. toStringMap chỉ chép map (tên gây hiểu nhầm: giá trị không bị đổi sang chuỗi).",
+  "why": "Hệ quả: log mà task balance, EC, vacuum ghi qua GetLogger() đi vào task.log để admin xem. Thiết kế: chỉ là lớp chuyển đổi giữa hai interface logger.",
+  "when": "Mỗi task worker kiểu cũ có file logger.",
+  "ux": "Log có trường của task trong admin UI.",
+  "if_broken": "Log có trường của task chỉ ra glog, không vào file log của task."
+ },
+ "weed/worker/worker.go": {
+  "character": "Worker kiểu cũ (maintenance): vòng quản lý trạng thái, xin task, chạy task, xử lý message của admin",
+  "what": "GenerateOrLoadWorkerID đọc worker.id trong thư mục làm việc hoặc sinh \"w-<6 ký tự host>-<4 hex>\" rồi lưu lại. NewWorker lấy registry factory toàn cục, tạo thư mục task_logs và TaskLogHandler, chạy managerLoop: mọi trạng thái (task đang chạy, admin client, ticker, số task xong và lỗi) chỉ được đọc ghi trong goroutine này qua lệnh trên kênh cmds. Start đăng ký thông tin worker với client, thử kết nối, rồi chạy bốn vòng: heartbeat, xin task (chỉ khi còn chỗ), theo dõi kết nối, xử lý message. executeTask từ chối task không có TypedParams, tạo FileTaskLogger, tạo task qua TaskFactory, gắn logger và callback tiến độ (báo admin và ghi file), chạy Execute rồi báo hoàn tất. Message của admin: TaskAssignment (chạy ngay qua HandleTask), TaskLogRequest (trả log), TaskCancellation, AdminShutdown (Stop sau thời gian ân hạn). Stop chờ tối đa 30 giây cho task đang chạy rồi dừng vòng quản lý và ngắt kết nối.",
+  "why": "Hệ quả: đây là worker mà weed mini chạy cạnh plugin worker (startMiniWorker), nhận task của maintenance queue trong admin. Thiết kế: một goroutine giữ trạng thái thay cho mutex; dispatch bỏ cuộc khi vòng quản lý đã dừng để goroutine task không treo.",
+  "when": "weed mini khởi động worker cho admin; mỗi task balance, EC, ec_balance, vacuum của maintenance.",
+  "ux": "Danh sách worker và task trong admin UI; log \"TASK ACCEPTED\", \"TASK REJECTED\", \"WORKER STARTED\".",
+  "if_broken": "Worker ngừng nhận và báo cáo task trong khi vẫn kết nối với admin.",
+  "gotchas": [
+   "Huỷ task chưa được cài: ActionCancelTask chỉ ghi log (\"TODO: Implement actual task cancellation logic\").",
+   "getStopChan, getHbTick, getReqTick, setHbTick, setReqTick và SetAdminClient gửi thẳng vào w.cmds thay vì qua dispatch, nên sẽ treo nếu gọi sau khi vòng quản lý đã dừng.",
+   "Cấu hình nil dùng DefaultWorkerConfig, mà Capabilities của nó luôn rỗng (xem config_types.go)."
+  ],
+  "issue": "bug",
+  "issue_note": "Nhánh ActionSetTask trong managerLoop, khi worker đã đủ MaxConcurrent, gửi lỗi vào cmd.resp nhưng không return: nó vẫn thêm task vào currentTasks rồi gửi nil lần thứ hai vào cùng kênh. setTask tạo kênh đó không buffer và chỉ đọc một lần, nên lần gửi thứ hai treo vòng quản lý mãi mãi; w.done không bao giờ đóng, nên mọi dispatch sau đó (getTaskLoad, getAdmin, removeTask) cũng treo, kể cả lời gọi getTaskLoad nằm ngay trong dòng log \"TASK REJECTED\" của setTask. Đã tái hiện bằng test tạm (không commit): NewWorker với MaxConcurrent=1, setTask lần một trả nil, setTask lần hai vẫn treo sau 3 giây, và getTaskLoad gọi sau đó cũng treo sau 3 giây. Đường thật dẫn tới đây: messageProcessingLoop gọi HandleTask cho mọi TaskAssignment mà không kiểm chỗ trống, và câu trả lời cho một lần xin task đã hết 30 giây chờ có thể tới muộn cùng lúc với câu trả lời của lần xin sau (xem issue_note của client.go). Khi đó worker treo hẳn: không xin task, không heartbeat, không báo hoàn tất."
+ },
+ "weed/worker/client.go": {
+  "character": "GrpcAdminClient: luồng gRPC hai chiều của worker kiểu cũ tới admin, tự kết nối lại",
+  "what": "Một managerLoop giữ trạng thái kết nối (conn, stream, cờ connected, reconnecting, shouldReconnect) và nhận lệnh qua kênh. Connect chạy vòng kết nối lại (lùi dần 1 giây nhân 1,5 tới tối đa 30 giây, không giới hạn số lần) rồi thử kết nối ngay. attemptConnection mở WorkerStream (kèm Bearer token khi jwt.filer_signing.key được cấu hình), chạy handleOutgoing và handleIncoming, rồi gửi đăng ký và chờ RegistrationResponse tối đa 30 giây. handleIncoming đưa message vào kênh incoming (bỏ nếu đầy quá 1 giây), chuyển RegistrationResponse cho người chờ, và báo ActionStreamError khi stream lỗi để kết nối lại. SendHeartbeat, RequestTask, CompleteTaskWithMetadata, UpdateTaskProgress đều bỏ qua khi đang kết nối lại và chờ tối đa 5 tới 10 giây khi mất kết nối. RequestTask gửi TaskRequest rồi đọc kênh incoming tới 30 giây để tìm một TaskAssignment có TaskId. Disconnect gửi WorkerShutdown rồi đóng các kênh.",
+  "why": "Hệ quả: mọi trao đổi giữa worker kiểu cũ và maintenance của admin đi qua luồng này. Thiết kế: một goroutine giữ trạng thái kết nối; admin luôn trả một TaskAssignment, với TaskId rỗng nghĩa là không có task.",
+  "when": "Suốt thời gian worker kiểu cũ chạy (weed mini).",
+  "ux": "Log \"[session …] Worker registered successfully\", \"Reconnection attempt … failed\".",
+  "if_broken": "Worker mất kết nối với admin và không tự nối lại, hoặc task được giao mà worker không nhận.",
+  "gotchas": [
+   "RequestTask bỏ qua TaskAssignment có TaskId rỗng và chờ tiếp, nên khi admin không có task (trả TaskId rỗng) nó luôn chờ đủ 30 giây.",
+   "Gửi heartbeat, tiến độ, hoàn tất đều bỏ cuộc sau 1 giây nếu kênh outgoing đầy; khi đang kết nối lại thì báo hoàn tất bị bỏ qua mà vẫn trả nil."
+  ],
+  "issue": "bug",
+  "issue_note": "RequestTask và messageProcessingLoop (worker.go) cùng đọc một kênh incoming. Trong lúc RequestTask chờ (gần như liên tục, vì admin trả TaskId rỗng khi không có task và RequestTask chờ đủ 30 giây mỗi lần, rồi worker xin lại sau 5 giây), message nào nó lấy được mà không phải TaskAssignment có TaskId thì bị bỏ, chỉ để lại dòng log V(4) \"NON-TASK RESPONSE\": TaskLogRequest (admin không nhận được log), TaskCancellation, AdminShutdown, HeartbeatResponse. Ngược lại, TaskAssignment thật có thể rơi vào messageProcessingLoop và được chạy qua HandleTask mà không kiểm chỗ trống, còn RequestTask chờ tới hết giờ rồi xin task tiếp; câu trả lời của lần xin trước và lần xin sau có thể tới cùng lúc và vượt MaxConcurrent, rơi vào lỗi deadlock của ActionSetTask (xem issue_note của worker.go). Suy ra từ code, chưa chạy với admin thật."
  }
 }
