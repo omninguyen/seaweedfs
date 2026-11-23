@@ -3860,5 +3860,281 @@
    "KeepConnectedRequest.metrics_port không được code Go nào trong repo đặt hay đọc.",
    "Các số trường 10-13 và 20+ của VolumeEcShardInformationMessage dành cho bản enterprise."
   ]
+ },
+ "weed/topology/topology.go": {
+  "character": "Gốc của mô hình cluster trên master: cây DC/rack/node/disk, bản đồ collection và EC shard, cấp volume id qua Raft, quarantine id trùng và các cổng an toàn sau khi mất trạng thái",
+  "what": "Topology là NodeImpl gốc, giữ collectionMap (collection → volume layout), ecShardMap, Sequencer, kênh volume đầy và crowded, Raft (goraft hay hashicorp), bản đồ UUID thư mục, TopologyId và chỉ mục địa chỉ → DataNode. IsLeader, MaybeLeader (không chờ), Leader (chờ tới 20 s), DoBarrier cho hashicorp. IsWarmingUp đúng trong 3 chu kỳ pulse sau khi đổi leader nếu lúc đó đã có volume. Lookup tìm node theo collection (hoặc mọi collection), rồi theo EC shard. NextVolumeId (chỉ leader đọc được, chờ hết TopologyInitPending, từ chối khi growth bị freeze hay -mdir chỉ đọc, chờ allocation deferral) ghi bound mới ra file mirror rồi qua Raft. PickForWrite chọn volume qua layout, cộng byte dự kiến (kích thước khách báo, trung bình của volume, hay 1 MiB) vào sizeTracking và lấy needle id từ Sequencer với cookie ngẫu nhiên. SyncDataNodeRegistration (heartbeat đầy đủ), IncrementalSyncDataNodeRegistration (delta) và ApplyVolumeChanges (changed) cập nhật node, đăng ký hay gỡ khỏi layout, tự sửa volume có trên disk nhưng mất khỏi chỉ mục lookup, cập nhật oversized, kích thước và EnsureCorrectWritables. flagDuplicateVolumeId quarantine (readonly trên layout và đẩy xuống volume server) mọi bản sao của một volume id xuất hiện dưới hai layout khác nhau, releaseResolvedQuarantine gỡ khi xung đột hết. CheckReportedTopologyId đóng băng growth khi server báo TopologyId khác; ResumeVolumeGrowth, GrowthFreezeState và các lệnh Raft ràng buộc theo thế hệ freeze. GrowthBlocker giải thích vì sao growth có ràng buộc vị trí không thể đặt được. SetMaxVolumeIdFile và PersistMaxVolumeId giữ bound, TopologyId và freeze trong file max_volume_id ghi nguyên tử.",
+  "why": "Hệ quả: mọi assign và lookup của cluster đọc cấu trúc này; một volume id bị cấp lại sau khi master mất trạng thái làm hai volume khác nhau dùng chung id, ghi đè dữ liệu của nhau. Thiết kế: chỉ bound volume id và danh tính cluster đi qua Raft, phần còn lại dựng lại từ heartbeat; các cổng (warmup, deferral, freeze theo TopologyId, quarantine id trùng) chọn ngừng cấp phát thay vì đoán, và SetTopologyId gọi Fatal khi thấy hai TopologyId (split brain).",
+  "when": "Mỗi heartbeat, mỗi assign và lookup, mỗi lần tạo volume, mỗi lần đổi leader.",
+  "ux": "Sau sự cố mất trạng thái, master từ chối tạo volume với thông báo chỉ cách chạy volume.growth.resume.",
+  "if_broken": "Volume id trùng, assign vào volume không còn ghi được, lookup báo không tìm thấy volume đang có, hoặc cluster ngừng tạo volume.",
+  "gotchas": [
+   "chanFullVolumes và chanCrowdedVolumes không có buffer: vòng quét volume đầy chờ goroutine tiêu thụ cho từng volume.",
+   "SetTopologyId gặp một id khác id đang giữ thì glog.Fatalf, dừng cả master."
+  ]
+ },
+ "weed/topology/volume_layout.go": {
+  "character": "Một volume layout (collection + replication + TTL + disk type): vị trí từng volume, danh sách ghi được, crowded, oversized, ước lượng kích thước và lựa chọn volume cho assign",
+  "what": "VolumeLayout giữ vid2location, writables (kèm writableMembers để tra nhanh), crowded, oversizedVolumes (phán quyết theo replica, hết hạn 24 giờ khi replica đã đi), vacuumedVolumes, deletingVolumes và sizeTracking (kích thước hiệu dụng = đã báo + byte đã cấp mà chưa ghi). RegisterVolume thêm vị trí và dựng lại cờ readonly theo báo cáo cùng quarantine; UnRegisterVolume, SetVolumeUnavailable gỡ vị trí và xoá entry rỗng. ensureCorrectWritables cho volume vào danh sách ghi được khi đủ bản sao, mọi replica ghi được, không oversized, không còn trong thời gian hồi phục 30 s sau khi đầy và chưa chạm giới hạn. RecordAssign cộng byte cấp phát, đánh dấu crowded ở ngưỡng growth (mặc định 90%) và gỡ volume ở 100%. UpdateVolumeSize giảm dần ước lượng về kích thước báo (mỗi chu kỳ một lần dù nhiều replica báo; đặt lại khi compact revision đổi) và đưa volume đầy trở lại khi đủ điều kiện; DecayQuietVolumeSizes làm việc đó cho volume im lặng. PickForWrite chọn volume ghi được: không ràng buộc vị trí thì lấy mẫu 3 volume và chọn theo dung lượng còn lại, có maxWritableVolumes thì thu về các volume đầy nhất, có ràng buộc thì quét từ vị trí ngẫu nhiên. DrainAndRemoveFromWritable (trước vacuum) và MarkDeleting gỡ volume và chờ byte đang bay giảm (tối đa 30 s). PlanRackAwareGrowth lên kế hoạch grow theo DC và rack chỉ ở các DC đang có volume của layout. SetVolumeAvailable dùng sau vacuum commit.",
+  "why": "Hệ quả: đây là nơi quyết định một lần ghi rơi vào volume nào; ước lượng sai thì hoặc volume vượt giới hạn kích thước, hoặc volume gần trống bị coi là đầy và cluster tạo volume thừa. Thiết kế: theo dõi byte đã cấp để chặn volume đầy ngay lúc assign thay vì chờ heartbeat; chọn theo trọng số dung lượng còn lại trên một mẫu nhỏ để giữ chi phí O(1).",
+  "when": "Mỗi assign (PickForWrite, RecordAssign), mỗi heartbeat (đăng ký, kích thước, writable), vacuum và vòng growth.",
+  "ux": "Ghi được rải đều qua các volume và không làm volume nào vượt giới hạn.",
+  "if_broken": "Volume vượt giới hạn kích thước, assign trả no writable volumes dù còn chỗ, hoặc cluster tạo volume liên tục.",
+  "gotchas": [
+   "ToInfo trả slice writables ra ngoài mà không giữ accessLock.",
+   "Stats dùng VolumeLocationList.Stats, chỉ tính node có LastSeen cũ hơn 60 s (xem volume_location_list.go)."
+  ]
+ },
+ "weed/topology/volume_location_list.go": {
+  "character": "Danh sách node giữ một volume, kèm cờ readonly và oversized theo từng vị trí",
+  "what": "VolumeLocationList giữ list DataNode cùng hai bitmask readOnly và oversized cùng chỉ số với list (tối đa 32 replica; vượt quá thì cờ không được ghi). Set thay entry cùng địa chỉ và trả node bị thay (hai server có thể chung địa chỉ), Remove gỡ theo địa chỉ và dồn bit, AnyReadOnly, AnyOversized, Head (node chính của assign), Rest (replica), Copy. Refresh bỏ node có LastSeen cũ hơn ngưỡng. Stats trả kích thước và số file sống (đã kẹp phép trừ) từ node đầu tiên có LastSeen nhỏ hơn ngưỡng.",
+  "why": "Hệ quả: Head là nơi assign gửi client ghi và Rest là replica nhận fan-out; cờ sai làm volume được coi là ghi được khi một replica readonly. Thiết kế: cờ đi kèm vị trí theo chỉ số thay vì một chỉ mục riêng (#10654).",
+  "when": "Mọi thao tác của volume layout trên vị trí của một volume.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Assign trả replica sai, hoặc volume có replica readonly vẫn nhận ghi.",
+  "gotchas": [
+   "LastSeen chỉ được đặt khi node đăng ký hay đăng ký lại (rack.go), không theo từng heartbeat. Stats vì vậy chỉ tính node đã kết nối quá 60 s, nên trong phút đầu sau khi master khởi động /collection/info báo 0.",
+   "Refresh không có caller."
+  ]
+ },
+ "weed/topology/node.go": {
+  "character": "Nút chung của cây topology: đếm dung lượng theo disk type, chọn node theo trọng số, giữ chỗ dung lượng và quét volume đầy",
+  "what": "NodeImpl (dùng cho topology, DC, rack, data node, disk) giữ children, parent (atomic), DiskUsages, maxVolumeId và CapacityReservations. AvailableSpaceFor trả số slot trống cho disk type (node trong maintenance hay đã từ chối trong lần grow này thì 0; tầng trên cộng con); CapacityFor và CapacityForAnyDisk phân biệt cluster chưa có server với disk type không ai phục vụ. Giữ chỗ: TryReserveCapacity kiểm tra và giữ nguyên tử, AvailableSpaceForReservation trừ phần đã giữ, giữ chỗ hết hạn sau ReservationTimeout (mặc định 5 phút). PickNodesByWeight xáo các con theo trọng số slot trống, đưa node ít volume ghi được của layout lên trước, chọn node đầu thoả điều kiện và lấy các node còn lại ưu tiên host khác nhau. reserveOneVolumeInternal đi xuống cây theo r ngẫu nhiên. UpAdjustDiskUsageDelta và UpAdjustMaxVolumeId lan lên gốc. Link/UnlinkChildNode cập nhật dung lượng và chỉ mục địa chỉ. CollectDeadNodeAndFullVolumes đẩy volume vượt giới hạn (trừ volume vừa vacuum trong 20 s) vào kênh full và volume vượt ngưỡng growth vào kênh crowded, và cập nhật metric thiếu replica.",
+  "why": "Hệ quả: việc đặt volume mới (growth) dựa vào đếm slot và giữ chỗ ở đây; đếm sai thì volume được tạo trên disk đầy hoặc hai lần grow đồng thời tranh nhau slot cuối. Thiết kế: giữ chỗ tạm trong lúc gọi AllocateVolume thay vì khoá cả cây.",
+  "when": "Mỗi lần grow volume, mỗi heartbeat cập nhật dung lượng, vòng quét volume đầy theo pulse.",
+  "ux": "Replica được rải qua các máy khác nhau khi có thể.",
+  "if_broken": "Volume mới đặt lên disk đầy, replica dồn lên cùng một máy, hoặc master không thấy volume đã đầy.",
+  "gotchas": [
+   "CollectDeadNodeAndFullVolumes không dùng freshThreshHold và không thu node chết; node chỉ bị gỡ khi stream heartbeat kết thúc.",
+   "Metric MasterReplicaPlacementMismatch mang nhãn volume id, nên có một series cho mỗi volume có replication."
+  ]
+ },
+ "weed/topology/data_node.go": {
+  "character": "Một volume server trong topology: các disk của nó, volume nó giữ, chế độ bảo trì và digest để đối chiếu heartbeat",
+  "what": "DataNode mang Ip, Port, GrpcPort, PublicUrl, LastSeen, Counter (số stream heartbeat đang mở, chống node ma khi kết nối lại nhanh), IsTerminating, maintenanceMode, lookupDigest, duplicateVolumeIds và diskMetas (tag, loại, max mỗi disk vật lý từ DiskTags). UpdateVolumes áp một danh sách đầy đủ: mỗi disk gỡ volume không được nêu (RemoveVolumesNotIn), cập nhật bộ đếm, rồi thêm hay cập nhật từng volume và trả các volume mới, đã xoá và thay đổi (readonly hay tier). DeltaUpdateVolumes áp delta, trừ bộ đếm theo bản ghi đang giữ chứ không theo báo cáo. AdjustMaxVolumeCounts, AdjustDiskUsageBytes, UpdateDiskTags cập nhật dung lượng. VolumeDigest xor digest của các disk; HasDuplicateVolumeIds báo khi một id được nêu hai lần trên một server. ToDataNodeInfo dựng DiskInfo theo loại, bỏ loại disk chỉ do truy vấn tạo ra, gắn tag và MaxVolumeCountByDisk.",
+  "why": "Hệ quả: master quyết định volume nào thuộc server nào ở đây; áp sai một danh sách đầy đủ làm master quên volume đang có hoặc giữ volume đã xoá. Thiết kế: digest để server chỉ gửi thay đổi; một id trùng trên hai disk buộc server quay về gửi danh sách đầy đủ vì digest không bao giờ khớp.",
+  "when": "Mỗi heartbeat của volume server.",
+  "ux": "volume.list và admin UI hiển thị volume theo từng server và disk.",
+  "if_broken": "Master mất dấu volume, đếm slot sai, hoặc yêu cầu danh sách đầy đủ ở mọi heartbeat.",
+  "gotchas": [
+   "ToInfo đọc dn.diskUsages.usages mà không lấy khoá của DiskUsages."
+  ]
+ },
+ "weed/topology/data_node_ec.go": {
+  "character": "Đồng bộ EC shard của một volume server, tách theo từng disk vật lý",
+  "what": "GetEcShards gom các bản ghi (volume, disk) của mọi disk. UpdateEcShards áp danh sách đầy đủ dưới dn.Lock: gom theo (volume, disk id), so với cái đang giữ để ra shard mới và đã xoá, cập nhật bộ đếm shard, công bố riêng FileCount/DeleteCount khi chỉ chúng đổi, rồi viết lại bản đồ khi có thay đổi. DeltaUpdateEcShards áp delta. HasEcShards và HasEcShard kiểm tra còn shard ở disk nào không, để một shard chuyển giữa các disk không làm node rơi khỏi lookup.",
+  "why": "Hệ quả: một volume EC 10+4 có thể nằm trên nhiều mount point của cùng một server; gộp theo volume làm ec.balance và ec.rebuild đọc sai disk (#9212). Thiết kế: khoá theo (volume, disk vật lý).",
+  "when": "Mỗi heartbeat mang EC shard.",
+  "ux": "ec.balance thấy đúng shard trên từng disk.",
+  "if_broken": "Shard bị coi là mất hoặc đếm hai lần, dẫn tới rebuild không cần thiết hay bỏ sót.",
+  "gotchas": [
+   "Một báo cáo 0/0 cho FileCount và DeleteCount nghĩa là server cũ không đếm; ecCountsChanged giữ số đang có."
+  ]
+ },
+ "weed/topology/disk.go": {
+  "character": "Một loại disk trên một volume server: volume và EC shard nó giữ, bộ đếm dung lượng, và digest",
+  "what": "Disk giữ volumes, ecShards (lồng theo disk vật lý), volumeDigest (xor ReportHash của mọi volume), volumeIdDigest (chỉ id, để so với chỉ mục lookup) và volumeAddedAt (volume do master tự đăng ký lúc grow, chưa được báo cáo xác nhận). DiskUsages và DiskUsageCounts đếm volume, remote, active, EC shard, max và byte disk bằng atomic; FreeSpace = max + remote − volume − slot EC. doAddOrUpdateVolume trả isNew, isChanged (readonly đổi) và tierTransition (IsRemote đổi), giữ disk id của báo cáo khi bản ghi lúc grow chưa có. RemoveVolumesNotIn gỡ volume báo cáo không nêu trên disk này, trừ volume vừa grow chưa quá 10 s. ToDiskInfo dựng DiskInfo theo filter, lấy disk id nhỏ nhất làm đại diện.",
+  "why": "Hệ quả: một báo cáo đã thu trước khi grow xong không được xoá volume vừa tạo, nếu không collection mất volume ghi được. Thiết kế: digest xor để cập nhật tăng dần và tự nghịch đảo.",
+  "when": "Mọi cập nhật volume của một data node.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Volume vừa tạo biến mất, digest lệch mãi, hoặc slot trống tính sai."
+ },
+ "weed/topology/disk_ec.go": {
+  "character": "Thao tác EC shard trên một Disk, thay bản ghi thay vì sửa tại chỗ",
+  "what": "GetEcShards trả chính các bản ghi (không copy), an toàn vì không bản ghi nào được sửa tại chỗ. AddOrUpdateEcShard gộp shard vào bản ghi (volume, disk) bằng một bản thay thế, cập nhật FileCount/DeleteCount khi có số và chỉnh bộ đếm shard; refreshEcShardCounts thay bản ghi khi chỉ số đếm đổi; DeleteEcShard trừ shard và xoá bản ghi khi hết. HasVolumesById kiểm tra cả volume thường và EC.",
+  "why": "Hệ quả: các reader đọc bản ghi sau khi nhả khoá, nên sửa tại chỗ sẽ cho họ thấy một trạng thái nửa vời. Thiết kế: thay thế nguyên bản ghi.",
+  "when": "Heartbeat EC, đăng ký và huỷ đăng ký shard.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Đọc được số shard hay số file lẫn giữa hai heartbeat."
+ },
+ "weed/topology/topology_ec.go": {
+  "character": "Bản đồ vị trí EC shard của cả cluster và thống kê EC theo collection",
+  "what": "SyncDataNodeEcShards và IncrementalSyncDataNodeEcShards chuyển báo cáo thành EcVolumeInfo, áp vào data node rồi đăng ký hay huỷ đăng ký shard. EcShardLocations giữ, cho mỗi shard id (tối đa 32), danh sách node. RegisterEcShards nâng bound volume id (volume chỉ còn EC cũng phải chặn việc cấp lại id) và thêm vị trí; UnRegisterEcShards chỉ gỡ khi node không còn shard đó ở disk nào. LookupEcShards, ListEcServersByCollection, DeleteEcCollection. CollectionEcVolumeStats cộng kích thước mọi shard (cả parity) làm UsedSize, kích thước data shard một lần làm LogicalUsedSize, và số file lấy giá trị lớn nhất mà các holder báo.",
+  "why": "Hệ quả: đọc một volume EC cần biết shard nào ở đâu; thiếu một vị trí thì đọc phải khôi phục từ parity. Thiết kế: số file lấy max thay vì cộng, vì .ecx và .ecj đi theo shard nên nhiều holder báo cùng số.",
+  "when": "Heartbeat EC, LookupEcVolume, thống kê.",
+  "ux": "Statistics và CollectionStatistics tính cả volume EC.",
+  "if_broken": "Đọc EC thất bại hoặc chậm, id volume EC bị cấp lại, thống kê sai."
+ },
+ "weed/topology/topology_event_handling.go": {
+  "character": "Các vòng nền của topology trên leader và xử lý node rời đi hay vào bảo trì",
+  "what": "StartRefreshWritableVolumes chạy ba goroutine: mỗi pulse (có jitter) thu volume đầy và crowded, giảm dần ước lượng kích thước của volume im lặng và thử lại các lần gỡ quarantine; mỗi vacuumInterval (mặc định 14 phút, cộng tới 2 phút jitter) chạy vacuum tự động trừ khi bị tắt, và tự bật lại khi plugin đã tắt vacuum mà admin server không còn kết nối; một goroutine tiêu thụ kênh full (SetVolumeCapacityFull) và crowded. SetDataNodeMaintenanceMode đánh giá lại khả năng ghi của mọi volume trên node. UnRegisterDataNode gỡ mọi volume và shard của node khỏi layout, trừ dung lượng, gỡ chỉ mục địa chỉ và tách node khỏi rack.",
+  "why": "Hệ quả: không có các vòng này thì volume đầy vẫn nhận assign, rác không được thu và node chết vẫn được trả trong lookup. Thiết kế: chỉ leader chạy; vacuum có thể nhường cho plugin worker của admin.",
+  "when": "Suốt đời master; UnRegisterDataNode khi stream heartbeat kết thúc.",
+  "ux": "Dung lượng của object đã xoá được thu hồi định kỳ.",
+  "if_broken": "Ghi vào volume đầy, dung lượng không được thu hồi, hoặc lookup trả server đã chết."
+ },
+ "weed/topology/topology_vacuum.go": {
+  "character": "Vacuum do master điều phối: kiểm tra rác, compact, commit hay cleanup trên mọi replica, và xoá volume rỗng",
+  "what": "Vacuum chạy một lần tại một thời điểm (ErrVacuumRunning khi đang có lần khác) trên một volume, một collection hay mọi layout. vacuumOneVolumeLayout có thể xoá volume mà mọi replica đều rỗng và im lặng đủ lâu (deleteEmptyAfter), rồi phân phối việc với hạn mức song song theo server và theo rack. vacuumOneVolumeId bỏ qua volume thiếu bản sao; batchVacuumVolumeCheck hỏi tỷ lệ rác từng replica (bỏ replica ở remote tier, và với lượt quét thì bỏ replica readonly trừ khi chỉ do disk thấp); batchVacuumVolumeCompact gỡ volume khỏi danh sách ghi được (DrainAndRemoveFromWritable) rồi compact song song; thành công thì batchVacuumVolumeCommit commit, hỏi trạng thái các replica không vacuum, ghi thời điểm vacuum và đưa volume trở lại qua SetVolumeAvailable; thất bại thì batchVacuumVolumeCleanup. Mỗi RPC bị chặn bởi thời hạn tỷ lệ với volume size limit.",
+  "why": "Hệ quả: object bị xoá chỉ giải phóng dung lượng khi volume được compact; một commit lệch giữa các replica để chúng khác nhau. Thiết kế: kiểm tra mọi replica trước, compact rồi commit theo hai pha, và giới hạn song song để vacuum không bão hoà một server hay một rack.",
+  "when": "Định kỳ trên leader, lệnh volume.vacuum, HTTP /vol/vacuum, VacuumVolume gRPC.",
+  "ux": "Dung lượng của bucket giảm sau khi xoá nhiều object.",
+  "if_broken": "Dung lượng không được thu hồi, replica lệch nhau sau commit, hoặc volume bị kẹt không ghi được.",
+  "issue": "bug",
+  "issue_note": "Một lần compact thất bại (một replica lỗi, hay hết thời hạn 3 × vacuumRPCTimeout) chạy batchVacuumVolumeCleanup nhưng không đưa volume trở lại danh sách ghi được, nơi DrainAndRemoveFromWritable đã gỡ nó ra. Cleanup không đổi trường nào mà ReportHash bao phủ, nên volume server dùng digest không báo lại volume, và EnsureCorrectWritables không chạy cho nó cho tới khi một lần xoá đổi nó, server kết nối lại hay digest lệch. Volume vì vậy giữ slot mà không nhận ghi. UnmarkDeleting đã xử lý đúng trường hợp này cho đường xoá volume rỗng ('digest heartbeats only re-report changed volumes'); nhánh commit thất bại cũng để volume ngoài danh sách."
+ },
+ "weed/topology/volume_growth.go": {
+  "character": "Tạo volume mới: tìm slot theo replica placement, giữ chỗ, cấp volume id và AllocateVolume trên các server",
+  "what": "VolumeGrowStrategy (copy_1 = 7, copy_2 = 6, copy_3 = 3, khác = 1 volume mỗi lần, threshold 0.9, reservation timeout 5 phút) đọc từ master.toml. GrowByCountAndType (một khoá cho cả master) gọi findAndGrow targetCount lần, thử lại trên server khác tối đa 3 lần khi một server từ chối. findAndGrow chờ hết warmup, nạp tải của layout, findEmptySlotsForOneVolume (chọn DC chính rồi DC khác, rack chính rồi rack khác, server chính rồi server cùng rack theo DiffDataCenterCount, DiffRackCount, SameRackCount, có giữ chỗ), lấy NextVolumeId rồi grow: AllocateVolume lần lượt trên từng server, thành công thì đăng ký volume tạm (provisional) vào topology, thất bại thì xoá các bản đã tạo. VolumeGrowRequest.Equals so option bằng reflect.DeepEqual.",
+  "why": "Hệ quả: growth quyết định replica đặt ở đâu; đặt sai thì một sự cố rack hay DC mất nhiều bản sao cùng lúc. Thiết kế: giữ chỗ trong lúc gọi RPC để hai lần grow không lấy cùng slot cuối; bản ghi provisional để báo cáo đang bay không xoá volume vừa tạo.",
+  "when": "Assign kích hoạt growth, vòng growth định kỳ, lệnh volume.grow, VolumeGrow gRPC.",
+  "ux": "Collection mới có ngay vài volume ghi được.",
+  "if_broken": "Không tạo được volume, replica vi phạm placement, hoặc volume tạo dở nằm lại trên server."
+ },
+ "weed/topology/volume_growth_spread.go": {
+  "character": "Rải volume mới qua các server theo số volume ghi được của layout trên mỗi disk",
+  "what": "withLayoutLoad sao chép option kèm số volume ghi được của layout trên mỗi data node. diskCount đếm disk cùng loại có slot (theo DiskTags, tối thiểu 1). lessLoaded so tải trên mỗi disk giữa hai node. reserveLeastLoaded, trong một rack, chọn trong các node ít tải nhất có slot trống theo trọng số slot. hasRefused loại node đã từ chối trong lần grow này.",
+  "why": "Hệ quả: chọn server độc lập theo slot trống dồn nhiều volume ghi được của một collection lên vài disk trong khi phần lớn disk không có, và ghi dồn vào các disk đó. Thiết kế: chọn DC và rack theo slot trống, nhưng server trong rack theo tải của layout.",
+  "when": "Mỗi lần findEmptySlotsForOneVolume chọn node.",
+  "ux": "Ghi của một bucket được rải qua nhiều disk.",
+  "if_broken": "Ghi dồn lên vài disk, tạo điểm nóng I/O."
+ },
+ "weed/topology/allocate_volume.go": {
+  "character": "RPC tạo và xoá một volume trên volume server khi grow",
+  "what": "AllocateVolume gọi AllocateVolume (collection, replication, TTL, preallocate, memory map, disk type, version) trên data node, DeleteVolume gọi VolumeDelete; cả hai giới hạn 1 phút.",
+  "why": "Hệ quả: một volume server treo không được giữ cờ growRequest của layout mãi, vì như vậy mọi growth tự động sau đó bị chặn. Thiết kế: timeout cứng.",
+  "when": "volume_growth.go khi tạo volume và khi dọn bản tạo dở.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Growth treo hoặc để lại volume tạo dở."
+ },
+ "weed/topology/store_replicate.go": {
+  "character": "Đường ghi và xoá có replication của volume server: ghi local và fan-out tới các replica song song",
+  "what": "ReplicatedWrite (request không phải type=replicate) tra vị trí replica ghi được qua master, chụp các trường của needle mà fan-out cần trước khi ghi local đổi needle, rồi ghi local và gửi tới các replica (POST type=replicate kèm TTL, ts, cm, fsync, JWT, Content-MD5; mỗi replica một lần thử, thời hạn 10 s cộng 1 s mỗi MiB) đồng thời, trả lời sau khi cả hai xong. Lỗi readonly local khi không có replica và không fsync được đánh dấu ErrorWriteRefused (409 'từ chối trước khi append'). ReplicatedDelete xoá local rồi gửi DELETE type=replicate tới các replica có thể xoá bằng context.Background(), và từ chối chuyển JWT qua kết nối không phải HTTPS đã xác minh. DistributedOperation chạy song song và dừng ở lỗi đầu tiên. getRemoteReplications kiểm tra đủ số vị trí so với replica placement.",
+  "why": "Hệ quả: đây là nơi một lần ghi có replication trở thành N bản; một replica chậm làm chậm cả lần ghi, một replica lỗi làm lần ghi thất bại dù bản local đã ghi. Thiết kế: chạy local và fan-out song song để độ trễ là max chứ không phải tổng; thất bại nhanh để client thử lại ở volume khác.",
+  "when": "Mỗi POST hay DELETE needle vào volume server (volume_server_handlers_write.go).",
+  "ux": "Ghi qua volume server có replication 001, 010... tạo đủ bản sao trước khi trả lời.",
+  "if_broken": "Replica thiếu dữ liệu, ghi treo trên replica chết, hoặc xoá không tới replica.",
+  "issue": "bug",
+  "issue_note": "ReplicatedDelete xoá needle trên volume local trước, rồi mới gửi lệnh xoá tới replica. Khi request mang JWT mà URL replica không phải HTTPS đã xác minh, nó từ chối chuyển JWT (#11195, 'reject insecure delete authorization forwarding'), nên lệnh xoá trả lỗi trong khi bản local đã mất. Các replica vẫn giữ needle. Trên cluster bật jwt.signing.key mà không có HTTPS giữa các volume server, mọi DELETE HTTP qua volume chính của một volume có replication đều để replica lệch nhau, và read ngẫu nhiên giữa các replica có thể trả lại file đã xoá. Kiểm tra này nằm sau lần xoá local, thay vì trước nó.",
+  "gotchas": [
+   "getRemoteReplications gọi operation.LookupVolumeIds với cache tắt, nên mỗi lần ghi có replication hỏi master một lần.",
+   "ReplicatedWrite vẫn chuyển JWT qua HTTP thường; chỉ đường xoá kiểm tra HTTPS."
+  ]
+ },
+ "weed/topology/collection.go": {
+  "character": "Một collection trên master: tập các volume layout theo replication, TTL và disk type",
+  "what": "Collection giữ storageType2VolumeLayout, key là chuỗi replication + TTL + disk type (bỏ phần disk khi là hdd). GetOrCreateVolumeLayout, GetVolumeLayout, GetAllVolumeLayouts, DeleteVolumeLayout (gỡ khỏi map trước rồi thả quyền lookup), Lookup một volume qua mọi layout, ListVolumeServers.",
+  "why": "Hệ quả: mỗi bucket S3 là một collection; volume của nó được chọn theo layout ở đây. Thiết kế: một layout cho mỗi tổ hợp thuộc tính để volume khác thuộc tính không bao giờ nhận ghi của nhau.",
+  "when": "Mọi assign, lookup và đăng ký volume.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Ghi rơi vào volume sai TTL hay disk type."
+ },
+ "weed/topology/collection_statistics.go": {
+  "character": "Thống kê theo collection trong một lượt duyệt: kích thước logic, vật lý, số file và số volume",
+  "what": "CollectionStatistics duyệt mọi layout: với mỗi volume thường, cộng kích thước mọi replica vào PhysicalSize và lấy replica có nhiều dữ liệu sống nhất (kích thước trừ byte đã xoá) cho Size, FileCount, DeleteCount và DeletedByteCount (không vượt kích thước). Với EC, cộng kích thước mọi shard vào PhysicalSize, data shard vào Size, và số file lấy lớn nhất, số xoá cộng dồn theo volume.",
+  "why": "Hệ quả: quota bucket được kiểm theo kích thước trừ phần đã xoá; chọn replica có kích thước thô lớn nhất có thể chọn replica đã xoá nhiều nhất và để một bucket vượt quota vẫn ghi được. Thiết kế: một lượt, cấp phát theo collection chứ không theo volume.",
+  "when": "RPC CollectionStatistics, mà bucket_size_metrics.go của gateway gọi để đo kích thước bucket và kiểm quota.",
+  "ux": "Dung lượng bucket hiển thị không phụ thuộc replica nào được xem trước.",
+  "if_broken": "Quota bucket kiểm sai, bucket vượt quota vẫn ghi được hoặc bị chặn oan."
+ },
+ "weed/topology/configuration.go": {
+  "character": "Định vị data center và rack cho một volume server",
+  "what": "Configuration mô tả một cấu hình XML DataCenter/Rack/Ip. Locate trả tên DC và rack server tự báo, hoặc DefaultDataCenter và DefaultRack khi trống.",
+  "why": "Hệ quả: replica placement dựa vào DC và rack; một server không đặt -dataCenter/-rack rơi vào DefaultDataCenter/DefaultRack. Thiết kế: vị trí do volume server tự khai.",
+  "when": "Mỗi lần một volume server đăng ký qua heartbeat.",
+  "ux": "volume.list hiển thị DefaultDataCenter khi không cấu hình.",
+  "if_broken": "Replica của các server khác vị trí bị coi là cùng DC hay rack.",
+  "gotchas": [
+   "Locate bỏ qua ip và cấu hình XML: NewTopology chỉ tạo Configuration rỗng, không có gì nạp nó."
+  ]
+ },
+ "weed/topology/data_center.go": {
+  "character": "Một data center trong cây topology",
+  "what": "DataCenter là NodeImpl với các Rack con; GetOrCreateRack tìm hay tạo rack theo tên; ToInfo (rack sắp theo id) và ToDataCenterInfo (theo filter) xuất ra.",
+  "why": "Hệ quả: tầng DC là nơi replication khác DC (xyz với x > 0) được thoả. Thiết kế: một nút trong cây chung để đếm dung lượng lan lên.",
+  "when": "Đăng ký volume server, growth, xuất topology.",
+  "ux": "volume.list nhóm server theo DC.",
+  "if_broken": "Topology không phân DC đúng."
+ },
+ "weed/topology/rack.go": {
+  "character": "Một rack trong cây topology, và nơi một volume server được tạo hay nhận lại khi đăng ký",
+  "what": "Rack giữ các DataNode. GetOrCreateDataNode tìm node theo id ổn định (id tự khai, hoặc ip:port), cập nhật ip, port, gRPC port, public URL và LastSeen khi pod đổi địa chỉ (cập nhật chỉ mục địa chỉ), chuyển node cũ định danh bằng ip:port sang id mới, không gộp hai id khác nhau dùng chung ip:port, hoặc tạo node mới cùng các disk theo max volume count. FindDataNode, FindDataNodeById, ToInfo, ToRackInfo.",
+  "why": "Hệ quả: trong Kubernetes một pod được lên lịch lại đổi IP; định danh theo ip:port sẽ coi nó là server mới và volume cũ thành mồ côi. Thiết kế: id ổn định của volume server, với đường chuyển tiếp cho node cũ.",
+  "when": "Heartbeat đầu tiên của mỗi stream.",
+  "ux": "Volume server đổi IP vẫn giữ volume của nó trong topology.",
+  "if_broken": "Server bị nhân đôi trong topology hoặc volume bị gán nhầm server."
+ },
+ "weed/topology/reported_volumes.go": {
+  "character": "Bảng gọn ghi volume nào được một heartbeat nêu trên loại disk nào",
+  "what": "reportedVolumes intern tên loại disk và map volume id → chỉ số loại; extra giữ volume được nêu trên nhiều loại disk (bản sao cũ chứ không phải chuyển); duplicated bật khi một id được nêu hai lần trên cùng loại. namedOn trả lời volume có được nêu trên một loại không.",
+  "why": "Hệ quả: một volume chuyển giữa các disk của server phải bị gỡ khỏi disk cũ mà không bị coi là mất. Thiết kế: intern để không tốn một chuỗi cho mỗi volume.",
+  "when": "Mỗi lần DataNode.UpdateVolumes áp danh sách đầy đủ.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Volume chuyển disk bị báo xoá rồi thêm, hoặc bản sao cũ giữ lại mãi."
+ },
+ "weed/topology/volume_index_digest.go": {
+  "character": "Digest so chỉ mục lookup với volume thực có trên disk của một node",
+  "what": "VolumeIdDigestHash trộn volume id ra 64 bit (splitmix) để xor các id gần nhau không đụng. VolumeIndexDigests trả digest của volume disk giữ và của volume chỉ mục lookup phục vụ từ node; HasConsistentVolumeIndex so hai thứ. moveLookupOwnership và trackLookupChange chuyển bit digest khi một entry lookup đổi node; releaseLookupOwnership thả mọi bit khi layout bị xoá cùng collection.",
+  "why": "Hệ quả: một cuộc đua ngắt và kết nối lại từng làm volume mất khỏi chỉ mục lookup trong khi vẫn ở trên node: volume.list thấy nó, LookupVolume báo không tìm thấy. Volume server không phát hiện được, nên master tự so và yêu cầu danh sách đầy đủ.",
+  "when": "Mỗi thay đổi chỉ mục lookup và mỗi checkVolumeDigest trong heartbeat.",
+  "ux": "Read không bị lỗi volume not found kéo dài sau sự cố mạng.",
+  "if_broken": "Volume tồn tại nhưng không đọc được, hoặc master đòi danh sách đầy đủ ở mọi heartbeat."
+ },
+ "weed/topology/cluster_commands.go": {
+  "character": "Lệnh Raft duy nhất của master: MaxVolumeIdCommand",
+  "what": "MaxVolumeIdCommand mang MaxVolumeId, TopologyId và trạng thái freeze growth (GrowthFrozen, GrowthFrozenAt, GrowthUnfreezeFor ràng buộc lệnh gỡ với thế hệ freeze). Apply (goraft) nâng bound, đặt TopologyId, áp freeze và ghi file mirror. Persist và Release cho FSMSnapshot của hashicorp raft.",
+  "why": "Hệ quả: đây là toàn bộ trạng thái mà Raft của master sao chép; mất nó thì id volume có thể bị cấp lại. Thiết kế: ràng buộc lệnh gỡ freeze với thế hệ để một lệnh gỡ cũ không xoá một freeze mới hơn đã vào log trước.",
+  "when": "Mỗi lần cấp volume id, sinh TopologyId, freeze hay gỡ freeze growth.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Follower không biết bound mới, cấp trùng id sau khi đổi leader."
+ },
+ "weed/topology/topology_info.go": {
+  "character": "Xuất topology ra JSON, protobuf và danh sách vị trí cho client",
+  "what": "ToInfo (cho UI và /dir/status, DC sắp theo id, kèm layout), ToVolumeMap, ListVolumeLayoutCollections, ToVolumeLocations (một VolumeLocation cho mỗi node với mọi vid, remote, readonly và EC vid khử trùng, gửi cho client mới kết nối) và ToTopologyInfo (VolumeList theo filter).",
+  "why": "Hệ quả: client KeepConnected mới dựng vid map từ ToVolumeLocations; thiếu một vid thì client không đọc được volume đó tới khi có thay đổi. Thiết kế: liệt kê RemoteVids lặp lại để client đọc replica local trước.",
+  "when": "KeepConnected mới, VolumeList, UI.",
+  "ux": "volume.list và trang master hiển thị topology.",
+  "if_broken": "Client mới không biết một số volume, hoặc volume.list sai."
+ },
+ "weed/topology/volume_filter.go": {
+  "character": "Bộ lọc của VolumeList: collection, volume id, remote storage, hay chỉ topology",
+  "what": "VolumeFilter (nil nghĩa là không lọc; collection rỗng là một collection thật) dựng từ VolumeListRequest: collection hay chỉ collection mặc định, remote storage name có wildcard hay chỉ volume local, danh sách volume id, hoặc topology_only (không kèm volume, và từ chối khi kết hợp với bộ lọc khác). matches áp cho volume và EC shard.",
+  "why": "Hệ quả: các công cụ trên cluster lớn chỉ cần một phần danh sách volume; gửi toàn bộ tốn hàng trăm MB. Thiết kế: rỗng nghĩa là tất cả, để caller quên lọc nhận dư chứ không nhận sai.",
+  "when": "VolumeList và VolumeListStream.",
+  "ux": "volume.list -collection trả nhanh trên cluster lớn.",
+  "if_broken": "Công cụ nhận thiếu volume hay quá nhiều dữ liệu."
+ },
+ "weed/topology/volume_stream.go": {
+  "character": "Stream danh sách volume theo lô để không bên nào giữ cả cluster trong bộ nhớ",
+  "what": "StreamVolumes duyệt các disk đã được công bố trong header (để disk đăng ký giữa chừng không bị gửi tới client chưa biết nó), gửi volume rồi EC shard của từng disk theo lô 10000, dựng mỗi lô dưới khoá của disk và gửi ngoài khoá.",
+  "why": "Hệ quả: ở 800 nghìn volume, bản trả lời VolumeList là 36 MB trên dây nhưng 305 MB dưới dạng message mà master dựng trọn trước khi gửi. Thiết kế: lô nhỏ, khoá theo lô.",
+  "when": "VolumeListStream (shell, admin, worker trên cluster lớn).",
+  "ux": "volume.list trên cluster rất lớn không làm master hết bộ nhớ.",
+  "if_broken": "Danh sách thiếu volume, hoặc master hết bộ nhớ khi liệt kê.",
+  "gotchas": [
+   "Các lô không cùng một thời điểm: một volume chuyển chỗ giữa lúc stream có thể xuất hiện hai lần hoặc không lần nào."
+  ]
+ },
+ "weed/topology/balancer/density.go": {
+  "character": "Đo độ đầy của server theo byte thay vì theo số volume, cho việc balance",
+  "what": "UsedVolumeEquivalents quy byte đang giữ ra số volume tương đương. VolumeDensity trả capacity = max volume count − số tương đương. DensityRatio là tỷ lệ đã dùng trên capacity (server rỗng 0.5/capacity, hết chỗ +Inf); DensityNextRatio là tỷ lệ sau khi thêm một volume.",
+  "why": "Hệ quả: một server cấu hình max volume count quá cao trông như còn trống dù disk đầy theo byte. Thiết kế: dùng byte thật để xếp hạng.",
+  "when": "Worker balance và lệnh volume.balance khi chọn nguồn và đích.",
+  "ux": "Balance chuyển volume tới server thật sự còn trống.",
+  "if_broken": "Balance chuyển volume vào server đầy."
+ },
+ "weed/topology/balancer/disk_fullness.go": {
+  "character": "Ngưỡng đầy của disk vật lý cho đích balance",
+  "what": "DefaultMaxDiskUsagePercent = 90. DiskTooFullAfter báo khi thêm incomingBytes làm phần đã dùng của disk chạm hoặc vượt ngưỡng phần trăm so với tổng của chính disk đó; không có ý kiến khi ngưỡng tắt hay disk không báo dung lượng.",
+  "why": "Hệ quả: chuyển volume vào disk đã đầy về byte làm disk đó hết chỗ. Thiết kế: so với tổng của từng disk để disk khác kích thước được xử lý đúng.",
+  "when": "volume.balance và worker balance khi lọc đích.",
+  "ux": "Balance không đẩy disk qua 90%.",
+  "if_broken": "Đích balance hết chỗ giữa lúc chuyển."
+ },
+ "weed/topology/balancer/replica_placement.go": {
+  "character": "Luật đặt replica dùng chung cho shell và worker: một lần chuyển có giữ replica placement không",
+  "what": "Location (DC, rack, node, host). IsGoodMove từ chối chuyển lên chính nguồn, lên node hay host đã có replica khác, và khi nguồn không có trong danh sách replica, rồi gọi SatisfyReplicaPlacement: đích ở DC mới thì chỉ được khi số DC còn dưới DiffDataCenterCount + 1; ở DC hiện có thì phải là DC chính (nhiều replica nhất); tương tự cho rack trong DC đó và cho số replica cùng rack. HostFromAddress lấy máy từ địa chỉ.",
+  "why": "Hệ quả: một lần chuyển sai đặt hai replica lên cùng máy hay rack, và một sự cố mất cả hai. Thiết kế: dùng chung một cài đặt để volume.balance, fix.replication, tier.move và worker balance không lệch nhau.",
+  "when": "Lập kế hoạch balance và fix replication.",
+  "ux": "Balance không làm giảm độ bền của volume.",
+  "if_broken": "Replica bị dồn vào một miền lỗi."
+ },
+ "weed/topology/balancer/replica_selection.go": {
+  "character": "Chọn replica để copy từ, để xoá khi thừa, hay để đặt lại khi sai chỗ",
+  "what": "SatisfyReplicaCurrentLocation kiểm tra các replica đã trải đủ DC, rack và số cùng rack. PickOneReplicaToCopyFrom chọn replica mới sửa nhất. IsMisplaced báo khi một replica không hợp placement so với các replica khác. PickOneReplicaToDelete chỉ xoá replica ghi được nhỏ nhất khi có ít nhất hai replica ghi được, ưu tiên một replica mà xoá đi vẫn giữ placement. PickOneMisplacedVolume chọn replica để xoá và tạo lại đúng chỗ, kể cả readonly. Thứ tự: kích thước, rồi cũ hơn, rồi compact revision thấp hơn.",
+  "why": "Hệ quả: xoá nhầm replica có dữ liệu mới nhất hay replica duy nhất của một miền lỗi làm mất dữ liệu. Thiết kế: không bao giờ xoá replica readonly khi cắt bớt, và từ chối khi chỉ còn replica readonly.",
+  "when": "volume.fix.replication, volume.balance và worker balance.",
+  "ux": "fix.replication sửa thiếu hay thừa replica mà không mất dữ liệu.",
+  "if_broken": "Mất replica có dữ liệu mới nhất, hoặc vòng xoá rồi tạo lại liên tục."
  }
 }
