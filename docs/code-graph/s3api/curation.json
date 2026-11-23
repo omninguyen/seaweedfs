@@ -3650,5 +3650,215 @@
    "Đích được mở ghi ngay sau copy, trước tail, nên client có thể ghi vào đích trong lúc tail; kiểm tra chỉ đòi đích không thua nguồn.",
    "Khi nguồn vốn đã readonly trước move, dấu readonly cưỡng bức mà move thêm không được gỡ ở nhánh lỗi."
   ]
+ },
+ "weed/server/master_server.go": {
+  "character": "Process master: đọc cấu hình, dựng topology và sequencer, nối HTTP route, Raft, lock ring và các vòng nền",
+  "what": "NewMasterServer đọc security.toml và master.toml (khoá ký JWT ghi và đọc cùng thời hạn, chiến lược volume growth, freeze khi topology lệch, vacuum song song theo server và rack, số volume ghi được tối đa mỗi layout), tạo MasterClient tới các peer, AdminLocks, Cluster, LockRingManager, sequencer (memory hoặc snowflake), Topology (với QuarantineVolumeFn đánh dấu readonly hay writable trên volume server) và VolumeGrowth, rồi đăng ký các route HTTP (/dir/assign, /dir/lookup, /dir/status, /col/delete, /vol/grow, /vol/status, /vol/vacuum, /submit, /collection/info, /{fileId}, /healthz, /readyz, UI), phần lớn qua proxyToLeader và whitelist. Nó khởi động StartRefreshWritableVolumes (vacuum, làm mới volume ghi được), ProcessGrowRequest và, nếu không phải follower, các admin script của master.maintenance.scripts (chạy lệnh shell định kỳ dưới lock, bỏ qua khi admin server đang kết nối). SetRaftServer gắn goraft hay hashicorp raft, ensureTopologyId gửi một lệnh barrier rồi sinh và lưu TopologyId qua Raft. OnPeerUpdate và AdmitRaftPeer đưa master mới vào quorum (chỉ leader làm), và với hashicorp raft chỉ gỡ một master khi nó không còn trong -peers và không trả lời ping. Shutdown chuyển leadership rồi dừng Raft; Reload nạp lại whitelist và khoá ký.",
+  "why": "Hệ quả: mọi lần ghi của cluster bắt đầu bằng một assign ở master leader và mọi client tìm volume qua nó; cấu hình sai ở đây (khoá JWT, giới hạn volume, growth) ảnh hưởng toàn cluster. Thiết kế: HTTP được proxy về leader thay vì trả redirect; một master trống trạng thái Raft không thể tự ứng cử nên phải được leader nạp vào; TopologyId là danh tính của cluster, được giữ qua cả việc xoá trạng thái Raft.",
+  "when": "Khi khởi động weed master (hay weed server, weed mini); các vòng nền chạy suốt đời process.",
+  "ux": "Gọi /dir/assign hay /vol/status vào bất kỳ master nào cũng được trả lời bởi leader; /readyz trả 503 khi chưa có leader và 423 khi topology đang bị khoá.",
+  "if_broken": "Cluster không cấp được file id, không tạo volume mới, không vacuum, hoặc các master không tạo được quorum.",
+  "gotchas": [
+   "Sequencer kiểu 'raft' rơi về MemorySequencer: needle id chỉ nằm trong RAM và được nâng lên theo MaxFileKey trong heartbeat, nên an toàn của nó dựa vào khoảng warmup trước khi master mới cấp assign.",
+   "/{fileId} trả redirect 308 (vĩnh viễn) tới public URL của một replica ngẫu nhiên, trong khi vị trí volume có thể đổi."
+  ]
+ },
+ "weed/server/master_grpc_server.go": {
+  "character": "Hai stream trung tâm của master: heartbeat từ volume server và KeepConnected tới mọi client",
+  "what": "SendHeartbeat nhận heartbeat (hết 3 chu kỳ pulse mà không có heartbeat thì đóng stream thay vì chờ keepalive gRPC 80 s). Follower trả về leader nó biết. Leader: kiểm tra reporter được phép (chế độ một reporter), ghi nhận bằng chứng trạng thái cũ (id volume vượt bound đã cấp, TopologyId khác), nâng sequence theo MaxFileKey và bound volume id, tạo DataNode ở lần đầu (định vị DC/rack theo cấu hình, đăng ký UUID thư mục và từ chối thư mục bị nạp hai lần, gửi volume size limit, preallocate, MaxVolumeId, TopologyId), cập nhật dung lượng, tag disk và chế độ bảo trì, rồi áp các phần của heartbeat: volume mới và đã xoá (delta), volume thay đổi, danh sách đầy đủ, shard EC (delta và đầy đủ). Mọi thay đổi được gom vào một VolumeLocation và broadcast cho client; volume chỉ chuyển giữa các disk thì không báo xoá. checkVolumeDigest so digest server báo với digest master giữ và yêu cầu gửi lại toàn bộ danh sách khi lệch. Mất stream thì gỡ DataNode và broadcast xoá mọi volume của nó. KeepConnected đăng ký client (filer group, loại, DC, rack, version), thêm nó vào Cluster và lock ring (filer), nạp master mới vào Raft, gửi toàn bộ vị trí volume, danh sách filer hiện có và snapshot lock ring, rồi chuyển tiếp các tin broadcast từ kênh đệm 10000 và mỗi 5 s kiểm tra mình còn là leader. broadcastToClients bỏ tin khi kênh của một client đầy. GetMasterConfiguration trả cấu hình (cả maintenance scripts để admin server di trú).",
+  "why": "Hệ quả: topology của master chỉ được dựng từ heartbeat, và vid map của mọi filer, gateway, mount chỉ được cập nhật qua KeepConnected; một tin bị rơi hay áp sai làm client đọc tới server sai cho tới lần kết nối lại. Thiết kế: heartbeat delta kèm digest thay vì gửi toàn bộ danh sách mỗi lần; thông báo chủ động thay vì client hỏi; bound volume id và TopologyId được vọng lại cho mọi server để khôi phục được sau khi master mất trạng thái.",
+  "when": "Liên tục: mỗi volume server gửi heartbeat theo chu kỳ, mỗi client giữ một stream KeepConnected.",
+  "ux": "Volume mới, volume bị xoá và server rời cluster được mọi client biết trong vài giây.",
+  "if_broken": "Assign trả volume trên server đã chết, client đọc từ vị trí cũ, hoặc volume bị coi là mất khi server chỉ chuyển nó giữa các disk.",
+  "gotchas": [
+   "broadcastToClients không chặn: client có kênh đầy (10000 tin) mất tin đó vĩnh viễn, chỉ được sửa khi nó kết nối lại.",
+   "KeepConnected chỉ gửi lại danh sách filer hiện có; client mới không được nghe về các loại node khác đã kết nối trước nó."
+  ]
+ },
+ "weed/server/master_grpc_server_admin.go": {
+  "character": "Khoá admin có lease trên master leader, và RPC Ping chỉ tới các peer đã biết",
+  "what": "AdminLocks giữ các khoá theo tên (token ngẫu nhiên, thời điểm khoá, client giữ) dưới một mutex; một khoá còn hiệu lực trong LockDuration 10 s kể từ lần lease hay gia hạn cuối. LeaseAdminToken (chỉ leader) cấp token mới khi khoá đã hết hạn, gia hạn khi token và thời điểm trước đó khớp, và từ chối với 'already locked by' khi còn người giữ; kiểm tra và đổi trạng thái nằm trong một vùng găng. ReleaseAdminToken xoá khoá khi token khớp (follower trả NotLeader thay vì giả vờ đã release). GetAdminLockStatus báo khoá và người giữ. Ping chỉ chấp nhận đích đã biết theo loại (filer, broker, s3 trong Cluster; volume server trong topology hay vid map của master client; master trong danh sách peer), rồi ping đích và trả các mốc thời gian.",
+  "why": "Hệ quả: khoá này là thứ ngăn shell và admin server cùng chạy các thao tác bảo trì đổi topology; một lease không nguyên tử từng cho hai bên cùng giữ (#12532). Thiết kế: lease ngắn gia hạn liên tục, volume server không kiểm tra token (khoá là tự nguyện); Ping giới hạn đích để RPC không thành công cụ quay số ra ngoài (#9445).",
+  "when": "Lệnh lock và unlock của weed shell, admin server giành quyền bảo trì và báo hiện diện, GetAdminLockStatus khi shell hay admin UI hỏi ai đang giữ.",
+  "ux": "weed shell báo người đang giữ cluster lock (#10353).",
+  "if_broken": "Hai bên cùng chạy balance hay EC trên một volume, hoặc khoá ma chặn bảo trì.",
+  "issue": "bug",
+  "issue_note": "LeaseAdminToken bỏ qua req.Message: AdminLock.lastMessage không được gán ở bất kỳ đâu, nên GetAdminLockStatus.Message và lỗi 'already locked by X: ...' luôn có message rỗng. Lý do mà shell (tên lệnh và tham số), admin lock manager (lý do bảo trì) và admin presence lock ('admin server connected') đặt qua ExclusiveLocker.SetMessage và gửi trong mỗi lần gia hạn không bao giờ tới người xem. Thiếu sót này có từ commit gốc của lịch sử repo này (60649460)."
+ },
+ "weed/server/master_grpc_server_assign.go": {
+  "character": "RPC Assign của master: chọn volume ghi được, kích hoạt volume growth, và quyết định chờ, thử lại hay báo lỗi",
+  "what": "Assign (chỉ leader; Unavailable với lý do NOT_LEADER cho follower, Unavailable kèm RetryInfo khi đang warmup) chuẩn hoá count, replication (mặc định của master), TTL và disk type, kiểm tra DC, rack và node có tồn tại, lấy volume layout (disk type rỗng mà layout không còn volume ghi được thì thử layout hdd), ghi nhận writableVolumeCount client muốn rồi lặp tối đa 10 s: PickForWrite; nếu cần grow và chưa có yêu cầu grow cho layout thì gửi một VolumeGrowRequest. Khi lỗi: có ràng buộc vị trí mà không growth nào cứu được thì trả lỗi ngay (sau một lần chọn lại cho growth đang bay); không còn chỗ trống mà cluster đã có capacity thì báo lỗi thật (kèm cảnh báo một lần mỗi giờ khi không server nào mang disk layout đó); chưa server nào đăng ký thì ResourceExhausted để client chờ; chỉ bên kích hoạt grow mới chờ, bên khác nhận ResourceExhausted ngay. Thành công trả fid, vị trí, các replica và JWT ghi. StreamAssign chạy Assign cho từng tin trên một stream và trả lỗi tạm trong response để không giết stream.",
+  "why": "Hệ quả: đây là điểm nghẽn của mọi lần ghi; chờ quá lâu thì PUT treo, báo lỗi quá sớm thì PUT thất bại trong lúc volume sắp được tạo. Thiết kế: chỉ một assign kích hoạt growth cho mỗi layout và chỉ nó chờ, để một đám assign đồng thời không mỗi cái giữ một goroutine; ResourceExhausted thay vì Unavailable để client retry mà không huỷ kết nối master dùng chung.",
+  "when": "Mỗi lần filer (và qua filer là gateway, mount) hay operation.Assign xin file id.",
+  "ux": "Ghi vào collection mới chỉ chậm một lúc trong khi volume đầu tiên được tạo.",
+  "if_broken": "Ghi thất bại với no writable volumes, bão volume growth, hoặc assign treo tới timeout.",
+  "gotchas": [
+   "Việc gửi VolumeGrowRequest vào volumeGrowthRequestChan (đệm 64) là lệnh gửi chặn, không có select với ctx.",
+   "JWT trong response được ký bằng khoá ghi với thời hạn jwt.signing.expires_after_seconds (mặc định 10 s)."
+  ]
+ },
+ "weed/server/master_grpc_server_cluster.go": {
+  "character": "Liệt kê node của cluster theo loại, và chọn một filer ngẫu nhiên",
+  "what": "ListClusterNodes trả các node của một loại (filer, broker, s3...) trong filer group, với địa chỉ, version, thời điểm tạo, DC và rack; khi có limit, limitTo chọn ngẫu nhiên tối đa limit node (thử 3×limit lần). GetOneFiler trả một filer ngẫu nhiên của group, hoặc 'localhost:8888' khi không có.",
+  "why": "Hệ quả: FilerClient của gateway khám phá filer qua đây (cluster.ListExistingPeerUpdates), và admin script của master chọn filer qua GetOneFiler. Thiết kế: chọn ngẫu nhiên để rải tải.",
+  "when": "Discovery filer của FilerClient, weed shell, admin script của master.",
+  "ux": "cluster.ps trong weed shell liệt kê các node.",
+  "if_broken": "Gateway không tìm thấy filer mới, hoặc admin script chạy với filer không tồn tại.",
+  "gotchas": [
+   "limitTo có thể trả ít hơn limit node vì chỉ thử ngẫu nhiên 3×limit lần.",
+   "GetOneFiler trả 'localhost:8888' khi group không có filer nào, thay vì báo lỗi (startAdminScripts bỏ qua chuỗi rỗng, không bỏ qua giá trị này)."
+  ]
+ },
+ "weed/server/master_grpc_server_collection.go": {
+  "character": "Liệt kê và xoá collection trên mọi volume server, cả volume thường lẫn shard EC",
+  "what": "CollectionList trả tên các collection (tuỳ chọn có volume thường, EC). CollectionDelete và collectionDeleteHandler gọi deleteCollection: bỏ cancel của caller, xoá volume thường (một RPC DeleteCollection cho mỗi server, không phải mỗi replica) rồi shard EC, mỗi RPC giới hạn 1 phút; một server lỗi không dừng các server sau, lỗi đầu tiên được báo và collection được giữ lại trong topology để lần xoá sau quay lại.",
+  "why": "Hệ quả: xoá bucket trên gateway xoá collection của nó qua đây (DeleteBucket gọi filer, filer gọi master); một lần xoá dở để lại volume mồ côi chiếm chỗ. Thiết kế: không để caller ngắt giữa chừng một thao tác phá huỷ, vì không còn request nào quay lại dọn phần còn lại; luôn chạy cả hai lượt vì một collection có thể chứa cả hai loại.",
+  "when": "Xoá bucket (filer_delete_entry.go gọi CollectionDelete khi thư mục bucket bị xoá), lệnh collection.delete của shell, HTTP /col/delete.",
+  "ux": "Dung lượng của bucket bị xoá được giải phóng ngay khi lệnh trả về.",
+  "if_broken": "Volume hay shard của collection đã xoá còn lại trên một số server."
+ },
+ "weed/server/master_grpc_server_raft.go": {
+  "character": "Các RPC quản trị quorum Raft của master: liệt kê, thêm, gỡ, chuyển leadership",
+  "what": "checkGrpcAdminAuth so IP của caller với whitelist của master (không có whitelist thì cho tất cả). RaftListClusterServers liệt kê thành viên (hashicorp: theo cấu hình, có suffrage; goraft: chính mình cộng các peer, đều là voter). raftAddServer (AddVoter, AddNonvoter hay DefaultJoinCommand của goraft) và raftRemoveServer chỉ chạy trên leader; RaftAddServer và RaftRemoveServer là RPC có kiểm tra quyền, RaftRemoveServer không có force thì từ chối khi master đó còn kết nối. RaftLeadershipTransfer chỉ hỗ trợ hashicorp raft, tới một server cụ thể hoặc bất kỳ follower nào.",
+  "why": "Hệ quả: các RPC này đổi quorum; gỡ nhầm một master đang sống làm cluster mất đa số. Thiết kế: chỉ khoá bằng whitelist IP, giống cổng admin của volume server; việc gỡ peer chết của chính cluster dùng handle Raft local chứ không gọi các RPC này.",
+  "when": "Lệnh cluster.raft.ps, cluster.raft.add, cluster.raft.remove, cluster.raft.leader.transfer của weed shell; AdmitRaftPeer gọi raftAddServer.",
+  "ux": "Operator thêm hay bớt master mà không phải khởi động lại cả cluster.",
+  "if_broken": "Master mới không vào được quorum, hoặc một master đang chạy bị gỡ khỏi quorum.",
+  "issue": "bug",
+  "issue_note": "Chốt chặn của RaftRemoveServer (không có force) không bao giờ kích hoạt: nó tra clientChans với key 'master@<id>', còn addClient đăng ký client là filerGroup + '.' + clientType + '@' + địa chỉ, tức '.master@<địa chỉ>' cho master (filer group rỗng). Thiếu dấu chấm đầu nên phép tra luôn trượt, và cluster.raft.remove gỡ được cả một master vẫn đang kết nối. Ngoài ra id của hashicorp raft là địa chỉ http (raftServerID), còn địa chỉ client là -master như cấu hình, có thể mang '.grpcPort'. Cả hai dòng đều có từ commit gốc của lịch sử repo này (60649460)."
+ },
+ "weed/server/master_grpc_server_volume.go": {
+  "character": "RPC về volume của master: lookup, list, thống kê, vacuum, grow, mark readonly, và các vòng xử lý volume growth",
+  "what": "ProcessGrowRequest chạy hai goroutine: một vòng quét mỗi khoảng 5 phút (có jitter) trên leader, cập nhật metric của từng layout (ghi được, crowded, thiếu replica, theo từng disk) và grow khi số volume ghi được thấp hơn writableVolumeCount client đã xin (periodicGrowCount) hoặc theo kế hoạch rack-aware; một vòng tiêu thụ volumeGrowthRequestChan, bỏ yêu cầu trùng hay không còn cần (yêu cầu có vị trí được xét theo vị trí đó) và chạy DoAutomaticVolumeGrow trong goroutine riêng, broadcast vị trí volume mới cho client. LookupVolume trả vị trí từng volume hay file id (kèm DataInRemote, ReadOnly) và với file id thì kèm một JWT; khi đang warmup mà có volume không tìm thấy thì trả Unavailable để caller không coi volume là mất. Statistics tính dung lượng tổng, đã dùng và logic (chia theo số bản sao), giới hạn bởi dung lượng disk còn trống; CollectionStatistics tổng hợp theo collection. VolumeList và VolumeListStream (gửi topology trước rồi volume theo lô) trả topology đã lọc. LookupEcVolume trả vị trí từng shard, có gRPC port. VacuumVolume chạy vacuum và báo lỗi khi mất quyền chạy; Disable/EnableVacuum ghi nhận chủ sở hữu (plugin hay operator). VolumeMarkReadonly cập nhật trạng thái readonly của một replica trong layout và đăng ký lại volume bị mất khỏi index khi đánh dấu ghi được. VolumeGrow có ngưỡng fill trung bình tuỳ chọn.",
+  "why": "Hệ quả: lookup ở đây là nguồn sự thật cho mọi cache vị trí; growth quyết định cluster còn ghi được không. Thiết kế: growth chạy ngoài đường assign và được khử trùng theo layout; warmup trả lỗi tạm thay vì 'not found' vì một volume chưa được báo không có nghĩa là đã mất.",
+  "when": "Lookup của mọi client khi cache miss; growth định kỳ và theo yêu cầu; lệnh volume.list, volume.vacuum, volume.grow của shell; worker vacuum.",
+  "ux": "Collection mới tự có volume; volume.list trên cluster lớn không làm master hết bộ nhớ.",
+  "if_broken": "Client không tìm được volume, cluster hết volume ghi được, hoặc vacuum chạy chồng chéo.",
+  "gotchas": [
+   "Auth của LookupVolume cho file id được ký bằng khoá ghi (guard.SigningKey) dù comment gọi nó là read jwt; caller dùng nó cho lệnh xoá, còn /dir/lookup?read=yes mới cấp token khoá đọc.",
+   "VolumeMarkReadonly lặp qua các node có volume và so ip, port; một request từ địa chỉ không có trong danh sách không làm gì và vẫn trả thành công."
+  ]
+ },
+ "weed/server/master_server_handlers.go": {
+  "character": "API HTTP cũ của master: /dir/lookup và /dir/assign, cùng việc gắn JWT vào header",
+  "what": "lookupVolumeId và findVolumeLocation tra vị trí từ topology khi là leader, hoặc từ vid map của master client khi là follower; topologyLocation mô tả một node, kể cả node chỉ giữ shard EC. dirLookupHandler nhận volumeId hay fileId, trả 404 khi không thấy (503 kèm Retry-After khi đang warmup) và gắn JWT: khoá đọc khi read=yes, khoá ghi trong các trường hợp khác. dirAssignHandler làm cùng việc với Assign gRPC qua HTTP (count, writableVolumeCount, dataSize, replication, TTL, disk, DC, rack, node, preallocate, memoryMapMaxSizeMb), trả 503 kèm Retry-After khi growth đang chạy và 406 khi hết chỗ. maybeAddJwtAuthorization đặt header Authorization.",
+  "why": "Hệ quả: các client HTTP cũ và công cụ ngoài (weed upload qua master, ứng dụng dùng API blob) đi qua đây. Thiết kế: giữ cùng logic chờ hay báo lỗi như gRPC Assign để hai đường không lệch nhau.",
+  "when": "GET hay POST /dir/lookup và /dir/assign.",
+  "ux": "curl /dir/assign trả fid, url và publicUrl dạng JSON.",
+  "if_broken": "Client HTTP không xin được fid hay nhận token sai loại.",
+  "gotchas": [
+   "Follower trả lookup từ vid map của chính nó, có thể cũ hơn của leader."
+  ]
+ },
+ "weed/server/master_server_handlers_admin.go": {
+  "character": "Các handler HTTP quản trị của master: xoá collection, status, vacuum, grow, redirect file id, submit",
+  "what": "collectionDeleteHandler dùng cùng deleteCollection với gRPC (trước đây bỏ sót shard EC). dirStatusHandler trả version, TopologyId và topology. volumeVacuumHandler chạy vacuum với garbageThreshold tuỳ chọn (409 khi không giành được quyền chạy). volumeGrowHandler grow count volume sau khi kiểm tra chỗ trống. volumeStatusHandler trả bản đồ volume. redirectHandler chuyển hướng /{fileId} tới public URL của một replica ngẫu nhiên. submitFromMasterServerHandler nhận upload multipart, xin assign và upload lên volume server (submitForClientHandler). getVolumeGrowOption đọc các tham số grow từ form. collectionInfoHandler trả thống kê của một collection, tổng hay theo từng layout.",
+  "why": "Hệ quả: các thao tác operator qua curl và UI dùng các route này. Thiết kế: dùng chung logic với gRPC để HTTP không lệch hành vi.",
+  "when": "Operator hay script gọi HTTP API của master.",
+  "ux": "curl master:9333/vol/vacuum chạy vacuum ngay.",
+  "if_broken": "Vacuum, grow hay xoá collection qua HTTP không hoạt động.",
+  "gotchas": [
+   "redirectHandler trả 308 (Permanent Redirect) tới một replica ngẫu nhiên.",
+   "collectionInfoHandler tăng VolumeCount theo số layout chứ không theo số volume."
+  ]
+ },
+ "weed/server/master_server_handlers_ui.go": {
+  "character": "Trang trạng thái HTML của master",
+  "what": "uiStatusHandler dựng dữ liệu (version, topology, raft server, uptime, max volume id, counter, volume size limit) và render template cho goraft hay cho hashicorp raft.",
+  "why": "Hệ quả: operator xem nhanh topology và trạng thái Raft. Thiết kế: hai template vì hai cài đặt Raft lộ thông tin khác nhau.",
+  "when": "GET / hay /ui/index.html trên master.",
+  "ux": "Trang web của master liệt kê data center, rack, volume server và leader.",
+  "if_broken": "Trang trạng thái trống hoặc lỗi; không ảnh hưởng dữ liệu."
+ },
+ "weed/server/raft_common.go": {
+  "character": "Sinh và khôi phục TopologyId, danh tính bền của cluster master",
+  "what": "recoverTopologyIdFromState đọc TopologyId từ trạng thái FSM (MaxVolumeIdCommand dạng JSON) trong snapshot. EnsureTopologyId, khi chưa có id, sinh một UUID và lưu nó qua persistFn (một lệnh Raft), retry mỗi giây khi lỗi và dừng khi mất leadership hay khi id đã được đặt song song; sau khi sinh, nó đánh dấu fresh mint nếu bound volume id bằng 0 và hoãn cấp phát volume một khoảng (allocation deferral). Trong lúc sinh, cờ TopologyInitPending được bật.",
+  "why": "Hệ quả: volume server báo TopologyId lần cuối thấy; một id khác chỉ ra master đã mất trạng thái, và việc tạo volume mới khi đó có thể cấp trùng id volume đang có. Thiết kế: id đi qua log Raft để mọi master cùng thấy, và việc cấp phát được hoãn sau một lần sinh mới để các server cũ kịp báo lại.",
+  "when": "Khi một master trở thành leader (cả hai cài đặt Raft) và khi khởi động lại không giữ trạng thái.",
+  "ux": "Không thấy trực tiếp; log ghi 'TopologyId generated'.",
+  "if_broken": "Master tạo volume với id trùng volume đã có sau khi mất trạng thái, hoặc mọi heartbeat bị coi là lệch topology."
+ },
+ "weed/server/raft_hashicorp.go": {
+  "character": "Dựng hashicorp raft cho master: store BoltDB, transport gRPC, cấu hình peer và vòng theo dõi leader",
+  "what": "NewHashicorpRaftServer đặt id là địa chỉ http, heartbeat timeout có jitter 0-25%, mức log theo glog, đăng ký metric raft vào Prometheus, mở logs.dat và stable.dat (BoltDB), snapshot store giữ 3 bản và transport qua gRPC, tạo raft với StateMachine; việc bootstrap để cho caller khi chắc không có leader nào. monitorLeaderLoop, mỗi khi thành leader: đối chiếu cấu hình với -peers ở lần đầu (updatePeers thêm voter thiếu, gỡ peer thừa), chạy barrier và EnsureTopologyId; khi mất leadership thì reset barrier. raftServerID là địa chỉ http của peer.",
+  "why": "Hệ quả: với -raftHashicorp, thành viên quorum được lưu qua các lần khởi động, nên cấu hình sai ở đây giữ lại peer đã bỏ hay mất peer mới. Thiết kế: -peers là nguồn sự thật về thành viên và được đối chiếu ở mỗi lần thành leader.",
+  "when": "Khởi động master với -raftHashicorp=true.",
+  "ux": "Leadership có thể chuyển giao (RaftLeadershipTransfer), điều goraft không hỗ trợ.",
+  "if_broken": "Master không bầu được leader, hoặc quorum giữ thành viên sai.",
+  "gotchas": [
+   "Ticker hiển thị peer được tạo cả khi không bật log mức 4 và không bao giờ dừng."
+  ]
+ },
+ "weed/server/raft_server.go": {
+  "character": "Raft mặc định của master (seaweedfs/raft) và state machine chung cho cả hai cài đặt",
+  "what": "StateMachine lưu MaxVolumeIdCommand: bound volume id, TopologyId và trạng thái freeze growth; Apply, Recovery và Restore nâng bound, đặt TopologyId và trạng thái freeze, và ghi bound ra file max_volume_id; Save và Snapshot xuất trạng thái. NewRaftServer: khi không resume trạng thái thì khôi phục TopologyId từ snapshot rồi xoá log, conf, snapshot và state cũ; tạo server goraft với transport gRPC, heartbeat có jitter, nạp snapshot, khởi động (single master resume thì đặt election timeout 1 ms tới khi thành leader), thêm các peer cấu hình và gỡ peer thừa. HasExistingState và Bootstrap (DefaultJoinCommand chính mình, hay BootstrapCluster của hashicorp) cho caller quyết định tạo cluster mới chỉ khi không có leader nào.",
+  "why": "Hệ quả: trạng thái duy nhất mà Raft của master giữ là bound volume id và danh tính cluster; mất nó thì master có thể cấp lại id volume đã dùng. Thiết kế: phần còn lại của topology được dựng lại từ heartbeat thay vì sao chép qua Raft; mặc định xoá trạng thái Raft khi khởi động để tránh xung đột term cũ, nhưng giữ TopologyId.",
+  "when": "Khởi động master (mặc định không có -raftHashicorp).",
+  "ux": "Một master đơn khởi động lại trở thành leader gần như ngay lập tức.",
+  "if_broken": "Master không bầu được leader, cấp trùng id volume, hoặc tạo hai cluster tách rời."
+ },
+ "weed/server/raft_server_handlers.go": {
+  "character": "HTTP status, healthz và thống kê Raft của master",
+  "what": "StatusHandler trả có phải leader, leader hiện tại (không chờ bầu), danh sách peer và max volume id. HealthzHandler trả 503 khi chưa có leader, 423 khi là leader mà topology đang bị khoá (thử lại có backoff tối đa 5 s), 200 trong các trường hợp khác. StatsRaftHandler trả Stats() của hashicorp raft, hoặc 404.",
+  "why": "Hệ quả: probe của Kubernetes và load balancer dựa vào các route này để quyết định master nào sẵn sàng. Thiết kế: trả lời theo những gì Raft biết ngay, vì chờ bầu sẽ vượt timeout của probe đúng lúc master đang gia nhập.",
+  "when": "/cluster/status, /cluster/healthz và /raft/stats (chỉ với hashicorp raft) trên master, đăng ký trong command/master.go.",
+  "ux": "Probe readiness không treo trong lúc bầu leader.",
+  "if_broken": "Orchestrator khởi động lại master khoẻ hoặc dồn traffic vào master chưa sẵn sàng."
+ },
+ "weed/server/common.go": {
+  "character": "Các helper HTTP dùng chung của master, volume server và filer: JSON, submit, phân tích path, range request, làm sạch path",
+  "what": "writeJson, writeJsonQuiet và writeJsonError ghi JSON (pretty tuỳ chọn, che jwt trong URL khi log). submitForClientHandler parse một upload, xin assign qua operation.Assign và upload lên volume server. parseURLPath tách vid, fid, tên file và phần mở rộng từ các dạng /vid/fid/name, /vid/fid.ext và /vid,fid.ext. AdjustPassthroughHeaders áp các tham số response-* kiểu S3 và Content-Disposition (inline hay attachment với dl). ProcessRangeRequest phục vụ GET có hoặc không có Range: kiểm tra If-Range (so ETag mạnh hay ngày), một range thì 206 với Content-Range, nhiều range thì multipart/byteranges qua một pipe, ghi qua bufio pool; lỗi giữa chừng thì bỏ phần đệm chưa flush và panic ErrAbortHandler để client không nhận byte hỏng như một body hoàn chỉnh, còn lỗi trước khi ghi thì 404, 503 (ErrCacheNotReady) hay 500. CleanPathHandler phục vụ path chưa chuẩn tại path đã làm sạch thay vì để ServeMux redirect với path bị encode hai lần (golang/go#79897). requestIDMiddleware đưa request id vào metadata gRPC đi ra.",
+  "why": "Hệ quả: đường đọc HTTP của volume server và filer đi qua ProcessRangeRequest; một lỗi ở đây trả dữ liệu sai cho mọi client HTTP. Thiết kế: huỷ response thay vì hoàn tất một 200 có Content-Length khi đọc lỗi giữa chừng.",
+  "when": "Mọi GET có thể có Range trên volume server và filer, mọi response JSON của master và volume server, /submit.",
+  "ux": "Tải xuống tiếp tục được bằng Range; tên thư mục Unicode không bị encode hai lần.",
+  "if_broken": "Client nhận byte hỏng như dữ liệu hợp lệ, range sai, hoặc thư mục bị đặt tên theo chuỗi đã encode.",
+  "issue": "bug",
+  "issue_note": "ProcessRangeRequest trả về nil mà không ghi gì khi tổng các range vượt kích thước nội dung (client gửi nhiều range chồng nhau) và khi parseRange trả danh sách rỗng. Comment nói 'Ignore the range request', và net/http/fs.go mà đoạn này chép lại xử lý đúng như vậy (ranges = nil rồi gửi toàn bộ nội dung với 200). Ở đây handler kết thúc mà chưa ghi status hay body, nên client nhận 200 với body rỗng. Một client coi đó là toàn bộ object sẽ thấy file rỗng. Ảnh hưởng tới GET qua filer (filer_server_handlers_read.go) và volume server (volume_server_handlers_read.go)."
+ },
+ "weed/sequence/sequence.go": {
+  "character": "Interface Sequencer cấp needle id cho assign",
+  "what": "Khai báo Sequencer với NextFileId(count), trả key đầu của một dải count key liên tiếp, và SetMax, nâng bộ đếm lên trên một key đã thấy.",
+  "why": "Hệ quả: key trùng trong một volume làm lần ghi sau bị từ chối vì cookie không khớp. Thiết kế: cho phép thay bộ cấp key (memory hay snowflake) qua master.toml.",
+  "when": "Mỗi PickForWrite trong topology.go và mỗi heartbeat (SetMax).",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Assign cấp key trùng."
+ },
+ "weed/sequence/memory_sequencer.go": {
+  "character": "Bộ cấp needle id mặc định: một bộ đếm trong RAM",
+  "what": "MemorySequencer bắt đầu từ 1; NextFileId trả bộ đếm rồi cộng thêm count dưới mutex; SetMax nâng bộ đếm lên giá trị đã thấy cộng 1 nếu nó chưa vượt.",
+  "why": "Hệ quả: bộ đếm không bền; sau khi đổi leader hay khởi động lại, nó chỉ an toàn khi mọi volume server đã báo MaxFileKey qua heartbeat trước assign đầu tiên. Thiết kế: không lưu key qua Raft, dựa vào heartbeat và khoảng warmup.",
+  "when": "Mặc định, và khi master.sequencer.type là 'raft' hay giá trị không biết.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Ghi thất bại vì cookie mismatch khi key bị cấp lại."
+ },
+ "weed/sequence/snowflake_sequencer.go": {
+  "character": "Bộ cấp needle id kiểu snowflake, không cần đồng bộ giữa các master",
+  "what": "NewSnowflakeSequencer tạo một node bwmarrin/snowflake với id 10 bit, lấy từ hash FNV của địa chỉ master hay từ master.sequencer.sequencer_snowflake_id; NextFileId trả một id mới; SetMax không làm gì.",
+  "why": "Hệ quả: key tăng theo thời gian nên không phụ thuộc vào heartbeat sau khi đổi leader. Thiết kế: chọn bằng master.sequencer.type = snowflake.",
+  "when": "Mỗi assign khi master dùng snowflake.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Key trùng giữa hai master có cùng node id.",
+  "issue": "bug",
+  "issue_note": "NextFileId bỏ qua count. Một assign count=N (weed upload nhiều file, /dir/assign?count=N) dùng các key K..K+N-1, vì hậu tố _i của fid được cộng vào key (needle.ParsePath), nhưng snowflake chỉ cấp một id: lần gọi kế tiếp trong cùng mili giây trả K+1, vì bwmarrin/snowflake tăng phần step thêm 1. Nếu hai assign đó rơi vào cùng một volume, một trong hai lần ghi trùng key gặp needle có cookie khác và bị volume server từ chối ('write cookie mismatch'). MemorySequencer thì cộng count vào bộ đếm. Chỉ ảnh hưởng master cấu hình master.sequencer.type = snowflake."
+ },
+ "weed/pb/master_pb/master_helper.go": {
+  "character": "Helper viết tay cạnh code sinh từ master.proto: kiểm tra URL rỗng và tách DiskInfo theo disk vật lý",
+  "what": "VolumeLocation.IsEmptyUrl nhận ra URL rỗng hay ':0' (heartbeat ngắn). DiskInfo.SplitByPhysicalDisk dựng lại một DiskInfo cho mỗi disk vật lý từ bản tổng theo loại disk: gom volume và shard theo DiskId (chỉ coi 0 là chưa đặt khi mọi bản ghi đều báo 0), dùng MaxVolumeCountByDisk khi có làm tập disk và max chính xác (free = max trừ số volume local), nếu không thì chia đều max, free và dung lượng byte, phần dư cho các disk đầu, kết quả theo thứ tự DiskId.",
+  "why": "Hệ quả: các bộ lập kế hoạch balance và EC cùng admin UI cần biết từng disk, trong khi DataNodeInfo.DiskInfos gộp các disk cùng loại; tách sai thì chọn đích đầy hoặc bỏ sót disk 0. Thiết kế: dựng lại ở client thay vì đổi định dạng wire.",
+  "when": "Worker balance, EC và admin topology khi đọc VolumeList; MasterClient khi lọc heartbeat ngắn.",
+  "ux": "Admin UI hiển thị dung lượng từng disk.",
+  "if_broken": "Balance đặt volume lên disk đầy hay bỏ qua disk trống."
+ },
+ "weed/pb/master.proto": {
+  "character": "Hợp đồng gRPC của master (service Seaweed) và code Go sinh từ nó",
+  "what": "Service Seaweed gồm SendHeartbeat và KeepConnected (hai stream), LookupVolume, Assign và StreamAssign, Statistics, CollectionList, CollectionDelete, CollectionStatistics, VolumeList và VolumeListStream, LookupEcVolume, VacuumVolume, Disable/EnableVacuum, VolumeMarkReadonly, GetMasterConfiguration, ListClusterNodes, LeaseAdminToken, ReleaseAdminToken, GetAdminLockStatus, Ping, các RPC Raft, ResumeVolumeGrowth và VolumeGrow. Heartbeat mang volume đầy đủ hay delta (new, deleted, changed), shard EC, max volume count và tag theo disk, dung lượng disk, digest volume, max_volume_id_seen và last_seen_topology_id; HeartbeatResponse mang volume size limit, leader, yêu cầu gửi lại danh sách đầy đủ, bound volume id và TopologyId. KeepConnectedResponse mang VolumeLocation (new, deleted, remote, readonly, EC vids, leader), ClusterNodeUpdate hay LockRingUpdate. TopologyInfo lồng DC, rack, data node và DiskInfo theo loại disk.",
+  "why": "Hệ quả: đây là điểm gặp của master với volume server, filer, gateway, shell, worker và admin; một trường đổi nghĩa làm lệch view vị trí volume của cả cluster. Thiết kế: heartbeat delta kèm digest để không gửi lại danh sách mỗi lần; các trường mới được thêm sao cho master và client cũ vẫn hiểu (ví dụ RemoteVids lặp lại id trong NewVids).",
+  "when": "Mọi lời gọi tới master.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Các thành phần không nói chuyện được với master hoặc hiểu sai trạng thái volume.",
+  "gotchas": [
+   "KeepConnectedRequest.metrics_port không được code Go nào trong repo đặt hay đọc.",
+   "Các số trường 10-13 và 20+ của VolumeEcShardInformationMessage dành cho bản enterprise."
+  ]
  }
 }
