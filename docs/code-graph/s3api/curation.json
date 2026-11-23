@@ -3402,5 +3402,253 @@
    "Bản clone của request là của riêng keep-alive vì các đường copy còn đặt header lên request của chúng; request id được gắn trước khi clone để header và một <Error> muộn mang cùng id.",
    "Nếu client ngắt, run trả về khi context của request kết thúc nhưng copy vẫn chạy tới cùng; câu trả lời cuối ghi vào kết nối đã đóng và chỉ được log ở V(1)."
   ]
+ },
+ "weed/wdclient/vid_map.go": {
+  "character": "Bộ nhớ đệm volume id → vị trí volume server mà mọi client của master giữ trong RAM, có thế hệ (generation) để sống qua việc đổi master",
+  "what": "vidMap giữ hai map vid → locationsEntry (volume thường và volume EC) cùng một refcount theo server. Một entry bất biến sau khi lưu (mọi cập nhật cài một entry mới, nên slice đã trao cho reader không bị ghi đè) và mang generation (số lần reset lúc nó được học), learnedAt và state: learned, stale (InvalidateCache đặt nó sang một bên) hay revived (lookup sau đó không có câu trả lời nên nó được dùng lại). LookupVolumeServerUrl và LookupFileId trả URL theo thứ tự cùng data center trước, rồi các DC khác; trong mỗi nhóm, replica local đứng trước replica ở remote tier và thứ tự được xáo ngẫu nhiên để rải tải. GetLocations, khi có cả entry thường lẫn entry EC, trả entry có generation mới hơn (hoà thì bản thường). addLocationToMap thay thế thay vì gộp ở lần ghi đầu tiên của một generation và với entry stale hay revived; cờ DataInRemote, ReadOnly đổi thì entry được dựng lại trên một slice copy. deleteLocationFromMap giữ generation và state của entry. reset tăng generation và bỏ các entry không được làm mới trong retainGenerations (mặc định 5) lần reset; clear bỏ hết. markStale, reviveStale, dropSetAside và addAnswer hiện thực việc đặt sang một bên cho read lỗi. hasVolumeServer trả lời trong O(1) qua serverRefCount, khoá theo dạng http của địa chỉ.",
+  "why": "Hệ quả: mọi read của filer, gateway và mount biến file id thành URL ở đây; một entry cũ trỏ volume tới server đã rời đi làm read thất bại hoặc chậm, còn một entry bị xoá oan làm read báo volume not found trong khi replica khác vẫn sống. Thiết kế: entry bất biến thay vì khoá theo reader; lịch sử giữ theo từng volume bằng generation thay vì giữ nhiều bản chụp của cả map; refcount tăng giảm dần thay vì quét mọi entry.",
+  "when": "Mỗi lần đọc chunk (LookupFileId), mỗi tin KeepConnected từ master (thêm, xoá vị trí), khi đổi master (reset) và khi một read lỗi gọi InvalidateCache.",
+  "ux": "Read không phải hỏi master; sau khi đổi leader, read vẫn chạy trên vị trí cũ cho tới khi chúng được học lại.",
+  "if_broken": "Read trả lỗi cho object còn nguyên hoặc bị gửi tới volume server đã bị gỡ; hasVolumeServer sai làm từ chối thao tác tới server hợp lệ hoặc cho qua thao tác tới server lạ.",
+  "gotchas": [
+   "GetLocations chọn giữa bản thường và bản EC theo generation (số lần reset), không theo learnedAt: trong cùng một generation, bản thường luôn thắng.",
+   "hasLocation và currentLocations chỉ tính entry của generation hiện tại, còn GetLocations vẫn trả entry của generation cũ chừng nào nó còn trong cửa sổ giữ lại.",
+   "Entry stale không giữ refcount nào, nên hasVolumeServer có thể trả false cho một server chỉ còn được nhắc tới trong entry bị đặt sang một bên."
+  ]
+ },
+ "weed/wdclient/vidmap_client.go": {
+  "character": "Lớp tra cứu vị trí volume dùng chung cho MasterClient và FilerClient: đọc cache vidMap trước, hỏi provider khi miss",
+  "what": "vidMapClient bọc một vidMap với một VolumeLocationProvider cắm được (master hay filer). LookupFileIdWithFallback và LookupVolumeIdsWithFallback đọc cache; các vid miss được gom thành một batch (sort để làm key) chạy qua singleflight, kiểm tra lại cache rồi mới gọi provider.LookupVolumeIds, và kết quả có thể là một phần kèm lỗi gộp. doSharedLookup chạy hàm với context.WithoutCancel, nên một caller bỏ đi không làm hỏng các caller khác; mỗi caller chỉ ngừng chờ khi context của chính nó hết. Khi provider không có câu trả lời (map nil), reviveStale dùng lại vị trí mà InvalidateCache đã đặt sang một bên; khi có câu trả lời, dropSetAside xoá chúng và fillLocations cache câu trả lời, trừ các cặp (vid, url) mà master vừa đẩy lệnh xoá (recentDeletes, TTL 1 phút, tối đa 65536 mục) và trừ khi epoch đã đổi (reset, clear hay confirmLocations) kể từ lúc hỏi. confirmLocations cài vị trí master báo thay cho thứ lookup đã cache. LookupVolumeIdsAuthoritative bỏ qua cache. InvalidateCache đánh dấu stale volume của một file id.",
+  "why": "Hệ quả: một read lỗi vì một replica chết không được làm rơi các replica còn sống khỏi cache, và một câu trả lời cũ (lookup đang bay lúc master đẩy lệnh xoá) không được hồi sinh server đã bị gỡ. Thiết kế: singleflight theo batch để một cơn miss đồng thời chỉ thành một RPC; tombstone có TTL thay vì giữ tới khi master báo lại, vì master có thể đánh rơi lệnh thêm lại khi kênh của client đầy.",
+  "when": "Mỗi lần đọc chunk của filer, gateway hay mount khi cache miss, và mỗi InvalidateCache sau một read lỗi.",
+  "ux": "Một cơn miss đồng loạt (ví dụ ngay sau khi khởi động) chỉ tạo một lookup cho mỗi batch volume.",
+  "if_broken": "Bão lookup tới master hay filer, read lỗi lan rộng khi một replica chết, hoặc read bị gửi tới server đã bị gỡ.",
+  "gotchas": [
+   "LookupVolumeIdsWithFallback có thể trả cả map kết quả lẫn lỗi; caller phải xem cả hai.",
+   "Khi provider thất bại nhưng sau khi revive mọi volume đều có vị trí, lỗi bị nuốt để handler gRPC không bỏ response.",
+   "Key singleflight là danh sách vid đã sort: hai batch chồng nhau nhưng không giống hệt vẫn hỏi riêng."
+  ]
+ },
+ "weed/wdclient/masterclient.go": {
+  "character": "Client giữ stream KeepConnected tới master leader và nuôi vid map bằng các cập nhật master đẩy xuống",
+  "what": "MasterClient nhúng vidMapClient với masterVolumeProvider: LookupVolume tới master, retry khi Unavailable trong tối đa 30 s, mỗi lần thử bị chặn bởi grpcTimeout 5 s. KeepConnectedToMaster lặp tryAllMasters: làm mới danh sách master (SRV), thử từng master và đi theo gợi ý leader (bỏ qua master đã lỗi trong vòng), nghỉ 1 s giữa các vòng. tryConnectToMaster mở stream KeepConnected, đặt currentMaster ngay để GetMaster mở khoá, chờ announceCh rồi gửi KeepConnectedRequest đăng ký (filer group, DC, rack, loại client, version, LeaveLockRing). Tin đầu tiên chỉ sang leader khác thì chuyển hướng; nếu không, resetVidMap (gọi OnVidMapReset) rồi áp vị trí. Sau đó nó áp VolumeLocation qua updateVidMap (NewVids, RemoteVids với DataInRemote, ReadOnly và ReadOnlyCanDelete, DeletedVids trừ vid được thêm lại trong cùng tin vì volume chuyển giữa các disk của server, cùng cặp EC), ClusterNodeUpdate (OnPeerUpdate, lọc theo filer group) và LockRingUpdate (OnLockRingUpdate); OnMasterChange chạy khi master phục vụ đổi. notifyVolumeLocationChange chỉ báo xoá khi server không còn giữ volume ở dạng nào, vì ec.encode và ec.decode thêm dạng mới trước khi gỡ dạng cũ. WithClient chạy một hàm trên master hiện tại, retry lỗi tạm. Còn có LeaveLockRing, FindLeaderFromOtherPeers và ListMasters, ListCachedMasters, ListMasterSet.",
+  "why": "Hệ quả: mọi server ngoài master (filer, gateway, mount, broker, shell, admin) tìm volume và gọi master qua đây; mất stream nghĩa là vid map ngừng được cập nhật và GetMaster chặn. Thiết kế: master đẩy thay đổi vị trí qua stream thay vì client hỏi định kỳ; kết nối lại chỉ reset generation chứ không xoá cache, nên read vẫn chạy trên vị trí cũ trong lúc học lại.",
+  "when": "Chạy nền suốt đời process; GetMaster và WaitUntilConnected chặn tới khi có kết nối.",
+  "ux": "Đổi leader không làm read gián đoạn; filer và gateway biết peer mới và lock ring mới qua stream này.",
+  "if_broken": "Lookup và lời gọi master treo hoặc timeout; vid map giữ vị trí cũ hoặc mất vị trí; danh sách filer peer và lock ring của object-write lock không được cập nhật.",
+  "gotchas": [
+   "GetMaster chặn tới khi ctx hết nếu KeepConnectedToMaster chưa chạy.",
+   "currentMaster được đặt trước khi đăng ký, nên lời gọi unary có thể chạy trong lúc announceCh còn giữ, trước khi master liệt kê client này.",
+   "Master chỉ gửi LockRingUpdate một lần mỗi kết nối, nên callback phải được đặt trước khi KeepConnectedToMaster chạy (s3api_server.go làm đúng thứ tự này).",
+   "WithClientCustomGetMaster quay số bằng context.Background(); ctx chỉ chặn việc chờ leader và retry."
+  ]
+ },
+ "weed/wdclient/filer_client.go": {
+  "character": "Client tra vị trí volume qua filer: nhiều filer, circuit breaker, filer nhà và tự phát hiện filer qua master",
+  "what": "FilerClient nhúng vidMapClient với filerVolumeProvider. LookupVolumeIds gọi filer.LookupVolume trên filer hiện tại rồi lần lượt các filer khác, bỏ qua filer có circuit breaker mở (mặc định 3 lỗi liên tiếp, thử lại sau 30 s; nếu mọi filer đều mở thì hỏi tất cả), và lặp cả vòng tới 3 lần với backoff 1 s nhân 1.5 có jitter khi lỗi là tạm thời. Chỉ lỗi không tới được filer (Unavailable, DeadlineExceeded, ResourceExhausted, Aborted, hay không có status) mới tính vào breaker; caller hết hạn thì không tính. Lookup thành công trên filer khác chuyển filer hiện tại, chỉ khi filer khởi đầu vẫn là filer hiện tại. HomeFiler (gateway nhúng đặt là filer local) được quay về khi breaker của nó đóng và hết backoff; rời nhà sớm sau một lần quay về nhân đôi backoff (tối đa 5 phút), còn ở nhà 10 phút thì backoff được reset. Có MasterClient và FilerGroup thì discoverFilers lấy danh sách filer mỗi 5 phút (snapshot là nguồn sự thật, filer biến mất bị gỡ), OnPeerUpdate áp join và leave master đẩy (leave làm rỗng danh sách thì bị hoãn), OnVolumeLocationChange áp lệnh xoá của master vào cache (kèm tombstone) và với lệnh thêm thì thay cache bằng vị trí master client đang biết, OnVidMapReset xoá cache. GetLookupFileIdFunction có thể ưu tiên PublicUrl.",
+  "why": "Hệ quả: gateway S3, webdav, mount và IAM API tra vị trí chunk qua filer; khi filer chết hay đổi IP lúc rolling restart, client này quyết định read có tiếp tục được không. Thiết kế: cache được nuôi bằng lookup qua filer nhưng được sửa bằng tin đẩy của master, vì sau khi đổi leader master client của filer có thể còn trả lời theo view của leader cũ, và leader mới không bao giờ đẩy lệnh xoá cho server nó chưa từng biết; quay về filer nhà để gateway nhúng không đi đường mạng khi filer local đã sống lại.",
+  "when": "Mỗi lần gateway đọc chunk mà cache miss; nền: discovery và các callback từ MasterClient (s3api_server.go nối OnPeerUpdate, OnVolumeLocationChange và OnVidMapReset).",
+  "ux": "Rolling restart filer không làm gateway mất read; gateway nhúng trở về filer local khi nó khoẻ lại.",
+  "if_broken": "Gateway báo không tìm thấy volume dù filer khác còn sống, kẹt ở một filer đã chết, hoặc đọc từ volume server đã bị gỡ.",
+  "gotchas": [
+   "Locations của filer không mang DataInRemote hay ReadOnly, nên đường FilerClient không ưu tiên replica local hơn bản ở remote tier như đường master.",
+   "Một câu trả lời có lỗi từ filer (ví dụ volume không tồn tại) được tính là thành công cho breaker.",
+   "Danh sách filer có thể đổi giữa các lần thử; chỉ số được kẹp về 0 khi vượt độ dài."
+  ]
+ },
+ "weed/wdclient/exclusive_locks/exclusive_locker.go": {
+  "character": "Khoá độc quyền theo tên trên master (admin token), có một goroutine tự gia hạn",
+  "what": "ExclusiveLocker xin lease bằng LeaseAdminToken (kèm token và thời điểm khoá trước đó), thử lại mỗi giây tới khi được, rồi một goroutine duy nhất gia hạn mỗi 4 s với mỗi RPC giới hạn 3 s; gia hạn thất bại thì bỏ cờ khoá và dừng goroutine. GetToken chờ tới khi thời điểm khoá còn trong 3 s an toàn rồi trả token. ReleaseLock gọi ReleaseAdminToken một lần không giới hạn thời gian, rồi xoá token bằng compare-and-swap để không xoá token mới của một RequestLock chạy song song. mu tuần tự hoá gia hạn và release, để một lần gia hạn đang bay không tạo lại khoá trên master sau khi đã release.",
+  "why": "Hệ quả: weed shell (lệnh lock) và admin server dùng khoá này để chỉ một bên chạy các thao tác bảo trì làm đổi topology (balance, EC, sửa replication) tại một thời điểm. Thiết kế: lease ngắn gia hạn liên tục thay vì khoá vĩnh viễn, nên client chết thì khoá tự hết hạn; release không có deadline, vì một release bị cắt giữa chừng để lại khoá ma tới khi hết hạn.",
+  "when": "Lệnh lock của weed shell và admin server (admin_lock_manager.go, admin_presence_lock.go) khi giành quyền bảo trì.",
+  "ux": "weed shell đòi lock trước các lệnh làm thay đổi cluster.",
+  "if_broken": "Hai admin hay shell cùng chạy balance hoặc EC trên một volume, hoặc khoá ma chặn bảo trì tới khi hết hạn.",
+  "gotchas": [
+   "RequestLock thử mãi mãi và không nhận context.",
+   "GetToken không có caller ngoài test, và khi chưa giữ khoá (lockTsNs = 0) vòng chờ của nó không bao giờ kết thúc.",
+   "SetMessage ghi message không lấy mu, trong khi renewLease đọc nó dưới mu."
+  ]
+ },
+ "weed/operation/assign_file_id.go": {
+  "character": "Xin master cấp file id (Assign) trong một ngân sách retry chung, và dựng yêu cầu assign từ quy tắc lưu trữ của filer",
+  "what": "Assign gửi AssignRequest (count, replication, collection, TTL, disk type, DC, rack, node, số volume cần mở thêm, kích thước dự kiến) tới master do masterFn trả, thử yêu cầu chính rồi lần lượt các yêu cầu thay thế; mọi yêu cầu dùng chung một deadline 30 s và mỗi lần thử bị chặn 10 s. Nó retry khi gặp Unavailable, ResourceExhausted (master đang tạo volume mới) và Canceled hay DeadlineExceeded khi deadline chung còn (kênh gRPC cache đã chết sau khi master restart), rồi trả fid, URL, public URL, gRPC port, JWT ghi (Auth) và các replica. LookupJwt hỏi LookupVolume cho một file id để lấy JWT. StorageOption.ToAssignRequests dựng yêu cầu từ quy tắc lưu trữ; khi vị trí (DC, rack, node) chỉ là mặc định của filer chứ không phải quy tắc hay yêu cầu tường minh (EnforceLocation), nó kèm một yêu cầu dự phòng bỏ vị trí cho trường hợp vị trí ưu tiên không ghi được.",
+  "why": "Hệ quả: mọi lần ghi chunk của filer, và qua AssignVolume của filer là của gateway, bắt đầu bằng một assign; assign treo hay thất bại nghĩa là lần ghi thất bại. Thiết kế: một ngân sách chung để yêu cầu dự phòng không nhân đôi thời gian chờ; context của từng lần thử đi vào quyết định huỷ kết nối, để timeout của chính lần thử không làm hỏng kết nối master dùng chung, việc sẽ huỷ mọi assign khác đang bay với lỗi 'the client connection is closing'.",
+  "when": "filer_server_handlers_write.go, AssignVolume trong filer_grpc_server.go (đường gateway dùng), common.go (submit qua master), filer_notify_append.go, filer_grpc_server_remote.go, lệnh benchmark và fs.distribute_chunks.",
+  "ux": "Một lần ghi vẫn thành công trong lúc master đang tạo volume hay vừa đổi leader, chỉ chậm hơn.",
+  "if_broken": "Ghi thất bại hoặc treo khi master đổi leader; chunk rơi vào DC sai khi quy tắc vị trí bị nới lỏng.",
+  "gotchas": [
+   "Assign không điền AssignResult.Fsync; các caller đi qua AssignVolume của filer (gateway, worker Iceberg, file browser của admin) tự chép resp.Fsync vào.",
+   "Replicas trong kết quả không mang gRPC port, chỉ có URL, public URL và DC."
+  ]
+ },
+ "weed/operation/buffer_pool.go": {
+  "character": "Bọc bytebufferpool cho buffer multipart của lần upload lên volume server",
+  "what": "GetBuffer và PutBuffer lấy và trả buffer từ bytebufferpool, đồng thời tăng giảm một bộ đếm atomic. upload_content.go là caller duy nhất: nó dựng body multipart trong buffer này khi UploadOption không mang BytesBuffer riêng.",
+  "why": "Hệ quả: mỗi chunk upload cần một buffer cỡ chunk; cấp phát mới mỗi lần làm tăng áp lực GC trên filer và gateway khi ghi nhiều. Thiết kế: dùng lại buffer qua pool thay vì cấp phát.",
+  "when": "Mỗi lần upload_content dựng body cho một chunk.",
+  "ux": "Không thấy trực tiếp; ảnh hưởng tới bộ nhớ và độ trễ GC khi upload nhiều.",
+  "if_broken": "Buffer bị trả hai lần hay dùng sau khi trả sẽ trộn byte của hai chunk upload.",
+  "gotchas": [
+   "bufferCounter chỉ được ghi, không ai đọc (các println đã bị comment)."
+  ]
+ },
+ "weed/operation/chunked_file.go": {
+  "character": "Chunk manifest kiểu cũ của volume server (một needle JSON liệt kê các chunk) và reader seek được trên nó",
+  "what": "ChunkManifest là JSON (tên, mime, kích thước, danh sách fid, offset, size) được lưu như một needle có cờ chunk manifest; LoadChunkManifest giải nén nếu cần, parse và sắp chunk theo offset; DeleteChunks xoá mọi chunk qua DeleteFileIds. ChunkedFileReader ghép các chunk thành một luồng: Seek, ReadAt và Read chạy WriteTo trong một goroutine qua io.Pipe; readChunk tra vị trí (lookupFileIdUrls, replica local trước) và đọc từ replica đầu tiên trả được; read lỗi xoá cache vị trí của volume, thử tối đa hai lượt lookup và bỏ qua URL đã thử. Một replica đã gửi được một phần chunk thì không đọc tiếp ở replica khác, vì volume server stream needle trước khi kiểm checksum, nên phần đã gửi có thể chính là phần hỏng.",
+  "why": "Hệ quả: file upload thẳng lên volume server với ?cm=true (weed upload -maxMB) chỉ đọc được qua reader này; nó không liên quan tới manifest chunk của filer. Thiết kế: không nối tiếp một chunk đã gửi dở từ replica khác để không trộn byte có thể hỏng với byte tốt.",
+  "when": "volume_server_handlers_read.go khi phục vụ một needle là chunk manifest, volume_server_handlers_write.go khi xoá nó, và submit.go khi upload chia chunk.",
+  "ux": "GET một file lớn upload trực tiếp lên volume server trả về toàn bộ nội dung, có hỗ trợ Range.",
+  "if_broken": "File chunk hoá trên volume server đọc ra thiếu, sai thứ tự, hoặc chunk không bị xoá cùng manifest.",
+  "gotchas": [
+   "Seek tới offset bằng totalSize không trả lỗi, nhưng WriteTo sau đó trả ErrInvalidRange vì không chunk nào chứa vị trí đó.",
+   "readChunkNeedle chỉ gửi Range 'bytes=offset-' và đọc đúng size byte; một replica trả 200 cho yêu cầu có offset bị coi là không hỗ trợ range."
+  ]
+ },
+ "weed/operation/data_struts.go": {
+  "character": "Kiểu JoinResult không còn được dùng",
+  "what": "Khai báo struct JoinResult với VolumeSizeLimit và Error, có tag JSON.",
+  "why": "Hệ quả: không có; không đoạn mã nào đọc hay ghi kiểu này.",
+  "when": "Không bao giờ.",
+  "ux": "Không có.",
+  "if_broken": "Không có gì hỏng.",
+  "issue": "dead",
+  "issue_note": "JoinResult không được tham chiếu ở đâu trong repo, kể cả trong test; xoá file không đổi hành vi nào."
+ },
+ "weed/operation/delete_content.go": {
+  "character": "Xoá hàng loạt file id: tra vị trí volume, gom theo volume server và gọi BatchDelete song song",
+  "what": "ParseFileId tách 'vid,key_cookie'. DeleteFileIds tra vị trí qua master (LookupVolumeIds, có thể thay URL bằng public URL) rồi gọi DeleteFileIdsWithLookupVolumeId, hàm nhận một lookupFunc bất kỳ: nó gom file id theo volume, tra vị trí một lần cho mọi volume, gom theo từng volume server (mỗi replica nhận toàn bộ fid của volume) và gọi DeleteFileIdsAtOneVolumeServer song song. Hàm này gửi BatchDelete qua gRPC (SkipCookieCheck khi không yêu cầu cookie, Fsync khi caller cần delete bền) và trả kết quả từng fid; lỗi parse, lỗi lookup hay lỗi kết nối biến thành DeleteResult mang lỗi cho từng fid thay vì một lỗi chung.",
+  "why": "Hệ quả: chunk của object bị ghi đè hay xoá chỉ được giải phóng qua đường này; một volume server không xoá được thì chunk mồ côi chiếm chỗ cho tới khi được dọn bằng tay. Thiết kế: một RPC BatchDelete cho mỗi server thay vì một request mỗi chunk, và báo kết quả từng fid để caller (filer_deletion.go) chỉ retry những fid thất bại.",
+  "when": "Hàng đợi xoá chunk của filer (filer_deletion.go), gateway khi dọn chunk của một PUT thất bại (s3api_object_handlers_put.go), file browser của admin và filer.copy.",
+  "ux": "Dung lượng được thu hồi sau khi xoá object (khi vacuum chạy).",
+  "if_broken": "Chunk bị xoá không hết, để lại dữ liệu mồ côi; hoặc xoá nhầm khi gom fid sai server.",
+  "gotchas": [
+   "Mọi replica của một volume nhận cùng một danh sách fid; kết quả của các replica được nối lại nên một fid có thể xuất hiện nhiều lần trong kết quả.",
+   "DeleteFileIds không truyền fsync và dùng context.Background()."
+  ]
+ },
+ "weed/operation/grpc_client.go": {
+  "character": "Hai helper mở client gRPC tới volume server và master qua kết nối cache dùng chung",
+  "what": "WithVolumeServerClient và WithVolumeServerClientOptions chạy một hàm với VolumeServerClient trên địa chỉ gRPC của volume server (pb.WithGrpcClient, kết nối cache ở chế độ không stream, kết nối riêng ở chế độ stream); biến thể Options nối thêm dial option sau option TLS để ghim endpoint đã kiểm tra. WithMasterServerClient chạy một hàm với SeaweedClient của master, truyền context của request vào quyết định huỷ kết nối cache.",
+  "why": "Hệ quả: mọi RPC tới volume server của filer, gateway, shell và worker đi qua đây; một kết nối cache bị huỷ nhầm làm hỏng mọi lời gọi khác đang dùng nó. Thiết kế: dùng chung kết nối thay vì dial mỗi lần, và để Canceled hay DeadlineExceeded do chính timeout của caller không bị coi là kết nối chết.",
+  "when": "Mỗi lời gọi gRPC tới volume server hay master từ package operation và các caller của nó.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Lời gọi tới volume server hay master thất bại hàng loạt, hoặc kết nối bị đóng rồi mở lại liên tục."
+ },
+ "weed/operation/lookup.go": {
+  "character": "Tra vị trí volume qua master với một cache TTL 10 phút toàn process",
+  "what": "Location và LookupResult là kiểu kết quả. LookupVolumeIdsWithContext đọc cache vc (VidCache) trước nếu được phép, hỏi master LookupVolume cho các vid còn thiếu, cache kết quả không có lỗi trong 10 phút và trả map theo chuỗi vid như đã hỏi (kèm Jwt và Error từ master). LookupVolumeId và LookupVolumeIds là các biến thể. lookupFileIdUrls tra volume của một file id và trả URL của mọi replica, replica local trước replica ở remote tier, mỗi nhóm xáo ngẫu nhiên; LookupFileId lấy URL đầu tiên. InvalidateVolumeIdLocationCache xoá một vid khỏi cache.",
+  "why": "Hệ quả: các công cụ và đường cũ không có MasterClient (weed download, chunked_file.go, delete_content.go, tail_volume.go) tìm volume qua đây; cache sai làm chúng đọc hay xoá ở server cũ tới 10 phút. Thiết kế: một cache toàn cục đơn giản theo thời gian thay vì stream KeepConnected như wdclient.",
+  "when": "DeleteFileIds, TailVolume, ChunkedFileReader và lệnh weed download.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Đọc hay xoá chunk tới volume server đã không còn giữ volume, cho tới khi cache hết hạn.",
+  "gotchas": [
+   "Kết quả lấy từ cache không mang Jwt; master chỉ ký Auth (bằng khoá ghi) khi được hỏi bằng file id, còn lookupFileIdUrls hỏi bằng volume id, nên jwt mà LookupFileId trả luôn rỗng dù comment gọi nó là quyền đọc.",
+   "Hỏi bằng file id thì kết quả không được cache, vì VidCache.Set không parse được chuỗi 'vid,fid'."
+  ]
+ },
+ "weed/operation/lookup_raft_leader.go": {
+  "character": "Hỏi lần lượt các master peer để tìm Raft leader hiện tại",
+  "what": "LookupRaftLeaderMaster gọi GetMasterConfiguration trên từng master đã cấu hình, mỗi lần giới hạn 5 s, và trả địa chỉ leader của câu trả lời đầu tiên không rỗng; follower cũng trả leader mà nó biết.",
+  "why": "Hệ quả: các thay đổi topology như VolumeMarkReadonly phải chạy trên leader; master mà volume server đang gửi heartbeat có thể vẫn là follower ngay sau một cuộc bầu, cho tới khi vòng heartbeat kết nối lại. Thiết kế: hỏi trực tiếp các peer thay vì tin master của heartbeat.",
+  "when": "volume_grpc_client_to_master.go khi volume server cần báo một thay đổi trạng thái volume cho leader.",
+  "ux": "Đánh dấu readonly có hiệu lực ngay cả ngay sau khi đổi leader.",
+  "if_broken": "Thay đổi trạng thái volume được gửi tới follower và bị bỏ qua hoặc thất bại."
+ },
+ "weed/operation/lookup_vid_cache.go": {
+  "character": "Cache vid → vị trí có hạn làm mới, dùng cho lookup.go",
+  "what": "VidCache giữ map uint32 → VidInfo (danh sách Location và thời điểm cần làm mới) dưới một RWMutex. Get trả ErrorNotFound cho vid 0 hay vid chưa có, và lỗi 'expired' khi đã quá hạn; Set ghi vị trí với một thời hạn; Delete xoá một vid. Chuỗi vid không parse được chỉ được log và bỏ qua.",
+  "why": "Hệ quả: tránh hỏi master cho mọi lần đọc hay xoá trong các đường dùng lookup.go. Thiết kế: hết hạn theo thời gian, không có cơ chế cập nhật từ master.",
+  "when": "Mỗi lần LookupVolumeIdsWithContext được gọi với cache bật.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Lookup lặp lại tới master, hoặc vị trí cũ được dùng mãi.",
+  "gotchas": [
+   "Entry hết hạn không bao giờ bị xoá khỏi map, chỉ bị ghi đè ở lần Set sau."
+  ]
+ },
+ "weed/operation/submit.go": {
+  "character": "Upload file thẳng lên volume server cho weed upload và benchmark: một assign cho cả lô, chia chunk theo maxMB",
+  "what": "SubmitFiles xin một assign với Count bằng số file (fid thứ i có hậu tố _i) và kích thước trung bình, rồi upload song song với 4 worker. FilePart.Upload dựng URL volume server từ kết quả assign (thêm ?ts= khi có ModTime và ?fsync=true khi Fsync); file lớn hơn maxMB được chia thành chunk, mỗi chunk một assign riêng (hoặc một assign cho cả file khi có DataCenter), upload từng chunk rồi ghi một chunk manifest với ?cm=true; lỗi giữa chừng xoá các chunk đã upload. genFileUrl có thể chọn ngẫu nhiên một replica làm đích. NewFileParts mở file local, lấy kích thước, mtime và mime theo phần mở rộng.",
+  "why": "Hệ quả: đường upload không qua filer; file tạo ra ở đây chỉ đọc được bằng fid, không có entry filer nào. Thiết kế: một assign cho cả lô để giảm số lần gọi master.",
+  "when": "Lệnh weed upload (SubmitFiles, NewFileParts) và weed benchmark (FilePart.Upload).",
+  "ux": "weed upload in ra fid và URL của từng file.",
+  "if_broken": "Upload thất bại hoặc để lại chunk mồ côi khi chia chunk; manifest trỏ sai chunk.",
+  "gotchas": [
+   "Upload nối '?fsync=true' sau '?ts=...' nên khi có cả ModTime lẫn Fsync URL có hai dấu '?' và tham số fsync bị lẫn vào ts; hiện chưa caller nào đặt cả hai (benchmark không đặt ModTime, weed upload không đặt Fsync).",
+   "Một lỗi upload của một file ghi đè biến err dùng chung; SubmitFiles trả lỗi cuối cùng."
+  ]
+ },
+ "weed/operation/sync_volume.go": {
+  "character": "Đọc trạng thái đồng bộ của một volume (VolumeSyncStatus) từ volume server",
+  "what": "GetVolumeSyncStatus gọi VolumeSyncStatus cho một volume id và trả response cùng lỗi của chính RPC đó.",
+  "why": "Hệ quả: weed backup dựa vào kết quả (TTL, replication, version, kích thước) để tạo hay nạp bản sao local trước khi tail. Thiết kế: một wrapper mỏng.",
+  "when": "weed backup (backupFromLocation).",
+  "ux": "weed backup lấy cấu hình volume từ server nguồn.",
+  "if_broken": "weed backup tạo bản sao với TTL hay replication sai, hoặc dừng.",
+  "gotchas": [
+   "Lỗi của chính WithVolumeServerClient (không tạo được kết nối) bị bỏ qua: hàm trả (nil, nil), và backup.go dereference stats.Ttl."
+  ]
+ },
+ "weed/operation/tail_volume.go": {
+  "character": "Theo dõi (tail) các needle mới của một volume qua stream VolumeTailSender",
+  "what": "TailVolume tra vị trí volume qua master và tail từ location đầu tiên. TailVolumeFromSource mở stream VolumeTailSender (sinceNs, idle timeout), ghép header và các phần body tới khi IsLastChunk, parse needle theo version (mặc định version hiện tại) và gọi fn cho từng needle; lỗi của fn dừng stream.",
+  "why": "Hệ quả: các thao tác cần bắt kịp ghi mới của một volume, như VolumeTailReceiver trong lúc move và volume.merge, dựa vào luồng này để không mất needle. Thiết kế: kéo từ nguồn theo dấu thời gian append thay vì đẩy.",
+  "when": "volume_grpc_tail.go (VolumeTailReceiver trên server đích khi move volume) và lệnh volume.merge.",
+  "ux": "Move volume không mất các ghi đến trong lúc copy.",
+  "if_broken": "Bản sao đích thiếu needle ghi trong lúc copy, nên verify của move thất bại hoặc dữ liệu bị mất.",
+  "gotchas": [
+   "Nếu stream kết thúc (EOF) giữa các phần body của một needle, vòng trong dừng và needle dở vẫn được parse rồi đưa cho fn."
+  ]
+ },
+ "weed/operation/upload_chunked.go": {
+  "character": "Upload một luồng thành các chunk song song lên volume server, có reassign khi một volume hỏng và fan-out tới mọi replica",
+  "what": "UploadReaderInChunks đọc luồng theo ChunkSize (tối đa 4 buffer cùng lúc qua sync.Pool), tính MD5 cả luồng, và với chunk đầu nhỏ hơn SmallFileLimit khi SaveSmallInline thì trả nội dung inline. Mỗi chunk chạy trong một goroutine: tính MD5 của chunk, chuẩn bị byte (nén, mã hoá) trước khi xin JWT, gọi AssignFunc rồi uploadChunk; lỗi upload xoá bản có thể đã ghi (deleteChunkFromHolders, renew JWT qua LookupJwtFunc khi bị 401) rồi reassign tối đa 3 lần nếu ShouldReassignUpload đồng ý và object chưa thất bại. uploadChunk với nhiều holder và không cipher ghi đồng thời tới mọi holder với type=replicate (uploadChunkToHolders), huỷ phần còn lại ở lỗi đầu tiên và xoá các bản đã ghi; còn lại thì ghi một URL với MaxAttempts 1. Lỗi đọc luồng được gắn offset, và io.ErrUnexpectedEOF được đánh dấu ErrTruncatedBody. Khi lỗi, hàm vẫn trả các chunk đã ghi, sắp theo offset, để caller dọn.",
+  "why": "Hệ quả: đây là đường ghi dữ liệu của PutObject trên gateway (qua stats.go), của worker Iceberg và file browser của admin; nó quyết định object có bị mất khi một volume đầy hay một replica chết giữa chừng không. Thiết kế: client tự fan-out tới các replica thay vì để volume chính replicate, nên lỗi của từng replica thấy được; xin chunk mới thay vì retry cùng fid vì một volume đầy hay mất peer thất bại mọi lần; chuẩn bị byte trước khi xin JWT để thời gian nén không ăn vào thời hạn của JWT.",
+  "when": "putToFiler của gateway (PutObject và UploadPart, qua wrapper upload trong stats.go), commit của worker Iceberg (filer_io.go) và file browser của admin.",
+  "ux": "PUT một object lớn chạy song song theo chunk, vượt qua được một volume đầy hay một replica bận.",
+  "if_broken": "PUT thất bại khi chỉ một volume có vấn đề, chunk mồ côi tích tụ, hoặc object được ghi thiếu replica.",
+  "gotchas": [
+   "Comment của deleteChunkFromHolders nói vacuum sẽ thu hồi bản mồ côi khi xoá thất bại, trong khi comment ở vòng retry nói đúng hơn rằng vacuum không tìm được needle không ai tham chiếu; một lần dọn thất bại để lại chỗ bị chiếm vĩnh viễn.",
+   "Chunk inline chỉ áp dụng cho lần đọc đầu tiên ở offset 0; một luồng nhỏ đọc qua nhiều lần vẫn thành chunk."
+  ]
+ },
+ "weed/operation/upload_content.go": {
+  "character": "Uploader HTTP tới volume server: nén, mã hoá, multipart, retry, phân loại lỗi để reassign và watchdog cho kết nối bị kẹt",
+  "what": "prepareUploadData chuẩn bị byte một lần cho mọi lần thử: đoán mime, nén gzip khi kiểu file nén được hoặc 128 byte đầu nén dưới 90% (với dữ liệu nhị phân chung trên 16 KiB), giữ kích thước gốc, và mã hoá AES với khoá mới khi Cipher. upload_content dựng body multipart (Content-Disposition theo RFC 6266, Idempotency-Key là URL upload, Content-Encoding gzip, Content-MD5 trừ khi FIPS), gửi POST với JWT Bearer và request id, thử lại ngay một lần với body tua lại khi kết nối bị reset, và trả uploadStatusError mang mã HTTP, cờ refusedBeforeAppend (409) và expiredBeforeAppend (401) từ header WriteOutcome của volume server. retriedUploadData thử tối đa 3 lần (237 ms × lần), dừng ở 409 và ở 401 hết hạn cho upload trực tiếp, nhưng với URL proxy qua filer thì cấp lại JWT filer rồi thử lại cùng fid. Watchdog: tốc độ của lần upload lớn gần nhất tới mỗi host được nhớ một phút; một upload chậm hơn 8 lần tốc độ đó (tối thiểu 10 s) trước khi gửi xong body bị huỷ để thử lại trên kết nối mới. uploadWithRetryData và UploadWithRetry xin AssignVolume qua filer rồi upload, reassign theo ShouldReassignUpload (tối đa ba lần từ chối vì hết hạn), hoặc RetryForever. ShouldReassignUpload: lỗi transport, 5xx, 409 bị từ chối trước khi append và 401 hết hạn trước khi append thì reassign; ErrReadOnly thì không.",
+  "why": "Hệ quả: mọi chunk mà filer, mount, broker, filer.sync và gateway ghi lên volume server đi qua đây; phân loại lỗi sai thì hoặc mất object vì không reassign, hoặc ghi đúp vì reassign sau khi dữ liệu đã được append. Thiết kế: chỉ reassign khi volume server chứng minh lần ghi bị từ chối trước khi append; chuẩn bị byte ngoài thời hạn JWT; phát hiện kết nối kẹt bằng tốc độ đã quan sát vì không có ngưỡng cố định nào hợp với mọi mạng.",
+  "when": "Mỗi lần upload một chunk lên volume server.",
+  "ux": "Upload vượt qua lỗi mạng ngắn, JWT hết hạn và kết nối pooled bị kẹt mà không cần client S3 thử lại.",
+  "if_broken": "Chunk bị ghi đúp hoặc mất, upload treo trên kết nối chết, hoặc dữ liệu nén hay mã hoá được ghi với metadata sai.",
+  "gotchas": [
+   "Với Cipher, volume server chỉ thấy ciphertext, nên ContentMd5 của chunk là MD5 phía caller; nó rỗng nếu caller không đặt Md5.",
+   "Idempotency-Key gửi lên là chính URL upload."
+  ]
+ },
+ "weed/operation/volume_move/mover.go": {
+  "character": "Mover dùng chung cho mọi thao tác chuyển volume và EC shard, với kiểm tra địa chỉ tránh làm process thoát",
+  "what": "Mover chạy RPC tới volume server qua một ClientFunc tiêm được (production dùng operation.WithVolumeServerClient, test dùng client giả). NewMover kiểm tra mọi địa chỉ trước khi dial (checkDialable): cổng của 'host:port' và cả hai cổng của 'host:port.grpcPort' phải là số, vì ServerAddress.ToGrpcAddress gọi glog.Fatalf với cổng không phải số. SameServer so sánh hai địa chỉ theo endpoint gRPC (host:port được +10000), nên 'node:8080' và 'node:8080.18080' là một server.",
+  "why": "Hệ quả: các lệnh shell (volume.move, volume.balance, ec.balance, volume.tier.move) và worker (balance, ec_balance, tiering) đều đi qua đây; một địa chỉ sai không được làm chết shell, worker hay, khi nó nằm trong request copy, volume server đích. Thiết kế: một điểm dial duy nhất để kiểm tra, và so sánh theo gRPC vì mỗi process có đúng một endpoint gRPC.",
+  "when": "Mọi thao tác move, copy, tail, mount và delete trong package volume_move.",
+  "ux": "Một -source hay -target sai báo lỗi thay vì làm sập process.",
+  "if_broken": "Shell, worker hoặc volume server đích thoát vì một địa chỉ sai, hoặc một move bị coi là khác server trong khi là cùng server."
+ },
+ "weed/operation/volume_move/ec_move.go": {
+  "character": "Chuyển EC shard giữa các server: copy và mount ở đích, kiểm tra, rồi mới unmount và xoá ở nguồn",
+  "what": "MoveEcShards từ chối chuyển sang chính server nguồn (lệnh xoá ở nguồn xoá trên mọi disk của server), rồi chạy CopyAndMountEcShards (đích gọi VolumeEcShardsCopy kèm .ecx, .ecj, .vif, .ecsum và giới hạn tốc độ, rồi VolumeEcShardsMount; cùng server thì chỉ mount), VerifyEcShards (VolumeEcShardsInfo phải có mọi shard với kích thước dương; shard kích thước 0 là cặn của lần lỗi trước), UnmountEcShards và DeleteEcShards ở nguồn, báo tiến độ qua callback. RemoveEcShards unmount rồi xoá tại chỗ để bỏ shard trùng. IsNoSpaceLeftError nhận ra lỗi hết chỗ của server đích.",
+  "why": "Hệ quả: một copy hay mount có thể trả OK trong khi shard không nạp được ở đích; xoá nguồn lúc đó làm mất shard và giảm độ bền của volume EC. Thiết kế: kiểm tra đích trước nửa phá huỷ, giữ nguồn khi không khớp để caller thử lại.",
+  "when": "ec.balance, ec.encode (mount tại chỗ), ec.rebuild trong shell và weed/ec, worker ec_balance.",
+  "ux": "Cân bằng EC không làm mất shard khi đích lỗi giữa chừng.",
+  "if_broken": "Shard bị xoá ở nguồn trước khi đích có bản dùng được, làm volume EC mất khả năng chịu lỗi hoặc mất dữ liệu."
+ },
+ "weed/operation/volume_move/volume_move.go": {
+  "character": "Chuyển một volume giữa các server trong khi nó vẫn phục vụ: đóng băng, copy, tail, kiểm tra, xoá nguồn, với dọn dẹp thận trọng",
+  "what": "LiveMoveVolume từ chối chuyển sang chính nó, đánh dấu nguồn readonly (cưỡng bức và lưu bền nếu nó đang ghi được), dò xem đích đã có volume chưa (nguồn vốn readonly mà đích đã có bản sao, hoặc không biết, thì từ chối vì đó có thể là bản sao có thẩm quyền của một lần move dở), copy bằng VolumeCopy (đích kéo từ nguồn) và mở ghi cho đích, tail VolumeTailReceiver từ dấu append cuối tới khi nguồn rảnh trong IdleTimeout (mặc định 5 s), đọc trạng thái nguồn sau tail (tail lỗi chỉ được chấp nhận với nguồn vốn readonly, và khi đó trạng thái phải đứng yên qua một cửa sổ), kiểm tra đích không thua nguồn về .dat, .idx và số file, rồi xoá nguồn (giữ dữ liệu remote tier). Một lỗi trước khi xoá nguồn chạy dọn dẹp với deadline riêng 30 s: xoá bản đích không hoàn chỉnh khi chứng minh được chính lần move này tạo ra nó, rồi mở ghi lại nguồn nếu move đã đóng băng nó; không chứng minh được thì giữ nguồn readonly và trả ErrSourceKeptReadonly kèm hướng dẫn. CopyVolume, ReplicateVolume, ReadVolumeFileStatus, DeleteVolume, MarkVolumeWritable và ConfigureVolumeReplication là các bước dùng lại được.",
+  "why": "Hệ quả: một move sai có thể tạo hai replica ghi được nhận ghi khác nhau (volume bị rẽ nhánh) hoặc xoá mất bản duy nhất có dữ liệu mới. Thiết kế: chọn fail closed ở mọi trạng thái mơ hồ, giữ nguồn readonly và để operator xoá một bên, vì không quan sát nào phía client chứng minh được bản nào có thẩm quyền (compaction revision dùng chung, kích thước co lại khi compact).",
+  "when": "volume.move, volume.balance và volume.tier.compact trong shell, worker balance.",
+  "ux": "Volume vẫn đọc được trong lúc move; khi move bị gián đoạn, thông báo cho biết cách mở ghi lại hoặc xoá bên nào.",
+  "if_broken": "Mất ghi xảy ra trong lúc move, volume bị rẽ nhánh giữa hai server, hoặc volume bị kẹt readonly.",
+  "gotchas": [
+   "Đích được mở ghi ngay sau copy, trước tail, nên client có thể ghi vào đích trong lúc tail; kiểm tra chỉ đòi đích không thua nguồn.",
+   "Khi nguồn vốn đã readonly trước move, dấu readonly cưỡng bức mà move thêm không được gỡ ở nhánh lỗi."
+  ]
  }
 }
