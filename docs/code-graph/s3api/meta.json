@@ -75,7 +75,7 @@
   {
    "id": 11,
    "name": "Iceberg maintenance worker",
-   "sub": "các task của plugin worker viết lại file và metadata của Iceberg table trực tiếp trên filer: detection, compaction, viết lại delete, expire snapshot, gỡ orphan, viết lại manifest và commit có điều kiện"
+   "sub": "các task của plugin worker viết lại file và metadata của Iceberg table trực tiếp trên filer (một node thu gọn)"
   },
   {
    "id": 12,
@@ -116,51 +116,6 @@
    "id": 19,
    "name": "Dọn dẹp của filer",
    "sub": "xoá chunk chạy nền và dọn các thư mục bị bỏ rỗng"
-  },
-  {
-   "id": 21,
-   "name": "Client tới master và volume",
-   "sub": "wdclient và operation: tìm vị trí volume qua master (vid map, cache, KeepConnected), xin file id, upload, đọc và xoá needle trên volume server, chuyển volume; thứ gateway và filer dùng để tới data plane"
-  },
-  {
-   "id": 22,
-   "name": "Master server",
-   "sub": "HTTP và gRPC của master: cấp file id, lookup volume, nhận heartbeat của volume server, KeepConnected, admin lock, Raft chọn leader và sequencer cấp needle id"
-  },
-  {
-   "id": 23,
-   "name": "Topology",
-   "sub": "mô hình data center, rack, node và disk mà master dựng từ heartbeat: volume layout theo collection, replication và TTL, volume growth, vacuum và vị trí EC shard"
-  },
-  {
-   "id": 24,
-   "name": "Cluster & lock ring",
-   "sub": "thành viên cluster theo loại node, distributed lock manager trên hash ring của các filer, và client của lock đó"
-  },
-  {
-   "id": 25,
-   "name": "Volume server",
-   "sub": "HTTP đọc và ghi needle cùng các gRPC của volume server: copy, tail, vacuum, EC, tier, remote, scrub và heartbeat tới master"
-  },
-  {
-   "id": 26,
-   "name": "Storage engine",
-   "sub": "store, disk location, volume (.dat và .idx), needle, needle map, super block, vacuum, tier backend và backup"
-  },
-  {
-   "id": 27,
-   "name": "Erasure coding",
-   "sub": "mã hoá volume thành shard, EC volume, đọc và khôi phục shard, journal xoá, scrub và phân bố shard"
-  },
-  {
-   "id": 28,
-   "name": "Worker runtime",
-   "sub": "khung chạy task bảo trì: plugin worker, kiểu và registry task, cùng phía admin lên lịch job, theo dõi topology và giữ hàng đợi"
-  },
-  {
-   "id": 29,
-   "name": "Worker tasks",
-   "sub": "các loại task bảo trì cụ thể: balance, vacuum, erasure coding, EC balance và S3 lifecycle (task Iceberg ở lane 11)"
   }
  ]
 }
