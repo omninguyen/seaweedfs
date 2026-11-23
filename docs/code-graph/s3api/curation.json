@@ -6122,5 +6122,316 @@
   ],
   "issue": "bug",
   "issue_note": "RequestTask và messageProcessingLoop (worker.go) cùng đọc một kênh incoming. Trong lúc RequestTask chờ (gần như liên tục, vì admin trả TaskId rỗng khi không có task và RequestTask chờ đủ 30 giây mỗi lần, rồi worker xin lại sau 5 giây), message nào nó lấy được mà không phải TaskAssignment có TaskId thì bị bỏ, chỉ để lại dòng log V(4) \"NON-TASK RESPONSE\": TaskLogRequest (admin không nhận được log), TaskCancellation, AdminShutdown, HeartbeatResponse. Ngược lại, TaskAssignment thật có thể rơi vào messageProcessingLoop và được chạy qua HandleTask mà không kiểm chỗ trống, còn RequestTask chờ tới hết giờ rồi xin task tiếp; câu trả lời của lần xin trước và lần xin sau có thể tới cùng lúc và vượt MaxConcurrent, rơi vào lỗi deadlock của ActionSetTask (xem issue_note của worker.go). Suy ra từ code, chưa chạy với admin thật."
+ },
+ "weed/plugin/worker/activity.go": {
+  "character": "Dựng sự kiện hoạt động (ActivityEvent) cho bên thực thi và bên phát hiện",
+  "what": "BuildExecutorActivity và BuildDetectorActivity tạo plugin_pb.ActivityEvent với nguồn tương ứng, giai đoạn, thông điệp, thời điểm; bản detector có thêm chi tiết dạng ConfigValue.",
+  "why": "Hệ quả: các handler balance, EC, ec_balance, vacuum, iceberg dùng để báo từng bước lên admin. Thiết kế: hàm nhỏ dùng chung cho các package con.",
+  "when": "Mỗi lần handler báo một bước.",
+  "ux": "Dòng hoạt động của job trong trang plugin của admin.",
+  "if_broken": "Không ảnh hưởng đáng kể."
+ },
+ "weed/plugin/worker/handlers/handlers.go": {
+  "character": "Gom import để mọi handler của plugin worker tự đăng ký",
+  "what": "Package rỗng, chỉ import trống các package worker/tasks: balance (volume_balance), ec_balance, erasure_coding, iceberg (iceberg_maintenance), s3_lifecycle, vacuum, để init của chúng gọi RegisterHandler.",
+  "why": "Hệ quả: lệnh chạy worker import package này là có đủ handler; thiếu một dòng là job type đó không có trên worker. Thiết kế: đăng ký qua side effect của import.",
+  "when": "Lúc khởi động tiến trình worker.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Một loại job không có worker nào nhận, admin thấy job chờ mãi.",
+  "gotchas": [
+   "admin_script tự đăng ký trong chính package pluginworker nên không cần dòng import ở đây."
+  ]
+ },
+ "weed/plugin/worker/interval.go": {
+  "character": "Bỏ qua lần phát hiện khi chưa hết thời gian chờ kể từ lần chạy thành công gần nhất",
+  "what": "ShouldSkipDetectionByInterval: true khi lần chạy thành công gần nhất cách đây chưa đủ minIntervalSeconds. SkipDetectionByInterval gửi một hoạt động \"skipped_by_interval\" kèm eligible_after, một DetectionProposals rỗng, và DetectionComplete thành công có SkippedReason và EligibleAfter.",
+  "why": "Hệ quả: admin_script và các handler có chu kỳ tối thiểu dùng để không đề xuất lại quá sớm. Thiết kế: vẫn trả đủ ba message để admin đóng lần phát hiện đúng quy trình.",
+  "when": "Mỗi lần admin yêu cầu phát hiện cho job type có chu kỳ tối thiểu.",
+  "ux": "Trang plugin hiện lý do bỏ qua và thời điểm đủ điều kiện kế tiếp.",
+  "if_broken": "Job chạy dày hơn cấu hình, hoặc không bao giờ chạy lại."
+ },
+ "weed/plugin/worker/volume_state.go": {
+  "character": "Lọc metrics volume theo trạng thái (ACTIVE, FULL) và theo DC, rack, node",
+  "what": "FilterMetricsByVolumeState: ACTIVE giữ volume có FullnessRatio dưới 1,01, FULL giữ từ 1,01 trở lên, giá trị khác trả nguyên danh sách. FilterMetricsByLocation lọc theo wildcard DC, rack, node (rỗng là khớp tất cả).",
+  "why": "Hệ quả: handler balance và vacuum dùng để giới hạn phạm vi theo cấu hình của admin. Thiết kế: ngưỡng 1,01 thay vì 1 để volume vừa chạm giới hạn vẫn được coi là đang ghi.",
+  "when": "Mỗi lần phát hiện của balance và vacuum.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Job nhắm sai tập volume (volume đang ghi bị balance, hoặc bỏ sót volume đầy).",
+  "gotchas": [
+   "FilterMetricsByVolumeState trả nguyên slice gốc (kể cả phần tử nil) khi trạng thái là ALL, còn hai nhánh lọc thì bỏ phần tử nil."
+  ]
+ },
+ "weed/plugin/worker/handler_registry.go": {
+  "character": "Registry factory của handler plugin worker, chọn theo tên job, bí danh hoặc nhóm",
+  "what": "HandlerFactory gồm JobType, Category (default nhẹ, heavy nặng), Aliases và hàm Build nhận HandlerBuildOptions (gRPC, MaxExecute, thư mục làm việc, địa chỉ worker quảng bá). RegisterHandler thêm vào registry toàn cục có khoá. ResolveHandlerFactories nhận danh sách phân cách dấu phẩy gồm nhóm (all, default, heavy) và tên job hay bí danh (không phân biệt hoa thường), khử trùng theo JobType, lỗi nếu tên lạ hoặc kết quả rỗng.",
+  "why": "Hệ quả: tham số -jobType của lệnh worker (và weed mini) đi qua đây để quyết định worker chạy những handler nào. Thiết kế: nhóm cho phép tách worker nặng (EC, iceberg) khỏi worker nhẹ.",
+  "when": "Lúc khởi động worker (buildPluginWorkerHandlers trong weed/command/worker_runtime.go).",
+  "ux": "Lỗi \"unknown job type\" khi khởi động worker với tên sai.",
+  "if_broken": "Worker khởi động thiếu handler hoặc từ chối chạy."
+ },
+ "weed/plugin/worker/config.go": {
+  "character": "Đọc giá trị cấu hình plugin (ConfigValue) theo kiểu, có giá trị dự phòng",
+  "what": "ReadStringConfig, ReadDoubleConfig, ReadInt64Config chấp nhận nhiều kiểu (chuỗi được parse, bool thành 1 hay 0). ReadInt32Config, ReadUint32Config, ReadIntConfig trả giá trị dự phòng khi vượt phạm vi (int dùng phạm vi int32 để như nhau trên 32 và 64 bit). ReadBoolConfig chỉ nhận kiểu bool. ReadBytesConfig. ReadStringListConfig nhận StringList, ListValue hoặc chuỗi phân cách dấu phẩy, bỏ trống và trùng. MapTaskPriority đổi ưu tiên của worker sang JobPriority.",
+  "why": "Hệ quả: mọi handler đọc cấu hình admin và tham số job qua đây; một kiểu bị đọc sai là handler chạy với giá trị mặc định mà không báo. Thiết kế: dễ dãi về kiểu vì giá trị đến từ form UI.",
+  "when": "Mỗi lần handler đọc cấu hình hay tham số job.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Cấu hình người dùng đặt bị bỏ qua lặng lẽ, handler dùng giá trị mặc định.",
+  "gotchas": [
+   "ReadInt64Config cắt phần thập phân của double (2,9 thành 2).",
+   "ReadBoolConfig không nhận chuỗi \"true\": giá trị bool gửi dạng chuỗi rơi về giá trị dự phòng."
+  ]
+ },
+ "weed/plugin/worker/volume_lookup.go": {
+  "character": "Hỏi master vị trí hiện tại của một volume hay một EC volume, bỏ qua cache",
+  "what": "LookupVolumeLocations thử từng master và từng dạng địa chỉ (cổng HTTP và cổng gRPC), gọi LookupVolume, trả các URL; master trả lời mà không biết volume thì trả rỗng, không thử master khác. LookupEcVolumeLocations gọi LookupEcVolume, trả danh sách server giữ shard (khử trùng), coi lỗi \"ec volume N not found\" là rỗng.",
+  "why": "Hệ quả: lúc thực thi, handler balance kiểm lại đề xuất với topology thật (đề xuất có thể đã cũ), handler EC kiểm còn shard nào không. Thiết kế: luôn hỏi trực tiếp để không tin cache.",
+  "when": "Đầu mỗi lần thực thi job balance hay EC.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Job dời hay encode một volume đã đổi chỗ hoặc đã bị xử lý.",
+  "gotchas": [
+   "Câu trả lời của master đầu tiên được tin luôn: master không phải leader mà dữ liệu cũ cũng chặn việc hỏi master khác."
+  ]
+ },
+ "weed/plugin/worker/volume_metrics.go": {
+  "character": "Lấy danh sách volume từ master và dựng metrics, ActiveTopology, bản đồ replica cho detection",
+  "what": "CollectVolumeMetricsFromMasters thử từng master tới khi lấy được VolumeList (lỗi cấu hình như regex collection sai thì dừng ngay). buildVolumeMetrics dựng một ActiveTopology mới, rồi với mỗi volume trên mỗi đĩa: thêm vào bản đồ replica (trước khi lọc collection, vì replica có thể nằm ở node bị lọc), lọc theo collection, tạo VolumeHealthMetrics (kích thước, byte đã xoá, tỉ lệ rác, độ đầy theo giới hạn kích thước volume, tuổi, readonly, có bản remote), cuối cùng đếm ReplicaCount theo vid. FetchDefaultReplicaPlacement đọc replication mặc định của master (rỗng nếu lỗi). MasterAddressCandidates trả địa chỉ gốc và dạng cổng gRPC (cộng 10000), đã sắp xếp.",
+  "why": "Hệ quả: là đầu vào của mọi lần phát hiện balance, vacuum, EC, ec_balance trên plugin worker; mỗi lần phát hiện có ActiveTopology riêng, không có phần đặt chỗ của task khác. Thiết kế: thử nhiều dạng địa chỉ vì caller có thể truyền cổng HTTP hay gRPC.",
+  "when": "Mỗi lần phát hiện của các handler volume.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Detection thấy cụm rỗng hay sai, đề xuất task sai hoặc không đề xuất.",
+  "gotchas": [
+   "ExpectedReplicas được gán thẳng bằng byte mã hoá ReplicaPlacement (ví dụ 010 thành 10), không phải số bản sao mong đợi; balance detection đọc lại nó bằng NewReplicaPlacementFromByte nên vẫn đúng, nhưng tên trường gây hiểu nhầm.",
+   "ActiveTopology dựng mới mỗi lần nên không biết các job đang chạy; tránh chọn trùng phải dựa vào phía admin."
+  ]
+ },
+ "weed/plugin/worker/admin_script_handler.go": {
+  "character": "Handler admin_script: chạy định kỳ một script lệnh weed shell do admin cấu hình",
+  "what": "Tự đăng ký (bí danh admin-script, script, admin; nhóm default). Mô tả form: script (mặc định fs.log.purge, volume.deleteEmpty, volume.fix.replication, s3.clean.uploads) và chu kỳ tối thiểu (mặc định 17 phút); mặc định chạy, 1 job mỗi lần, không thử lại, tối đa 30 phút. Detect bỏ qua nếu chưa hết chu kỳ, đếm lệnh chạy được (bỏ dòng trống, comment #, và lock/unlock), đề xuất một job với DedupeKey là hash SHA-256 của script. Execute dựng CommandEnv của shell với master và filer từ ClusterContext, ForceNoLock (admin đã giữ khoá), chạy lần lượt từng lệnh trong shell.Commands, báo tiến độ, gom tối đa 16 KiB output, rồi trả kết quả: số lệnh, số lỗi, hash, output.",
+  "why": "Hệ quả: là cách chạy các lệnh bảo trì không có job type riêng; ai sửa được cấu hình plugin trong admin là chạy được mọi lệnh weed shell. Thiết kế: khoá cụm do admin giữ ở lane mặc định, nên script không được tự lock.",
+  "when": "Mỗi 17 phút (mặc định) khi admin chạy phát hiện cho admin_script.",
+  "ux": "Trang plugin: job \"Run admin script\", output và lỗi từng lệnh.",
+  "if_broken": "Các việc dọn dẹp định kỳ (log, volume rỗng, sửa replication, upload dở) không chạy, hoặc chạy lệnh ngoài ý muốn.",
+  "gotchas": [
+   "Dòng bị tách theo dấu ; trước khi tách tham số, kể cả khi ; nằm trong ngoặc kép.",
+   "Tham số kiểu -name=\"a b\" bị tách thành hai phần vì regex chỉ nhận chuỗi trong ngoặc khi ngoặc đứng đầu từ.",
+   "Lệnh lỗi không dừng script: các lệnh sau vẫn chạy, job chỉ báo thất bại ở cuối."
+  ]
+ },
+ "weed/plugin/worker/worker.go": {
+  "character": "Plugin worker: luồng gRPC tới admin, nhận yêu cầu phát hiện và thực thi, báo heartbeat",
+  "what": "NewWorker kiểm địa chỉ admin và gRPC, đặt mặc định (heartbeat 15 giây, nối lại sau 5 giây, 1 slot phát hiện, 1 slot thực thi), lập map handler theo job type (lỗi nếu trùng). Run lặp runOnce tới khi ctx kết thúc. runOnce mở WorkerStream (kèm Bearer token khi có jwt.filer_signing.key), một goroutine gửi tuần tự qua kênh 256 phần tử, gửi Hello (capabilities, số slot, phiên bản giao thức plugin.v1), chạy heartbeat định kỳ (danh sách việc đang chạy, slot đã dùng), rồi đọc message: yêu cầu schema, RunDetectionRequest (ack rồi chạy trong goroutine, chờ slot phát hiện), ExecuteJobRequest (từ chối ngay \"executor is at capacity\" nếu hết slot, không thì ack và chạy), CancelRequest (huỷ theo request id hay job id), Shutdown (chỉ ack). Hai sender điền sẵn request id, job id, job type vào message trả về.",
+  "why": "Hệ quả: là runtime của lệnh weed worker hiện nay và của plugin worker trong weed mini; mọi job balance, EC, vacuum, iceberg, lifecycle, admin_script chạy qua đây. Thiết kế: admin điều phối, worker chỉ báo năng lực và làm theo yêu cầu; hết slot thì từ chối để admin giao chỗ khác.",
+  "when": "Suốt thời gian tiến trình worker chạy.",
+  "ux": "Danh sách worker, slot và việc đang chạy trong trang plugin của admin.",
+  "if_broken": "Job không được nhận hay không báo kết thúc; admin thấy worker mất kết nối.",
+  "gotchas": [
+   "Context của job lấy từ connCtx: stream tới admin rớt (ví dụ admin khởi động lại) là mọi job đang chạy bị huỷ, và lần báo hoàn tất của chúng cũng thất bại vì stream đã đóng.",
+   "Hàm huỷ của một job thực thi được đăng ký trong goroutine sau khi đã gửi ack, nên một CancelRequest tới ngay sau ack có thể nhận \"cancel target not found\".",
+   "Shutdown chỉ được ack, worker không tự dừng."
+  ]
+ },
+ "weed/admin/plugin/lock_manager.go": {
+  "character": "Interface LockManager: khoá cụm mà scheduler giữ quanh mỗi lần phát hiện và mỗi job",
+  "what": "Một phương thức Acquire(reason) trả hàm release và lỗi.",
+  "why": "Hệ quả: admin_server.go truyền khoá admin của cụm (cùng khoá với weed shell) vào Options.LockManager; lane default lấy khoá này để job của plugin không chạy song song với lệnh shell thay đổi topology. Thiết kế: interface để test và để chạy không khoá.",
+  "when": "Mỗi lần phát hiện và mỗi job của lane default.",
+  "ux": "Lệnh shell chờ khoá trong lúc plugin chạy job.",
+  "if_broken": "Job plugin và lệnh shell cùng sửa topology một lúc."
+ },
+ "weed/admin/plugin/scheduler_config.go": {
+  "character": "Hằng thời gian ngủ mặc định của scheduler (61 giây)",
+  "what": "defaultSchedulerIdleSleep = 61 giây, dùng khi lane không có giá trị riêng.",
+  "why": "Hệ quả: chu kỳ thức dậy khi không có gì đến hạn. Thiết kế: 61 thay vì 60 để không trùng nhịp với việc chạy theo phút.",
+  "when": "Khi một lane rảnh.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Không ảnh hưởng đáng kể."
+ },
+ "weed/admin/plugin/types.go": {
+  "character": "Kiểu dữ liệu theo dõi job của admin plugin: TrackedJob, JobActivity, lịch sử chạy",
+  "what": "Giới hạn 10 lần chạy thành công và 10 lần lỗi mỗi job type. ErrJobNotFound. JobRunRecord, JobTypeRunHistory. TrackedJob (id, loại, request, worker, dedupe key, tham số, nhãn, trạng thái, tiến độ, lần thử, thời điểm, kết quả). JobActivity, JobDetail, SchedulerJobTypeState. timeToPtr.",
+  "why": "Hệ quả: đây là hình dạng JSON lưu xuống đĩa và trả ra UI. Thiết kế: trạng thái là chuỗi thường của JobState (ví dụ \"job_state_running\").",
+  "when": "Mọi lần cập nhật hay đọc trạng thái job.",
+  "ux": "Trang plugin (job, worker, lịch chạy) trong admin UI.",
+  "if_broken": "Trang job hiện sai hoặc trạng thái đã lưu không đọc lại được."
+ },
+ "weed/admin/plugin/host_affinity.go": {
+  "character": "Ưu tiên giao job cho worker chạy cùng máy với replica của volume",
+  "what": "JobReplicaHosts lấy host từ tham số job: replica_servers, source_server, và các nguồn trong task_params_pb (bỏ nguồn có ShardIds, tức nguồn EC). partitionByPreferredHost chia danh sách worker thành nhóm cùng host (so theo HostKey của địa chỉ worker) và phần còn lại; không ai khớp thì trả nguyên danh sách.",
+  "why": "Hệ quả: vacuum hay balance chạy trên worker đặt cạnh volume server thì dữ liệu không phải đi qua mạng. Thiết kế: chỉ là ưu tiên; không có worker cùng host thì vẫn giao cho worker khác.",
+  "when": "Mỗi lần xếp job vào hàng đợi worker và chọn executor.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Job chạy trên worker ở xa, tốn băng thông mạng.",
+  "gotchas": [
+   "Địa chỉ worker là giá trị -address mà worker tự khai; khai sai host là không bao giờ được ưu tiên."
+  ]
+ },
+ "weed/admin/plugin/scheduler_extension.go": {
+  "character": "Điểm mở rộng của scheduler (bản OSS là mặc định không làm gì)",
+  "what": "Interface schedulerExtension: runLane (chạy thay cả lane), admitJob, startJob (trả hàm done và quyết định chạy ngay, thử lại hay nhường job khác), jobHoldsLock, registerServices. Bản mặc định nhận mọi job, chạy ngay, luôn giữ khoá. RegisterGrpcServices đăng ký PluginControlService. startScheduledJob áp quyết định của extension: chạy ngay, đẩy lại đầu hàng đợi, hoặc đẩy về cuối hàng đợi của worker nhà.",
+  "why": "Hệ quả: cho phép bản build khác thay đổi cách chọn và giữ khoá mà không sửa vòng lập lịch. Thiết kế: newSchedulerExtension là biến để bản khác ghi đè.",
+  "when": "Mỗi lần lane chạy và mỗi job được bắt đầu.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Bản OSS: không ảnh hưởng."
+ },
+ "weed/admin/plugin/scheduler_lane.go": {
+  "character": "Lane lập lịch: default, iceberg, lifecycle, lance, và job type nào thuộc lane nào",
+  "what": "Bốn lane; thời gian ngủ khi rảnh 61 giây (lifecycle 5 phút). Chỉ lane default cần khoá cụm. Bảng job type sang lane: vacuum, volume_balance, ec_balance, erasure_coding, admin_script vào default; iceberg_maintenance vào iceberg; s3_lifecycle vào lifecycle; năm loại lance_* vào lance; job type lạ vào default. LaneJobTypes, schedulerLaneState (kênh đánh thức, trạng thái vòng lặp).",
+  "why": "Hệ quả: job iceberg hay lifecycle chạy lâu không chặn việc bảo trì volume, và ngược lại. Thiết kế: lane cần khoá chạy tuần tự từng job type; lane không khoá chạy song song.",
+  "when": "Mỗi vòng lặp của scheduler.",
+  "ux": "Trạng thái từng lane trong trang scheduler.",
+  "if_broken": "Job chạy sai lane: giữ khoá cụm không cần thiết, hoặc chạy song song với lệnh shell khi lẽ ra phải giữ khoá.",
+  "gotchas": [
+   "Các job type lance_* không có handler nào trong repo này; lane lance chỉ có tác dụng khi có worker khác cung cấp các loại đó.",
+   "Job type mới không được thêm vào bảng sẽ rơi vào lane default và chạy dưới khoá cụm."
+  ]
+ },
+ "weed/admin/plugin/plugin_schema_prefetch.go": {
+  "character": "Lấy trước descriptor của các job type khi worker vừa kết nối",
+  "what": "prefetchDescriptorsFromHello lấy các job type worker có thể phát hiện hoặc thực thi, rồi gửi lần lượt yêu cầu schema (mỗi cái chờ tối đa 20 giây) tới chính worker đó, dừng khi admin tắt.",
+  "why": "Hệ quả: descriptor được lưu và cấu hình mặc định của job type được tạo ngay khi có worker, để scheduler có chính sách mà chạy. Thiết kế: chạy trong goroutine riêng để không làm chậm luồng kết nối.",
+  "when": "Mỗi lần một worker kết nối.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Job type mới không có cấu hình cho tới khi ai đó mở trang cấu hình của nó."
+ },
+ "weed/admin/plugin/preview.go": {
+  "character": "Xin worker vài dòng mẫu của một object mà admin không tự đọc được",
+  "what": "RequestObjectPreview tìm observation đúng định dạng của object, kiểm worker đã mô tả nó còn kết nối, gửi RequestObjectPreview (tối đa 200 dòng) và chờ ObjectPreviewResponse theo request id. handleObjectPreviewResponse chuyển câu trả lời tới người chờ.",
+  "why": "Hệ quả: trang xem bảng (ví dụ định dạng mà cụm không đọc được) lấy dữ liệu mẫu qua worker. Thiết kế: không cache, vì dòng dữ liệu là dữ liệu của object chứ không phải mô tả nó.",
+  "when": "Khi người dùng mở trang xem trước của một object.",
+  "ux": "Bảng dữ liệu mẫu trong admin UI.",
+  "if_broken": "Trang xem trước báo lỗi hoặc không có dữ liệu."
+ },
+ "weed/admin/plugin/cluster_rate_limit.go": {
+  "character": "Chia ngân sách xoá của s3_lifecycle cho các worker đang chạy",
+  "what": "decorateClusterContextForJob, chỉ cho s3_lifecycle: đọc cluster_deletes_per_second và cluster_deletes_burst trong cấu hình admin; nếu có giới hạn, chia cho số worker chạy cùng lúc thật sự (min của số worker có thể thực thi và MaxJobsPerDetection) rồi ghi vào Metadata của bản sao ClusterContext các khoá s3_lifecycle.deletes_per_second và s3_lifecycle.deletes_burst.",
+  "why": "Hệ quả: giới hạn xoá là của cả cụm, không phải của từng worker. Thiết kế: tên khoá được chép dạng chuỗi thay vì import package worker; test ghim hai bên khớp nhau.",
+  "when": "Mỗi lần gửi ExecuteJobRequest.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Lifecycle xoá nhanh hơn giới hạn của cụm, hoặc chậm hơn mức cho phép.",
+  "gotchas": [
+   "Không có giới hạn (0) thì không ghi gì: worker hiểu thiếu khoá là không giới hạn."
+  ]
+ },
+ "weed/admin/plugin/job_execution_plan.go": {
+  "character": "Dựng \"execution_plan\" dễ đọc cho chi tiết job EC",
+  "what": "enrichTrackedJobParameters giải mã task_params_pb (base64 trong tham số dạng plain) và, chỉ với erasure_coding, thêm execution_plan: số shard data và parity, các nguồn và đích (node, DC, rack, disk, shard data và parity), và bảng gán từng shard (D0, P10…) cho đích, sắp theo id shard.",
+  "why": "Hệ quả: trang chi tiết job EC cho thấy shard nào đi đâu mà không phải đọc protobuf. Thiết kế: chỉ để hiển thị, không ảnh hưởng thực thi.",
+  "when": "Khi lưu chi tiết của một job lúc xếp hàng hay bắt đầu chạy.",
+  "ux": "Phần kế hoạch thực thi trong trang chi tiết job EC.",
+  "if_broken": "Trang chi tiết job EC thiếu kế hoạch phân shard."
+ },
+ "weed/admin/plugin/observations.go": {
+  "character": "ObservationStore: điều worker thấy lần gần nhất về từng object, để hiển thị",
+  "what": "Record lưu từng ObjectObservation theo id ghép bằng ký tự 0x1f, đè bản cũ (bản mới nhất thắng dù từ worker khác), làm phẳng thuộc tính (bỏ lớp ConfigValue, int64 dạng chuỗi được đổi lại thành số), giữ tối đa 10000 mục (bỏ cũ nhất). Get, GetFormat (chỉ trả khi đúng định dạng, vì cùng đường dẫn có thể bị tạo lại với định dạng khác), List mới nhất trước, AttributeString.",
+  "why": "Hệ quả: trang danh sách bảng và preview dựa vào đây; không có gì lập lịch dựa trên nó. Thiết kế: không có tính chính xác, luôn kèm thời điểm quan sát để người xem tự đánh giá.",
+  "when": "Mỗi khi worker gửi WorkerObservations.",
+  "ux": "Danh sách object và thuộc tính worker quan sát trong admin UI.",
+  "if_broken": "Trang object trống hoặc hiện dữ liệu cũ.",
+  "gotchas": [
+   "Chỉ nằm trong bộ nhớ: admin khởi động lại là mất cho tới khi worker quan sát lại."
+  ]
+ },
+ "weed/admin/plugin/orphaned_execution.go": {
+  "character": "Kết thúc các job mà worker không còn chạy sau khi worker hay admin khởi động lại",
+  "what": "failExecutionsMissingFromHeartbeat: với job admin đã gửi trên một stream cũ của cùng worker, nếu hai heartbeat liên tiếp (có liệt kê đủ việc đang chạy) của stream mới không có job đó và chưa có completion, thì đánh dấu thất bại \"worker re-registered without job\" và huỷ. trackRestoredExecution ghi nhớ job đang chạy nạp lại lúc admin khởi động; failRestoredJobsMissingFromHeartbeat làm điều tương tự cho chúng (worker bỏ job khi stream của admin cũ đóng).",
+  "why": "Hệ quả: không có đường này, slot của worker và dedupe key của job bị giữ tới khi hết timeout (24 giờ), chặn lập lịch lại. Thiết kế: chỉ tin heartbeat liệt kê đủ (số slot dùng không lớn hơn số mục liệt kê) và cần hai lần vắng để chịu được một heartbeat dựng trong lúc worker đang nhận lại job.",
+  "when": "Mỗi heartbeat của worker.",
+  "ux": "Job chuyển sang failed với lý do worker đăng ký lại không có job.",
+  "if_broken": "Job ma giữ slot và chặn đề xuất cùng loại suốt nhiều giờ."
+ },
+ "weed/admin/plugin/worker_job_queues.go": {
+  "character": "Hàng đợi job theo từng worker \"nhà\" cho một đợt dispatch, có cơ chế lấy hộ",
+  "what": "assignJobsToWorkerQueues: mỗi job được đặt vào hàng của worker ít tải nhất trong các worker cùng host với replica; không có worker cùng host thì vào hàng chung (leftover). takeQueuedJob: ưu tiên worker còn chỗ có hàng riêng (ít tải nhất); nếu không, một worker rảnh (id nhỏ nhất) lấy: hàng chung trước nếu nó không có nhà, rồi lấy hộ từ hàng của worker khác khi hàng đó dài ít nhất LocalQueuePin (5) hoặc worker nhà đã biến mất quá OrphanRehomeGrace (30 giây), ưu tiên hàng mồ côi rồi hàng dài nhất; cuối cùng là hàng chung. push, pushFront, drain.",
+  "why": "Hệ quả: giữ job ở gần dữ liệu khi có thể nhưng không để worker khác ngồi không khi hàng dồn. Thiết kế: gán nhà một lần lúc đầu, các goroutine dispatch chỉ lấy và lấy hộ.",
+  "when": "Mỗi đợt dispatch đề xuất của scheduler.",
+  "ux": "Thông điệp \"queued on worker …\" của job.",
+  "if_broken": "Job dồn trên một worker trong khi worker khác rảnh, hoặc job chạy xa dữ liệu."
+ },
+ "weed/admin/plugin/registry.go": {
+  "character": "Registry phiên worker của admin plugin: năng lực, heartbeat, chọn detector và executor",
+  "what": "WorkerSession: id, instance, địa chỉ, phiên bản, capabilities theo job type, heartbeat cuối. Phiên coi là cũ sau 2 phút không thấy và bị bỏ khỏi mọi truy vấn. UpsertFromHello, UpdateHeartbeat, Remove. HasCapableWorker, CountCapableExecutors, DetectableJobTypes, JobTypes. PickSchemaProvider ưu tiên worker phát hiện được rồi nhiều slot trống. PickDetector và ListExecutors sắp theo slot trống (từ heartbeat, không có thì từ capability, mặc định 1), xoay vòng giữa các worker hoà nhau, và ListExecutors đưa nhóm cùng host với replica lên đầu. Mọi kết quả là bản sao.",
+  "why": "Hệ quả: scheduler chọn worker hoàn toàn dựa trên registry này. Thiết kế: xoay vòng để tải chia đều khi các worker giống nhau.",
+  "when": "Mỗi hello, heartbeat; mỗi lần chọn worker.",
+  "ux": "Danh sách worker và slot trong trang plugin.",
+  "if_broken": "Job giao cho worker đã chết hoặc dồn vào một worker.",
+  "gotchas": [
+   "Slot trống lấy từ heartbeat là tổng của cả worker, không riêng job type."
+  ]
+ },
+ "weed/admin/plugin/config_store.go": {
+  "character": "Lưu descriptor, cấu hình, lịch sử chạy, job và hoạt động của plugin xuống thư mục dữ liệu admin",
+  "what": "Dưới <dataDir>/plugin: job_types/<loại>/ (descriptor.pb và .json, config.pb và .json, runs.json), jobs/tracked_jobs.json, jobs/job_details/<id>.json, activities/activities.json. Không có dataDir thì giữ trong bộ nhớ. SaveDescriptor bỏ qua bản có DescriptorVersion thấp hơn bản đã lưu. SaveJobTypeConfigIfNotExists chỉ ghi lần đầu. AppendRunRecord giữ 10 lần thành công và 10 lần lỗi mới nhất. Tên job type và job id phải khớp ^[A-Za-z0-9_.-]+$. atomicWriteFile ghi file .tmp rồi rename.",
+  "why": "Hệ quả: cấu hình plugin và lịch sử job sống qua lần khởi động lại admin; lịch sử chạy cũng là nguồn của \"lần chạy thành công gần nhất\" cho thời gian chờ giữa các lần phát hiện. Thiết kế: lưu cả .pb (để đọc) và .json (để người đọc).",
+  "when": "Mỗi lần lưu cấu hình, mỗi job hoàn tất, và định kỳ 2 giây cho danh sách job và hoạt động.",
+  "ux": "Cấu hình và lịch sử trong trang plugin; file trong thư mục dữ liệu admin.",
+  "if_broken": "Cấu hình plugin mất sau khi khởi động lại, hoặc lịch sử không còn chặn được việc chạy lại quá sớm.",
+  "gotchas": [
+   "atomicWriteFile không fsync file trước khi rename: sau sự cố mất điện, file cấu hình có thể rỗng hoặc dở.",
+   "LoadJobTypeConfig nhả khoá trước khi đọc file; an toàn vì ghi bằng rename."
+  ]
+ },
+ "weed/admin/plugin/scheduler_status.go": {
+  "character": "Trạng thái scheduler cho UI: theo lane và gộp, kèm lý do đang chờ của từng job type",
+  "what": "SchedulerStatus gồm thời điểm, chu kỳ, lần phát hiện kế tiếp, job type và pha hiện tại, job đang chạy (sắp theo thời lượng), và với mỗi job type: bật hay tắt, đang phát hiện, lần phát hiện cuối (số đề xuất, lỗi, lý do bỏ qua), thời gian chờ sau lần chạy thành công (đọc từ trường cấu hình mà descriptor chỉ định). Waiting liệt kê lý do: cooldown, detection_in_flight, next_detection_at. Các hàm record* ghi lại kết quả phát hiện và lần chạy.",
+  "why": "Hệ quả: là thứ trang scheduler hiển thị; không ảnh hưởng việc lập lịch. Thiết kế: tính lúc được hỏi từ trạng thái hiện có.",
+  "when": "Mỗi lần UI tải trang scheduler.",
+  "ux": "Trang trạng thái scheduler trong admin UI.",
+  "if_broken": "Trang scheduler hiện sai lý do chờ hay thời điểm chạy kế tiếp.",
+  "gotchas": [
+   "GetSchedulerStatus đọc descriptor, cấu hình và lịch sử chạy từ đĩa cho từng job type mỗi lần được gọi."
+  ]
+ },
+ "weed/admin/plugin/plugin.go": {
+  "character": "Plugin: trung tâm điều phối job của admin, luồng gRPC với worker, phát hiện và thực thi",
+  "what": "New tạo ConfigStore, Registry, trạng thái của từng lane, nạp job và hoạt động đã lưu, chạy một vòng lập lịch cho mỗi lane (khi có ClusterContextProvider) và vòng lưu định kỳ. WorkerStream (PluginControlService) kiểm token admin, đòi message đầu là hello, đăng ký phiên (phiên mới thay phiên cũ cùng id), gửi AdminHello, lấy trước descriptor, rồi xử lý message: hello, heartbeat (gửi lại lệnh huỷ chưa tới, kết thúc job mồ côi), schema, đề xuất và hoàn tất phát hiện, tiến độ và hoàn tất job, observation, preview, ack. runDetectionWithReport chọn detector (giữ \"lease\" theo job type), gửi RunDetectionRequest kèm cấu hình và lần chạy thành công gần nhất, chờ hoàn tất với kiểm tra worker còn sống mỗi 30 giây. executeJobWithExecutor ghi job bắt đầu, gửi ExecuteJobRequest (ClusterContext có thể được bổ sung giới hạn lifecycle) và chờ JobCompleted. handleJobCompleted bỏ báo cáo của lần thử đã kết thúc hay của lần thử khác, cập nhật job và ghi lịch sử chạy. ensureJobTypeConfigFromDescriptor tạo cấu hình mặc định lần đầu.",
+  "why": "Hệ quả: mọi job plugin trong cụm (balance, EC, vacuum, iceberg, lifecycle, admin_script) đi qua đây. Thiết kế: admin giữ toàn bộ trạng thái và quyết định; worker chỉ trả lời theo request id.",
+  "when": "Suốt thời gian admin chạy; mỗi kết nối worker, mỗi lần phát hiện và thực thi.",
+  "ux": "Trang plugin (job, worker, lịch chạy) trong admin UI.",
+  "if_broken": "Không job plugin nào được phát hiện hay chạy; worker kết nối nhưng không nhận việc.",
+  "gotchas": [
+   "acquireDetectionExecutionGate: chạy tay một job admin_script qua ExecuteJob giữ khoá ghi, chờ mọi lần phát hiện của job type khác đang giữ khoá đọc, và trong lúc chờ thì chặn luôn các lần phát hiện mới; đường scheduler gọi executeJobWithExecutor nên không qua cổng này.",
+   "JobCompleted được nhận từ bất kỳ phiên worker nào, không kiểm phiên gửi có phải phiên đã nhận job."
+  ]
+ },
+ "weed/admin/plugin/plugin_monitor.go": {
+  "character": "Theo dõi job của plugin: trạng thái, chi tiết, hoạt động, hết hạn job treo, lưu xuống đĩa",
+  "what": "Giữ tối đa 1000 job (bỏ job đã kết thúc cũ nhất) và 4000 hoạt động. Nạp lại lúc khởi động (gộp chi tiết của job còn đang chạy, chuyển chi tiết nằm chung sang file riêng). trackExecutionQueued, bindQueuedJobWorker, trackExecutionStart, handleJobProgressUpdate, trackExecutionCompletion, markJobCanceled cập nhật bản ghi trong bộ nhớ và file chi tiết; báo cáo của lần thử đã xong hay của lần thử khác bị bỏ. expireStaleJobs kết thúc job đang chạy không có tiến độ sau 24 giờ, hoặc 15 phút nếu worker không còn heartbeat, rồi gửi huỷ; lệnh huỷ gửi không được thì giữ lại và gửi khi worker xuất hiện trong heartbeat. ExpireJob cho admin kết thúc tay. ListTrackedJobs, BuildJobDetail, ListActivities cho UI. persistenceLoop ghi danh sách job và hoạt động mỗi 2 giây khi có thay đổi.",
+  "why": "Hệ quả: dedupe đề xuất, giới hạn hàng chờ và lịch sử đều đọc trạng thái ở đây; một job kẹt ở trạng thái đang chạy chặn đề xuất cùng dedupe key. Thiết kế: bản danh sách gọn trong tracked_jobs.json, phần chi tiết (tham số, kết quả) ở file riêng mỗi job.",
+  "when": "Mỗi sự kiện của job; mỗi vòng scheduler (dọn job treo).",
+  "ux": "Danh sách job, chi tiết job và dòng hoạt động trong trang plugin.",
+  "if_broken": "Job treo mãi ở running, chặn lập lịch lại; hoặc trang job mất lịch sử.",
+  "gotchas": [
+   "pruneTrackedJobsLocked xoá file chi tiết trong lúc giữ jobsMu, nên I/O đĩa nằm trong khoá.",
+   "Mỗi lần cập nhật chi tiết là một lần đọc rồi ghi lại cả file JSON của job."
+  ]
+ },
+ "weed/admin/plugin/plugin_scheduler.go": {
+  "character": "Vòng lập lịch theo lane: đến hạn thì phát hiện, lọc trùng, xếp hàng và dispatch job cho worker",
+  "what": "laneSchedulerLoop: dọn job treo, lấy job type phát hiện được của lane, chạy tuần tự (lane cần khoá) hoặc song song (lane khác), rồi ngủ tới lần đến hạn kế tiếp hoặc tới khi bị đánh thức. loadSchedulerPolicy gộp cấu hình đã lưu với mặc định của descriptor (khoảng phát hiện, timeout, số job mỗi lần, đồng thời toàn cục và mỗi worker tối đa 128, số lần thử lại). runJobTypeIteration: huỷ job còn chờ của lần trước, bỏ qua nếu hàng chờ đã vượt ngưỡng, lấy ClusterContext, giữ khoá cụm chỉ trong lúc phát hiện (lane default), thử lại một lần trên worker khác nếu detector rớt, bỏ đề xuất trùng dedupe key với job đang chạy và trùng trong cùng lần, rồi dispatchScheduledProposals: tạo JobSpec, xếp hàng theo worker nhà, chạy ExecutionConcurrency goroutine lấy job, giữ slot (đếm cả reservation của admin, việc worker báo mà admin không giao, và \"dư âm\" 30 giây của job vừa xong), giữ khoá cụm quanh từng job (lane default), thực thi với số lần thử lại; hết executor thì bỏ các job còn lại và hẹn phát hiện lại sau 10 phút. Job đã bắt đầu được chạy tiếp tối đa 30 phút sau khi cửa sổ chạy đóng.",
+  "why": "Hệ quả: đây là nơi quyết định job nào chạy, ở đâu, khi nào; khoá cụm được giữ quanh từng job thay vì cả lượt để lệnh shell chen vào được giữa các job. Thiết kế: phát hiện lại thay vì giữ hàng chờ qua các lần chạy, vì đề xuất cũ dễ sai.",
+  "when": "Liên tục khi admin chạy, theo khoảng phát hiện của từng job type.",
+  "ux": "Trang scheduler: lần chạy kế tiếp, pha hiện tại, lý do bỏ qua; dòng hoạt động \"scheduled detection …\", \"scheduled execution finished …\".",
+  "if_broken": "Job bảo trì không bao giờ chạy, chạy trùng, hoặc chạy cùng lúc với lệnh shell thay đổi topology.",
+  "gotchas": [
+   "Đề xuất có DedupeKey trùng với một job còn pending, assigned hay running bị bỏ; một job kẹt ở các trạng thái đó chặn việc này tới khi bị dọn (24 giờ, hoặc 15 phút nếu worker mất heartbeat).",
+   "Khoảng phát hiện nhỏ hơn chu kỳ scheduler (5 giây) được nâng lên bằng chu kỳ; timeout thực thi dưới 90 giây được nâng lên 90 giây.",
+   "Khi lấy khoá cụm cho một job thất bại, job đó bị bỏ ở trạng thái pending và chỉ bị huỷ ở lần chạy kế tiếp của cùng job type."
+  ]
+ },
+ "weed/pb/plugin.proto": {
+  "character": "Giao thức plugin.v1 giữa admin và worker: một luồng gRPC hai chiều",
+  "what": "PluginControlService.WorkerStream: worker gửi WorkerToAdminMessage (hello, heartbeat, ack, phản hồi schema, đề xuất và hoàn tất phát hiện, tiến độ và hoàn tất job, observation, preview), admin gửi AdminToWorkerMessage (hello, yêu cầu schema, RunDetectionRequest, ExecuteJobRequest, CancelRequest, Shutdown, RequestObjectPreview), ghép bằng request id. JobTypeDescriptor mô tả một job type: form cấu hình cho admin và cho worker (ConfigForm, ConfigField, kiểu, widget, ràng buộc), AdminRuntimeDefaults, giá trị mặc định, trường cooldown. ConfigValue là giá trị đa kiểu. JobProposal, JobSpec, JobCompleted, ClusterContext (địa chỉ master, filer, volume, s3, metadata), PersistedJobTypeConfig (dạng lưu trên đĩa của admin), các enum trạng thái, ưu tiên, nguồn hoạt động.",
+  "why": "Hệ quả: là hợp đồng duy nhất giữa admin và mọi loại worker plugin; thêm job type mới không cần đổi proto. Thiết kế: worker khai báo form và mặc định, admin chỉ hiển thị và lưu.",
+  "when": "Mỗi message giữa admin và plugin worker.",
+  "ux": "Form cấu hình job type trong admin UI được dựng từ descriptor.",
+  "if_broken": "Admin và worker khác phiên bản không hiểu nhau; job không được giao hay báo kết quả."
+ },
+ "weed/pb/worker.proto": {
+  "character": "Giao thức worker kiểu cũ (maintenance) và tham số task dùng chung với plugin",
+  "what": "WorkerService.WorkerStream: WorkerMessage (đăng ký, heartbeat, TaskRequest, TaskUpdate, TaskComplete, shutdown, phản hồi log) và AdminMessage (phản hồi đăng ký và heartbeat, TaskAssignment, huỷ task, admin shutdown, TaskLogRequest). TaskParams là tham số chung của mọi task: vid, collection, nguồn và đích (node, DC, rack, disk, shard), cùng tham số riêng cho vacuum, EC, balance, replication, ec_balance, s3_lifecycle. Các message cấu hình (TaskPolicy và cấu hình từng loại), dữ liệu task lưu trữ và metrics volume.",
+  "why": "Hệ quả: worker kiểu cũ dùng toàn bộ; plugin worker vẫn dùng TaskParams (đóng gói vào tham số task_params_pb) để mô tả việc cần làm. Thiết kế: tham số typed theo oneof cho từng loại task.",
+  "when": "Mỗi message của worker kiểu cũ; mỗi job plugin mang TaskParams.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Worker không giải mã được task, hoặc task chạy với tham số sai."
  }
 }
