@@ -4312,7 +4312,7 @@
    "Chế độ staged của ReceiveFile và from_staged của VolumeEcShardsToVolume không có caller Go nào trong repo."
   ],
   "issue": "bug",
-  "issue_note": "Nhánh volume thường của ReceiveFile ghi đè file của một volume đang mount. Khi volume đã có trên server, filePath = v.FileName(ext) rồi os.Create cắt file đó về 0 byte và ghi đè ngay trên inode mà DataBackend của volume đang mở. Nhánh EC ngay phía trên từ chối đúng trường hợp này, với lý do được ghi trong comment: os.Create truncates in place; a mounted EcVolume holds fds on the same inodes, so overwriting corrupts live readers. Nhánh volume thường không có kiểm tra tương tự. ReceiveFile nằm trong danh sách RPC không kiểm tra whitelist (volume_grpc_admin_auth_coverage_test.go), và trong repo không có caller nào gửi ReceiveFile cho một volume thường đã có (shard_distribution.go chỉ gửi shard EC; chế độ staged chỉ dành cho volume chưa có). Vì vậy đây là một đường không ai dùng nhưng ai gọi được cổng gRPC đều dùng được: ReceiveFile với is_ec_volume = false và ext = .dat cho một volume đang mount làm hỏng .dat của volume đó."
+  "issue_note": "Nhánh volume thường của ReceiveFile ghi đè file của một volume đang mount. Khi volume đã có trên server, filePath = v.FileName(ext) rồi os.Create cắt file đó về 0 byte và ghi đè ngay trên inode mà DataBackend của volume đang mở. Nhánh EC ngay phía trên từ chối đúng trường hợp này, với lý do được ghi trong comment: os.Create truncates in place; a mounted EcVolume holds fds on the same inodes, so overwriting corrupts live readers. Nhánh volume thường không có kiểm tra tương tự. ReceiveFile nằm trong danh sách RPC không kiểm tra whitelist (volume_grpc_admin_auth_coverage_test.go), và trong repo không có caller nào gửi ReceiveFile cho một volume thường đã có (shard_distribution.go chỉ gửi shard EC; chế độ staged chỉ dành cho volume chưa có). Vì vậy đây là một đường không ai dùng nhưng ai gọi được cổng gRPC đều dùng được: ReceiveFile với is_ec_volume = false và ext = .dat cho một volume đang mount làm hỏng .dat của volume đó. Lỗi thứ hai: writeToFile không fsync file đã nhận trước khi đóng và rename, và VolumeCopy cũng như VolumeEcShardsCopy không fsync sau đó (chỉ ReceiveFile gọi Sync). volume.move và ec.balance xoá bản nguồn sau khi copy và mount xong (volume.move sau khi tail bắt kịp), nên mất điện trên server đích trong cửa sổ writeback có thể để lại .dat, .idx hay shard rỗng hoặc thiếu ở tên cuối trong khi bản nguồn đã bị xoá."
  },
  "weed/server/volume_grpc_copy_incremental.go": {
   "character": "Sao chép tăng dần một volume cho backup: VolumeIncrementalCopy và VolumeSyncStatus",
@@ -5372,5 +5372,171 @@
    "Worker theo lô chỉ được tạo ở lần ghi bền đầu tiên, để hàng triệu volume không tốn một goroutine mỗi cái.",
    "Volume TTL không bao giờ dùng kiểm tra nội dung không đổi (isFileUnchanged)."
   ]
+ },
+ "weed/storage/erasure_coding/ec_context.go": {
+  "character": "ECContext: tỉ lệ data/parity và layout khối của một volume EC",
+  "what": "ECContext giữ số shard data và parity, collection, vid, BlockSize (> 0 là layout khối đều: mỗi shard là một khối liền; 0 là layout cũ 1 GiB rồi 1 MiB) và DatFileSize (kích thước .dat mà lần encode đã đọc). ValidEcShardCounts kiểm tra cặp data, parity (cộng trong uint64 để không tràn trên bản 32 bit). LargeBlockSize và SmallBlockSize trả BlockSize khi dùng layout đều. NewDefaultECContext là 10+4; BackgroundECContext là context rỗng để encoder hay rebuild tự xác định. CreateEncoder tạo encoder Reed-Solomon.",
+  "why": "Hệ quả: mọi phép tính offset của shard dựa vào layout ở đây; ghi .vif với BlockSize và DatFileSize lệch nhau là đọc ra sai byte. Thiết kế: giữ cả hai giá trị từ cùng một lần đo.",
+  "when": "Mọi thao tác encode, rebuild, decode, đọc EC.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Đọc EC trả byte sai, hoặc rebuild bằng sai ma trận."
+ },
+ "weed/storage/erasure_coding/ec_shard.go": {
+  "character": "EcVolumeShard: một file shard .ecNN đang mount, và tên file EC",
+  "what": "ShardId (uint8), chuyển đổi danh sách, AllShardIds (0 tới 13). EcVolumeShard mở file .ecNN chỉ đọc, nhớ kích thước, tăng gauge khi mount. ReadAt đọc từ file; Close đóng fd nhưng không gán nil, để một lần đọc đã lấy shard trước lúc gỡ gặp fd đóng và trả lỗi sạch (caller khôi phục từ parity) thay vì panic. Destroy xoá file. EcShardFileName và EcShardBaseFileName dựng tên <collection>_<vid>. ToEcShardInfo cho các báo cáo.",
+  "why": "Hệ quả: mọi lần đọc shard local đi qua đây. Thiết kế: không gán nil khi đóng để tránh data race với lần đọc đang chạy.",
+  "when": "Mount shard EC; đọc shard local; scrub.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Panic khi đọc trong lúc gỡ shard, hoặc đọc nhầm file."
+ },
+ "weed/storage/erasure_coding/ec_shard_info.go": {
+  "character": "ShardInfo: id và kích thước của một shard",
+  "what": "ShardSize, ShardInfo{Id, Size}, NewShardInfo, IsValid (id dưới 32).",
+  "why": "Hệ quả: phần tử của ShardsInfo, mà master giữ cho mỗi EC volume. Thiết kế: kiểu nhỏ, không con trỏ.",
+  "when": "Heartbeat EC; topology EC của master.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Không ảnh hưởng đáng kể."
+ },
+ "weed/storage/erasure_coding/ec_shards_info.go": {
+  "character": "ShardBits và ShardsInfo: tập shard (bitmap 32 bit) kèm kích thước từng shard",
+  "what": "ShardBits là bitmap shard 0 tới 31 với Has, Set, Clear, Count (popcount) và All (chỉ duyệt bit đã đặt). ShardsInfo giữ slice ShardInfo sắp theo id cùng bitmap, có khoá: Set, Delete, Has, Count, Ids, Size, TotalSize, Sizes, Copy, DeleteParityShards và MinusParityShards (theo số shard data, mặc định 10), Add, Subtract, Plus, Minus. Chuyển từ VolumeEcShardInformationMessage (bit và danh sách kích thước theo thứ tự bit). Các hàm theo message: GetShardCount, VolumeSlots (mỗi 10 shard một slot volume, làm tròn lên), EcShardsTotalSize, EcShardsDataSize, và EcShardsVolumeDataShards, ParityShards luôn trả 10 và 4.",
+  "why": "Hệ quả: master, shell và worker biết shard nào ở đâu qua cấu trúc này; một bit sai là một shard bị coi như mất hay có hai chỗ. Thiết kế: bitmap cho phép đếm và gộp nhanh; các hàm trả 10+4 được giữ dạng theo từng volume để bản build có tỉ lệ tuỳ chỉnh thay được.",
+  "when": "Heartbeat EC; topology EC; ec.balance, ec.rebuild; worker.",
+  "ux": "ec.check hiện các shard có mặt.",
+  "if_broken": "Shard bị coi là mất và bị rebuild thừa, hoặc bị đặt hai chỗ.",
+  "gotchas": [
+   "Kích thước trong message được ghép với bit theo thứ tự tăng dần; một danh sách kích thước thiếu cho shard 0 byte."
+  ]
+ },
+ "weed/storage/erasure_coding/ec_locate.go": {
+  "character": "Tính một khoảng của .dat nằm ở shard nào, offset nào",
+  "what": "LocateData chia [offset, offset+size) của .dat gốc thành các Interval theo khối: vùng khối lớn trước (số hàng khối lớn = kích thước shard / kích thước khối lớn), rồi vùng khối nhỏ. moveToNextBlock sang khối kế; ToShardIdAndOffset đổi một interval thành (shard id = chỉ số khối mod số shard data, offset trong file shard).",
+  "why": "Hệ quả: mọi lần đọc needle từ EC dựa vào phép tính này; sai một hàng là đọc nhầm dữ liệu của needle khác. Thiết kế: cùng một công thức cho layout cũ và layout đều (khối lớn bằng khối nhỏ).",
+  "when": "Mỗi lần đọc và scrub needle trong volume EC.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Đọc EC trả dữ liệu sai hay CRC lỗi.",
+  "gotchas": [
+   "Dùng hằng DataShardsCount (10) chứ không dùng số shard data trong ECContext, nên chỉ đúng với tỉ lệ 10+4."
+  ]
+ },
+ "weed/storage/erasure_coding/ec_volume_info.go": {
+  "character": "EcVolumeInfo: thông tin một EC volume trên một disk mà master giữ",
+  "what": "EcVolumeInfo gồm vid, collection, loại đĩa, disk id, ExpireAtSec, ShardsInfo, số file, số đã xoá và EncodeTsNs. DataShardsOrDefault trả 10; Minus trừ tập shard; ToVolumeEcShardInformationMessage chuyển sang message heartbeat.",
+  "why": "Hệ quả: topology EC của master dựng từ các bản ghi này. Thiết kế: một EncodeTsNs cho mỗi (volume, disk), để nhận ra shard của lần encode khác.",
+  "when": "Master xử lý heartbeat EC.",
+  "ux": "ec.check, volume.list hiện EC volume.",
+  "if_broken": "Master đếm shard sai giữa các lần encode."
+ },
+ "weed/storage/erasure_coding/ec_encoder.go": {
+  "character": "Encode .dat thành shard Reed-Solomon, dựng lại shard thiếu, và ghi .ecx từ .idx",
+  "what": "Hằng số: 10 data, 4 parity, tối đa 32 shard, khối lớn 1 GiB, khối nhỏ 1 MiB. WriteSortedFileFromIdx ghi .ecx (hay .sdx) là các entry còn sống của .idx sắp theo khoá. WriteEcFiles luôn encode theo layout khối đều với BlockSize = ceil(.dat / số shard data) làm tròn lên bội số 1 MiB, ghi .ec00 tới .ec13 với bộ đệm 256 KiB, và tính CRC từng khối 16 MiB của mỗi shard cho sidecar bitrot. ResolveRebuildECContext chọn layout cho rebuild: context của caller, rồi .vif (ở mọi thư mục có thể), rồi sidecar, rồi mặc định; .vif đọc không được hay ghi tỉ lệ vô lý thì từ chối. generateMissingEcFiles tìm shard có mặt (shard 0 byte coi là thiếu), kiểm tra chúng với sidecar và loại shard hỏng (từ chối nếu số shard lệch vượt số parity, hay còn ít hơn số data), dựng lại shard thiếu theo khối 1 MiB với kiểm tra kích thước đầu vào, fsync, kiểm tra shard mới với sidecar (lệch thì xoá hết đầu ra), rồi rename bản dựng lại đè shard hỏng.",
+  "why": "Hệ quả: đây là phần tạo và sửa dữ liệu EC; một layout sai ở rebuild tạo shard trông hợp lệ mà nội dung sai. Thiết kế: rebuild xác định layout từ chính siêu dữ liệu của volume và thà từ chối hơn là đoán; Reed-Solomon tất định nên shard dựng lại không khớp sidecar nghĩa là sidecar sai.",
+  "when": "VolumeEcShardsGenerate và VolumeEcShardsRebuild; worker encode trên máy worker (ec_task.go).",
+  "ux": "ec.encode giảm dung lượng; ec.rebuild phục hồi shard mất.",
+  "if_broken": "Shard hỏng được dùng làm đầu vào rebuild, hoặc shard mới được dựng bằng sai tỉ lệ.",
+  "gotchas": [
+   ".ecx không có tombstone lúc encode: needle đã xoá không có trong file.",
+   "Bộ đệm encode 256 KiB phải chia hết kích thước khối; khác đi thì chương trình dừng (glog.Fatalf)."
+  ]
+ },
+ "weed/storage/erasure_coding/ec_decoder.go": {
+  "character": "Decode EC về .dat và .idx",
+  "what": "HasLiveNeedles báo .ecx còn entry sống. WriteIdxFileFromEcIndex chép .ecx rồi thêm một tombstone cho mỗi id trong .ecj, ghi qua file tạm, fsync, rename, fsync thư mục. FindDatFileSize lấy cuối của needle sống xa nhất (tối thiểu kích thước superblock, issue #7748). writeDatFile ghép các shard data theo layout (khối lớn rồi khối nhỏ) thành .dat qua file tạm, dừng ở kích thước cần; khi .vif không ghi kích thước lúc encode thì suy layout từ kích thước shard và từ chối trường hợp mơ hồ (kích thước shard chia hết khối lớn) của layout cũ. VerifyDecodedDatFile đòi .dat đủ dài cho mọi needle index nói tới. iterateEcxFile coi một entry dở ở cuối .ecx là hỏng.",
+  "why": "Hệ quả: caller xoá shard ngay sau khi decode trả về, nên một .dat ngắn hay .idx dở ở đây là mất dữ liệu chứ không phải một lần decode thất bại. Thiết kế: mọi file ghi qua tmp, fsync và rename trước khi caller xoá nguồn.",
+  "when": "VolumeEcShardsToVolume (ec.decode); weed fix.",
+  "ux": "ec.decode trả volume EC về volume thường.",
+  "if_broken": "Volume decode thiếu needle hay có needle đã xoá sống lại."
+ },
+ "weed/storage/erasure_coding/ec_volume.go": {
+  "character": "EcVolume: một volume EC đã mount trên một disk, với .ecx, journal xoá .ecj và cấu hình từ .vif",
+  "what": "NewEcVolume chọn .ecx (ưu tiên bản khác rỗng cạnh shard, rồi bản trong thư mục index; .ecx 0 byte hợp lệ cho volume không còn needle), mở chỉ đọc khi thư mục index chỉ đọc, đăng ký giữ đường dẫn .ecj (ecj_registry), cắt đuôi .ecj dở, nạp tập id đã xoá từ .ecj, đọc .vif (cạnh shard, rồi thư mục index, rồi .vif của encode ở thư mục data khác) để lấy version, DatFileSize, ExpireAtSec, tỉ lệ, BlockSize và EncodeTsNs. .vif không đọc được, tỉ lệ vô lý hay BlockSize sai thì từ chối mount; .vif không có cấu hình EC thì lấy từ sidecar, không có nữa thì dùng 10+4 cũ. Sau đó nạp sidecar bitrot và nén .ecj khi file lớn hơn 1 MiB và gấp 4 lần tập id (rewrite có sắp xếp, fsync, rename, mở lại; chỉ khi là người giữ duy nhất và không ai ghi). AddEcVolumeShard từ chối shard 0 byte khi .ecx có entry. FindNeedleFromEcx tìm nhị phân trong .ecx rồi phủ tập đã xoá. LocateEcShardNeedle tính interval. FileAndDeleteCount: số entry .ecx và số id đã xoá. Destroy xoá shard, .ecx, .ecj ở cả hai thư mục, .vif và sidecar.",
+  "why": "Hệ quả: mọi đọc và xoá trên EC đi qua đây; .ecj là cách duy nhất ghi nhận lần xoá vì .ecx bất biến lúc chạy. Thiết kế: .ecj là một tập được ghi như log chỉ thêm; copy và balance nối .ecj của peer vào nên nó có thể phình to (1,51 TB cho khoảng 100 id ở production, comment của maybeCompactEcj), vì vậy nén lúc mount.",
+  "when": "Mount shard EC lúc khởi động và qua VolumeEcShardsMount; mọi đọc và xoá EC.",
+  "ux": "Xoá file trong volume EC có hiệu lực ngay.",
+  "if_broken": "File đã xoá đọc lại được, đọc sai layout, hoặc .ecj phình tới hết đĩa.",
+  "gotchas": [
+   "Close không gán nil cho ecxFile và fd shard, để đọc đang chạy gặp lỗi sạch thay vì race.",
+   "Số file là số entry .ecx (như số lần put của volume thường), không phải số file sống."
+  ]
+ },
+ "weed/storage/erasure_coding/ec_volume_delete.go": {
+  "character": "Xoá needle trong EC volume: ghi .ecj, và gộp .ecj vào .ecx",
+  "what": "DeleteNeedleFromEcx tìm needle trong .ecx (không có là xong; đã có tombstone thì chỉ đánh dấu trong bộ nhớ), rồi dưới khoá journal ghi id vào cuối .ecj, fsync (lỗi thì cắt về kích thước cũ), và chỉ sau đó mới thêm vào tập đã xoá. LockDeletionJournal cho decode giữ khoá journal. ReopenDeletionJournal mở lại .ecj sau khi RebuildEcxFile đã unlink nó, để lần xoá sau không rơi vào inode đã tách. RebuildEcxFile đánh dấu tombstone ngay trong .ecx cho mỗi id của .ecj, fsync .ecx, rồi mới xoá .ecj; .ecj đọc dở thì dừng và giữ .ecj.",
+  "why": "Hệ quả: lần xoá trên EC chỉ bền khi .ecj đã fsync; một lần xoá được báo thành công mà rơi vào inode đã unlink sẽ biến mất ở lần mount sau. Thiết kế: journal là điểm commit, bộ nhớ chỉ phản ánh những gì đã bền.",
+  "when": "Xoá file trong volume EC; rebuild và decode gộp journal.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "File đã xoá sống lại sau rebuild, decode hay khởi động lại.",
+  "gotchas": [
+   "Lỗi khi xoá .ecj sau RebuildEcxFile bị bỏ qua."
+  ]
+ },
+ "weed/storage/erasure_coding/ec_volume_merge.go": {
+  "character": "Gộp các runtime EC cùng vid trên nhiều disk thành một view để scrub",
+  "what": "MergeEcRuntimes lấy EncodeTsNs lớn nhất làm thế hệ neo, chỉ gộp các runtime cùng thế hệ và cùng hình học (số shard data, parity, BlockSize), đặt shard theo id vào các slot, và ghi lại từng runtime bị loại kèm lý do. asVolume dựng một EcVolume tổng hợp dùng .ecx của neo với tập shard đã gộp (volume cũ không có DatFileSize thì suy từ shard lớn nhất). ScrubLocal và ChecksumScrub chạy trên view đó; ChecksumScrub lấy sidecar từ runtime đầu tiên có sidecar hợp lệ và từ chối khi sidecar ghi một lần encode khác neo.",
+  "why": "Hệ quả: một volume EC có shard rải trên nhiều disk của cùng server được scrub như một khối, mà không trộn shard của hai lần encode. Thiết kế: báo các runtime bị loại thay vì bỏ qua im lặng.",
+  "when": "ScrubEcVolume (ec.scrub).",
+  "ux": "Báo cáo scrub nói rõ shard nào không được kiểm tra và vì sao.",
+  "if_broken": "Scrub báo hỏng sai, hoặc bỏ qua shard mà không báo."
+ },
+ "weed/storage/erasure_coding/ec_volume_scrub.go": {
+  "character": "Scrub một EC volume: index, đọc lại needle từ shard local, và so checksum với sidecar",
+  "what": "ScrubIndex kiểm tra .ecx (rỗng là lỗi). ChecksumScrub đọc từng khối của mọi shard local và so CRC với sidecar (kích thước lệch là hỏng); nếu số shard lệch vượt số parity thì coi là sidecar cũ chứ không phải hỏng hàng loạt; nếu đủ shard sạch thì dựng lại từng shard bị nghi bằng Reed-Solomon và chỉ coi là hỏng khi Reed-Solomon cũng không khớp. ScrubLocal duyệt .ecx, đọc mọi phần của needle nằm trên shard local, báo shard ngắn hay đọc lỗi, và khi đọc được cả needle thì giải mã để kiểm tra CRC.",
+  "why": "Hệ quả: shard parity không bao giờ được đọc lúc phục vụ, nên CHECKSUM là cách duy nhất phát hiện chúng hỏng trước khi cần dùng. Thiết kế: Reed-Solomon làm trọng tài để một sidecar cũ không làm shard tốt bị cách ly.",
+  "when": "ScrubEcVolume ở các chế độ INDEX, LOCAL, CHECKSUM.",
+  "ux": "ec.scrub liệt kê shard hỏng thật.",
+  "if_broken": "Shard parity hỏng âm thầm cho tới lúc rebuild cần nó."
+ },
+ "weed/storage/erasure_coding/ecj_merge.go": {
+  "character": "Gộp journal xoá .ecj như phép hợp tập hợp",
+  "what": "EcjIdDecoder giải mã luồng .ecj cắt ở biên tuỳ ý thành tập id khác nhau. ReadEcjIds đọc tập id của một file theo khối. WriteEcjIds và AppendEcjIds (cho journal không có EcVolume nào mở) chỉ ghi các id mà bản local chưa có, trong một lần ghi, và trả ErrEcjChanged khi độ dài file đổi so với lúc đọc. EcjAppend có Sync (fsync cả thư mục khi vừa tạo file), Rollback và RollbackUnsynced (chỉ cắt khi các record này vẫn là đuôi file, giữ khoá journal của mọi holder), Unpublish, Rewrite (ghi lại cùng byte để fsync lần sau có nghĩa). MergeJournal gộp vào một volume đang mount qua handle sống; PublishMergedIds chỉ đánh dấu trong bộ nhớ.",
+  "why": "Hệ quả: mỗi vòng ec.balance nối .ecj của peer; nếu nối nguyên file thì journal nhân đôi mỗi vòng. Thiết kế: journal chỉ được thêm vào, không bao giờ thay file, vì volume đang mount giữ handle và một rename sẽ làm các lần xoá sau rơi vào inode đã tách.",
+  "when": "VolumeEcShardsCopy, khôi phục .ecx từ peer, Store.MergeEcJournal.",
+  "ux": "Không thấy trực tiếp; .ecj không phình theo số lần balance.",
+  "if_broken": "Journal phình, hoặc một lần xoá bị mất khi gộp lỗi giữa chừng."
+ },
+ "weed/storage/erasure_coding/ecj_registry.go": {
+  "character": "Điều phối trong process mọi thứ chạm tới một đường dẫn .ecj",
+  "what": "Theo từng đường dẫn (chuẩn hoá thư mục cha qua Abs và EvalSymlinks) đếm số holder (EcVolume đang mở .ecj), số writer ngoài luồng (ReceiveFile một .ecj, gộp journal chưa mount) và thế hệ ghi, cùng cờ đang nén. acquireEcjHold chờ hết lần nén đang chạy rồi đăng ký holder; tryBeginCompaction chỉ cho nén khi là holder duy nhất, không writer nào đang chạy, không writer nào chạy từ lúc giữ và thế hệ ghi không đổi; BeginEcjWrite đăng ký writer và chờ hết lần nén.",
+  "why": "Hệ quả: nén .ecj lúc mount thay file bằng inode mới, nên chỉ an toàn khi không ai khác có thể ghi vào inode cũ; một holder tiếp tục ghi vào inode đã bị thay là xác nhận những lần xoá sẽ mất ở lần mount sau. Thiết kế: đếm thế hệ ghi vì một writer đã chạy xong có thể đã ghi lại file với cùng độ dài, điều kiểm tra inode và kích thước không thấy.",
+  "when": "Mount EC volume, ReceiveFile .ecj, gộp journal.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Lần xoá EC bị mất sau khi nén journal."
+ },
+ "weed/storage/erasure_coding/ec_bitrot.go": {
+  "character": "Sidecar bitrot .ecsum: CRC32-C theo khối của mọi shard, lưu, nạp, kiểm tra và dựng lại",
+  "what": "Định dạng: header 14 byte (magic ECSU, version, độ dài và CRC32-C của payload) rồi protobuf EcBitrotProtection; khối mặc định 16 MiB (lũy thừa 2 của 1 MiB, tối đa 64 MiB). shardChecksumBuilder tính CRC từng khối trong lúc encode. SaveBitrotSidecar ghi file tạm rồi rename; LoadBitrotSidecar kiểm tra header và CRC; ValidateBitrotManifest đòi đủ mỗi shard một entry và đúng số CRC. verifyShardFileBlocks so một file shard (kích thước lệch là mọi khối lệch). SelectBitrotProtection, VerifyEcVolumeDataShards (decode từ chối shard data lệch), ComputeProtectionFromShards (backfill TOFU, đòi đủ mọi shard). loadBitrotForGeneration: không có là Off, hỏng là Invalid, layout ghi trong sidecar khác layout đang mount là lỗi. layoutFromSidecar và EcShardConfigFromSidecarPath lấy cấu hình EC khi .vif không có. FindBitrotSidecar tìm ở thư mục data, index và các thư mục khác.",
+  "why": "Hệ quả: rebuild loại shard hỏng thay vì dùng nó làm đầu vào, decode từ chối shard data lệch, và scrub CHECKSUM phát hiện parity hỏng. Thiết kế: sidecar cũ hay sai không bao giờ được hiểu là bitrot hàng loạt (kiểm tra theo số parity và Reed-Solomon làm trọng tài).",
+  "when": "Encode (ghi), mount (nạp), rebuild, decode, ec.scrub, backfill sau rebuild.",
+  "ux": "ec.scrub -mode=checksum phát hiện shard parity hỏng.",
+  "if_broken": "Shard hỏng được dùng để rebuild, hay decode từ chối một volume lành.",
+  "gotchas": [
+   "Sidecar thế hệ 0 không ghi EncodeTsNs, nên không chứng minh được nó thuộc lần encode nào."
+  ],
+  "issue": "bug",
+  "issue_note": "SaveBitrotSidecar ghi file tạm bằng os.WriteFile rồi rename, không fsync file tạm và thư mục, trong khi doc comment gọi đó là ghi atomically và mọi file siêu dữ liệu khác (.vif qua SaveVolumeInfo, .idx, .dat khi decode) đều fsync trước rename. Mất điện ngay sau khi encode có thể để lại .ecsum rỗng hay dở ở tên cuối. Sidecar như vậy hỏng kiểm tra self-integrity và thành BitrotInvalid: VolumeEcShardsToVolume (ec.decode) từ chối qua VerifyEcVolumeDataShards mà không có cách bỏ qua, VolumeEcShardsRebuild từ chối trừ khi có unsafe_ignore_sidecar, và một EC volume mà .vif không ghi cấu hình EC thì không mount được (layoutFromSidecar trả lỗi). Operator phải xoá .ecsum bằng tay để gỡ."
+ },
+ "weed/storage/erasure_coding/ec_teardown.go": {
+  "character": "Gỡ và xoá shard EC trên một server, có fence theo thế hệ encode, và dọn các thế hệ 2PC",
+  "what": "UnmountAndDeleteEcShards gọi VolumeEcShardsUnmount rồi VolumeEcShardsDelete với full_teardown; encode_ts_ns = 0 là teardown không fence (cho dọn trước encode hay rollback, caller phải bảo đảm không có lần encode mới hơn đang chạy), khác 0 chỉ xoá thế hệ cũ hơn (cho worker cũ dọn dẹp); server không xác nhận full_teardown_done (bản cũ) thì trả ErrFullTeardownNotAcked. EcFileGeneration parse hậu tố .v<N>; RemoveEcGenerationFiles xoá các file .ecNN.v<N>, .ecx.v<N>, .ecj.v<N>, .ecsum.v<N>, .vif.v<N> (tất cả hay chỉ thế hệ dưới ngưỡng).",
+  "why": "Hệ quả: một worker EC bị thu hồi mà vẫn chạy từng gỡ rồi ghi đè shard sống của lần chạy mới hơn trên một node dùng chung (#9953); fence theo thế hệ ngăn điều đó. Thiết kế: một primitive dùng chung cho worker và shell để ngữ nghĩa fence không lệch nhau.",
+  "when": "Worker erasure_coding dọn trước khi phân phối; ec.encode của shell dọn trước khi encode.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Worker cũ xoá shard của lần encode mới, hoặc tàn dư thế hệ cũ bị mount cùng thế hệ mới."
+ },
+ "weed/storage/erasure_coding/verification.go": {
+  "character": "Kiểm tra tập shard trên các server trước khi xoá volume nguồn hay một bản sao shard",
+  "what": "VerifyShardsAcrossServers hỏi VolumeEcShardsInfo từng server, gộp bitmap shard và ghi lại block size mà mỗi server đang phục vụ (server lỗi tính là không có shard). RequireRecoverableShardSet: đủ shard là ổn, thiếu mà vẫn còn ít nhất số shard data là degraded (cho phép xoá nguồn kèm cảnh báo), thấp hơn là lỗi. RequireAgreedBlockLayout đòi mọi server có shard báo cùng block size với lần encode (server cũ bỏ field lạ và mount layout cũ). CollectShardsOnServer và VerifyShardsOnServer kiểm cả collection, và coi server không trả lời là chưa xác nhận.",
+  "why": "Hệ quả: đây là cổng chặn trước các thao tác xoá nguồn sau EC encode và xoá bản sao sau khi chuyển shard; thả lỏng ở đây là mất bản cuối cùng. Thiết kế: một server bận hay không trả lời không bao giờ được coi là bằng chứng có bản sao.",
+  "when": "Worker erasure_coding và ec_balance; ec.encode của shell (weed/ec); ec_move khi chuyển shard; VolumeEcShardsGenerate.",
+  "ux": "ec.encode từ chối xoá .dat khi các server chưa nâng cấp đọc theo layout cũ.",
+  "if_broken": "Xoá volume nguồn khi shard không đủ, hay xoá bản shard cuối cùng."
+ },
+ "weed/storage/erasure_coding/shard_distribution.go": {
+  "character": "Phân phối shard EC đã tạo trên worker tới các volume server và mount chúng",
+  "what": "DistributeEcShards dựng bảng gán từ các TaskTarget (mỗi server nhận các shard được gán cộng .ecx, .ecj, .vif, .ecsum nếu có, nằm cùng disk với shard data đầu tiên), rồi gửi theo thứ tự hay song song: tối đa một luồng mỗi (server, disk), hay mỗi server khi có target để server tự chọn disk, kèm giới hạn tổng tuỳ chọn. Mỗi file được gửi bằng ReceiveFile theo khối 64 KiB. MountEcShards gọi VolumeEcShardsMount trên từng server với loại đĩa của nguồn (#9423). Có logger với WithFields qua reflection.",
+  "why": "Hệ quả: worker encode volume ở máy worker rồi đẩy shard đi qua đây, nên lỗi ở đây để lại shard thiếu hay trùng trên các server. Thiết kế: tuần tự hoá theo disk để hai luồng không cùng chọn một disk khi server tự chọn.",
+  "when": "Task erasure_coding của worker (ec_task.go).",
+  "ux": "Task EC trong admin console hiện tiến độ từng shard.",
+  "if_broken": "Shard không tới đủ server, hay hai disk cùng giữ một shard."
  }
 }
