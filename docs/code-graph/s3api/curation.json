@@ -4338,8 +4338,11 @@
    "Nhánh full teardown có fence không giữ EcLifecycleLock như nhánh không fence; nó dựa vào thứ tự generation đọc từ .vif.",
    "VolumeEcShardsGenerate không tự kiểm tra volume đã readonly; caller (worker, shell) phải đánh dấu trước.",
    "disk_id = 0 nghĩa là tự chọn, nên Locations[0] không thể được chọn tay.",
-   "VolumeEcShardsToVolume giữ khoá journal từ lúc ghi .idx tới hết compact offline, nên lệnh xoá trên volume EC đó chờ trong suốt thời gian ấy."
-  ]
+   "VolumeEcShardsToVolume giữ khoá journal từ lúc ghi .idx tới hết compact offline, nên lệnh xoá trên volume EC đó chờ trong suốt thời gian ấy.",
+   "VolumeEcBlobDelete chỉ xoá trên runtime đầu tiên của vid (xem issue_note): trên server nhiều đĩa, runtime của đĩa khác vẫn phục vụ needle đã xoá."
+  ],
+  "issue": "bug",
+  "issue_note": "VolumeEcBlobDelete ghi tombstone vào runtime EcVolume đầu tiên tìm thấy theo thứ tự Locations, không phải runtime đang giữ shard mà bên xoá nhắm tới. Tập needle đã xoá trong bộ nhớ là riêng từng runtime, và sau bước mirror lúc khởi động mỗi đĩa có .ecj riêng, nên runtime của đĩa khác không bao giờ biết lần xoá này. Một vid mount trên nhiều đĩa của cùng server là bố cục thường gặp: ecbalancer chọn đĩa đích ưu tiên đĩa chưa có shard của volume. Đã tái hiện bằng test tạm trên Store thật (không commit): shard 0 tới 5 cùng sidecar ở disk0, shard 6 tới 13 ở disk1 (sidecar được mirror khi khởi động); xoá needle qua runtime đầu tiên như VolumeEcBlobDelete làm thì runtime của disk0 thấy deleted=true, runtime của disk1 thấy deleted=false, kể cả sau khi khởi động lại. Hệ quả suy ra từ code, chưa chạy trên cụm thật: VolumeEcShardRead hỏi runtime của đĩa giữ shard, nên khi interval đầu của needle nằm trên shard ở disk1, DeleteEcShardNeedle của server khác gửi lệnh xoá tới server này nhưng lần đọc từ server khác vẫn nhận byte của needle; đọc ngay trên server này thì trả đã xoá vì ReadEcShardNeedle cũng lấy runtime đầu tiên."
  },
  "weed/server/volume_grpc_erasure_coding_recover.go": {
   "character": "Tự chữa EC volume thiếu .ecx: lấy index từ peer rồi mount shard",
@@ -5538,5 +5541,197 @@
   "when": "Task erasure_coding của worker (ec_task.go).",
   "ux": "Task EC trong admin console hiện tiến độ từng shard.",
   "if_broken": "Shard không tới đủ server, hay hai disk cùng giữ một shard."
+ },
+ "weed/storage/erasure_coding/distribution/config.go": {
+  "character": "ECConfig và ReplicationConfig: tỉ lệ EC và chính sách replication dạng số tối thiểu",
+  "what": "ECConfig giữ DataShards, ParityShards; NewECConfig từ chối số không dương; DefaultECConfig là 10+4. TotalShards, CanLoseShards (bằng ParityShards), IsDataShard, IsParityShard, SortShardsDataFirst (tăng dần) và SortShardsParityFirst (giảm dần, để chọn shard parity rời đi trước). ReplicationConfig đổi chuỗi XYZ (qua super_block.ReplicaPlacement) thành MinDataCenters = X+1, MinRacksPerDC = Y+1, MinNodesPerRack = Z+1, kèm chuỗi gốc để log.",
+  "why": "Hệ quả: đầu vào của CalculateDistribution và Rebalancer trong cùng package. Thiết kế: thay hằng 10+4 bằng tham số để tính được tỉ lệ tuỳ chỉnh; replication được hiểu là \"số miền tối thiểu cần dùng\", khác ecbalancer (ở đó DiffRackCount và SameRackCount là giới hạn cứng).",
+  "when": "Chỉ khi có code gọi API distribution (hiện chỉ test).",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Chỉ ảnh hưởng test của package.",
+  "gotchas": [
+   "Không package production nào import distribution: chỉ distribution_test.go và README dùng. Package bị xoá như code chết ở #8913 rồi được thêm lại ở #11915 như một API có tài liệu; chính sách thật mà shell và worker chạy nằm ở ecbalancer.",
+   "Cùng một chuỗi replication mang nghĩa khác nhau ở hai package: ở đây \"110\" nghĩa là ít nhất 2 DC và 2 rack mỗi DC, còn ecbalancer.Place coi DiffRackCount là số shard tối đa mỗi rack và bỏ qua chữ số DC."
+  ]
+ },
+ "weed/storage/erasure_coding/distribution/distribution.go": {
+  "character": "CalculateDistribution: số shard mục tiêu và tối đa ở mỗi tầng DC, rack, node",
+  "what": "ECDistribution giữ ECConfig, ReplicationConfig và TargetShardsPer{DC,Rack,Node} cùng MaxShardsPer{DC,Rack,Node}. CalculateDistribution lấy số đơn vị ở mỗi tầng (DC, DC×rack, DC×rack×node, tối thiểu 1); target là ceil(total/units). maxShare là target cộng (units − total%units), chặn ở total, và bị hạ xuống CanLoseShards nếu chính target đã sống sót được (target ≤ parity). Summary in kế hoạch; FaultToleranceAnalysis cho từng tầng xem mất một đơn vị (theo target) còn đủ DataShards hay không.",
+  "why": "Hệ quả: chỉ là phép tính và báo cáo; không ai trong production dùng. Thiết kế: chặn max bằng loss budget để báo cáo \"sống sót\" vẫn đúng khi một miền giữ tới mức max.",
+  "when": "Chỉ khi có code gọi (hiện chỉ test và README).",
+  "ux": "Văn bản Summary và FaultToleranceAnalysis (chưa có lệnh nào in ra).",
+  "if_broken": "Chỉ ảnh hưởng test của package.",
+  "gotchas": [
+   "Không package production nào import distribution: chỉ distribution_test.go và README dùng. Package bị xoá như code chết ở #8913 rồi được thêm lại ở #11915 như một API có tài liệu; chính sách thật mà shell và worker chạy nằm ở ecbalancer.",
+   "Khi total chia hết cho units, phần slack là units chứ không phải 0: 10+4 trên 2 DC cho max 9 mỗi DC (target 7). Test và README chốt đúng con số 9 này, nên đây là hành vi có chủ ý, không phải lỗi làm tròn.",
+   "FaultToleranceAnalysis dùng target chứ không dùng max: một miền đang giữ tới mức max có thể mất nhiều shard hơn con số báo cáo."
+  ]
+ },
+ "weed/storage/erasure_coding/distribution/analysis.go": {
+  "character": "TopologyAnalysis: ảnh chụp vị trí shard của một volume theo DC, rack, node",
+  "what": "NewTopologyAnalysis tạo các map đếm và danh sách. AddNode đăng ký node một lần (lần đầu quyết định DC và rack; lần sau chỉ cập nhật FreeSlots, TotalShards), khử trùng ShardIDs tại chỗ, rồi ghi từng shard qua AddShardLocation. AddShardLocation bỏ qua shard đã biết trên node, tự đăng ký node chưa biết, và tăng ShardsByDC, ShardsByRack, ShardsByNode cùng các danh sách id. rackKey ghép dc và rack bằng NUL vì tên rack chỉ duy nhất trong một DC. Finalize đếm TotalNodes, TotalRacks, TotalDCs.",
+  "why": "Hệ quả: đầu vào của Rebalancer.PlanRebalance. Thiết kế: cho phép nạp theo node hoặc theo từng vị trí shard mà không đếm trùng.",
+  "when": "Chỉ khi có code gọi (hiện chỉ test).",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Chỉ ảnh hưởng test của package.",
+  "gotchas": [
+   "Không package production nào import distribution: chỉ distribution_test.go và README dùng. Package bị xoá như code chết ở #8913 rồi được thêm lại ở #11915 như một API có tài liệu; chính sách thật mà shell và worker chạy nằm ở ecbalancer.",
+   "AddNode sửa slice ShardIDs của node truyền vào (khử trùng tại chỗ), nên caller giữ chung slice đó sẽ thấy nó đổi."
+  ]
+ },
+ "weed/storage/erasure_coding/distribution/rebalancer.go": {
+  "character": "Rebalancer.PlanRebalance: kế hoạch dời shard theo tầng DC rồi rack rồi node, trên bản sao",
+  "what": "PlanRebalance chép topology sang một bản mô phỏng rồi cân bằng ba tầng: DC (đích là ceil(tổng/số DC)), rack trong từng DC, node trong từng rack. Mỗi vòng chọn miền thừa nhiều nhất, thử các miền ít nhất; moveOut lấy shard parity trước, bỏ qua shard mà miền đích đã có, chọn node đích ít shard của volume nhất rồi nhiều free slot nhất. Miền không dời được shard nào bị gác lại để miền khác vẫn chạy. Sau đó các chuỗi dời của cùng một bản sao shard được gộp thành một lần chuyển, rồi sắp xếp để mỗi đích có slot trống lúc chạy. Kết quả có Moves, Distribution, Analysis (bố cục sau khi dời) và số lần dời qua DC, qua rack, trong rack.",
+  "why": "Hệ quả: không ai trong production gọi; ec.balance và worker dùng ecbalancer.Plan. Thiết kế: lập kế hoạch trên bản sao để Analysis truyền vào vẫn mô tả cụm hiện tại; gộp chuỗi để không copy một shard qua mạng hai lần.",
+  "when": "Chỉ khi có code gọi (hiện chỉ test).",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Chỉ ảnh hưởng test của package.",
+  "gotchas": [
+   "Không package production nào import distribution: chỉ distribution_test.go và README dùng. Package bị xoá như code chết ở #8913 rồi được thêm lại ở #11915 như một API có tài liệu; chính sách thật mà shell và worker chạy nằm ở ecbalancer.",
+   "Các tầng chỉ dùng target (chia đều), không dùng MaxShardsPer* hay ràng buộc data và parity khác rack như ecbalancer; hai planner có thể ra kế hoạch khác nhau cho cùng một cụm.",
+   "Nếu không sắp được thứ tự để mọi đích có slot, các lần dời còn lại vẫn được nối vào cuối kế hoạch chứ không bị bỏ."
+  ]
+ },
+ "weed/storage/erasure_coding/ecbalancer/shard_ratio.go": {
+  "character": "Điểm cắm tỉ lệ shard theo từng volume (bản OSS luôn dùng 10+4)",
+  "what": "shardDataShards trả số shard data của volume mà một shard EC thuộc về, dùng để quy đổi chỗ chiếm trên đĩa; bản OSS luôn trả DataShardsCount (10). VolumeShardRatio trả cặp data, parity mà heartbeat báo cho từng volume; bản OSS trả 0, 0 vì proto OSS không có hai trường đó, nên planner quay về tỉ lệ của collection.",
+  "why": "Hệ quả: shell ec.balance (weed/ec/ec_common.go) và worker ec_balance gọi VolumeShardRatio khi dựng Topology; snapshot.go gọi shardDataShards khi đếm slot. Thiết kế: tách ra một file để bản enterprise thay bằng bản đọc tỉ lệ thật từ shard.",
+  "when": "Mỗi lần dựng Topology cho ec.balance, worker ec_balance hay snapshot encode.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Bản OSS: không đổi gì vì luôn là 10+4. Bản có tỉ lệ tuỳ chỉnh: shard bị phân loại data và parity sai, dàn trải sai."
+ },
+ "weed/storage/erasure_coding/ecbalancer/snapshot.go": {
+  "character": "FromActiveTopology: dựng Topology cho ecbalancer từ ActiveTopology có tính phần đặt chỗ",
+  "what": "FromActiveTopology lấy mọi đĩa đủ điều kiện EC từ ActiveTopology (không lọc loại đĩa; Place lọc sau). Slot EC trống của mỗi đĩa là GetEffectiveAvailableEcShardSlots (theo đơn vị shard, đã trừ task đang chạy) trừ đi số slot mà các shard EC đã có trên đĩa chiếm, quy đổi theo tỉ lệ đích (làm tròn lên). Đĩa mà Statfs báo đã vượt ngưỡng balancer (diskTooFull) bị coi là 0 slot. Khoá rack là \"dc:rack\"; host lấy từ địa chỉ node để các node cùng máy là một miền lỗi. Mỗi đĩa được thêm kèm số shard hiện có, tag, và các shard EC đang nằm trên đĩa đó.",
+  "why": "Hệ quả: worker erasure_coding dùng nó để chọn đích cho shard khi encode; số slot sai là đặt shard lên đĩa đầy hay bỏ qua đĩa còn trống. Thiết kế: dùng góc nhìn có tính phần đặt chỗ mà encode và repair cùng dựa vào; snapshot gắn với một tỉ lệ nên cần dựng mỗi tỉ lệ một bản.",
+  "when": "Mỗi chu kỳ phát hiện của worker erasure_coding.",
+  "ux": "Không thấy trực tiếp; ảnh hưởng chỗ shard được đặt sau encode.",
+  "if_broken": "Shard EC mới bị đặt lên đĩa đã đầy, hoặc encode bị hoãn vì tưởng không còn chỗ.",
+  "gotchas": [
+   "Balance không dùng hàm này: shell và worker ec_balance vẫn tự dựng Topology từ topology thô (toBalancerTopology, buildBalancerTopology), nên hai phía có thể thấy số slot khác nhau.",
+   "Đĩa diskTooFull vẫn được thêm với 0 slot (để shard hiện có vẫn được đếm), chỉ không nhận thêm."
+  ]
+ },
+ "weed/storage/erasure_coding/ecbalancer/place.go": {
+  "character": "Place: chọn đĩa đích cho từng shard của một volume EC, với chế độ chặt hoặc ưu tiên độ bền",
+  "what": "Constraints gồm DiskType kèm DiskTypePolicy (Any, Prefer hay Require), PreferredTags, ReplicaPlacement (DiffRackCount là tối đa shard mỗi rack, SameRackCount là tối đa mỗi node; chữ số DC bị bỏ qua), Ratio và FreeSlotsDeadband. Place thử từng tầng tag (tiền tố tag tăng dần, cuối cùng là mọi đĩa). tryPlace đặt shard data trước rồi parity; mỗi shard thử lần lượt các mức nới lỏng: PlaceStrict chỉ có một mức đầy đủ, PlaceDurabilityFirst nới dần giới hạn theo loại, rồi chống xếp chung data với parity, rồi ReplicaPlacement, rồi giới hạn tổng mỗi rack. Giới hạn mỗi đĩa (không quá parityShards shard của volume) không bao giờ nới. rackTotalCap là mức c nhỏ nhất mà các rack chứa đủ tổng shard. Chọn rack theo độ đều rồi free slot (trong deadband M×dataShards) rồi ít shard sống. Chọn đĩa theo điểm: shardCount×10 + shard đã có×100, +1000 nếu trộn data với parity, +100000 nếu không phải loại đĩa ưu tiên. Thất bại thì gỡ mọi chỗ đã đặt theo journal. ClearShardAccounting và ReleaseVolumeShards cho caller sửa lại sổ.",
+  "why": "Hệ quả: worker erasure_coding đặt mọi shard mới của lần encode qua đây; một lựa chọn sai là hai shard quá nhiều trên một rack hay một đĩa, và mất rack đó là mất volume. Thiết kế: encode đặt \"tốt nhất có thể\" ở chế độ ưu tiên độ bền và để ec_balance dàn đều lại sau; chế độ chặt cho caller muốn hoãn thay vì vi phạm. Place thành công giữ phần đặt chỗ trên Topology để volume kế tiếp thấy.",
+  "when": "Worker erasure_coding khi lập kế hoạch encode (PlaceDurabilityFirst, hoặc PlaceStrict theo cấu hình).",
+  "ux": "Trong log task: Relaxed cho biết ràng buộc nào đã nới; SpilledToOtherDiskType và SpilledOutsidePreferredTags cho biết shard có rơi ra ngoài loại đĩa hay tag ưu tiên.",
+  "if_broken": "Shard bị dồn quá giới hạn mỗi rack hay mỗi đĩa, giảm số miền lỗi chịu được; hoặc encode thất bại dù còn chỗ.",
+  "gotchas": [
+   "Place giữ phần đặt chỗ trên Topology sau khi thành công; caller phải gọi ReleaseVolumeShards nếu bỏ kế hoạch (detection.go làm vậy), nếu không volume sau thấy ít slot hơn thực tế.",
+   "Trong ReplicaPlacement, chữ số DC không được dùng vì một byte chỉ mã hoá được 0 tới 2, quá nhỏ để làm giới hạn shard mỗi DC.",
+   "Chế độ ưu tiên độ bền chỉ thất bại khi không đĩa đủ điều kiện nào còn chỗ cho thêm một shard của volume."
+  ]
+ },
+ "weed/storage/erasure_coding/ecbalancer/balancer.go": {
+  "character": "ecbalancer.Plan: chính sách cân bằng shard EC nhiều pha, dùng chung cho shell và worker",
+  "what": "Topology giữ các Node (id, dc, khoá rack, host, free slot, đĩa có loại, slot, số shard, tag) và shard của từng volume theo đĩa; volume được khoá bằng (collection, vid). Plan chạy theo từng collection: dedup (shard có trên nhiều node thì giữ bản trên node nhiều free slot nhất, ghi KeepNode, xoá các bản còn lại); cross_rack (lượt data rồi lượt parity tránh rack đã có data, kèm giới hạn tổng mỗi rack từ planRackTotalCap; lặp vòng khi còn rack vượt giới hạn; báo RackTotalCapRaised khi phải nâng giới hạn trên mức chia đều); within_rack (dàn theo máy khi các node chung host và ceil(shard/máy) ≤ parity, nếu không thì dàn theo node có ngưỡng). Cuối cùng là pha global: trong từng rack, dời shard từ node đầy sang node vơi theo tỉ lệ shard/sức chứa (GlobalUtilizationBased) hoặc số shard thô, tối đa GlobalMaxMovesPerRack lần (0 là không giới hạn), giữ volume dàn trải theo máy khi làm được. Đĩa đích được chọn theo điểm như Place. Mỗi pha cập nhật mô hình (reserve, release, free slot) để pha sau thấy bố cục mới. Kết quả là danh sách Move, mỗi Move có Phase.",
+  "why": "Hệ quả: shell ec.balance (weed/ec), volumeServer.evacuate và worker ec_balance đều chạy kế hoạch này; một lỗi ở đây là dời shard sai chỗ trên cả cụm. Thiết kế: chính sách thuần, không I/O; caller tự dựng Topology và tự thực thi Move. Mỗi shard chỉ dời một lần trong một kế hoạch vì các Move có thể chạy song song.",
+  "when": "Mỗi lần chạy ec.balance; mỗi chu kỳ phát hiện của worker ec_balance.",
+  "ux": "ec.balance in từng Move, kể cả khi chạy thử: \"dedup: delete ec shard <vid>.<id> on <node>\" và \"<nguồn> moves ec shard <vid>.<id> to <đích> (disk N)\"; task ec_balance trong admin UI.",
+  "if_broken": "Shard bị dồn vào một rack hay một máy, mất miền lỗi đó là mất volume; hoặc balance lặp mãi vì kế hoạch không hội tụ.",
+  "gotchas": [
+   "Move dedup có SourceNode bằng TargetNode: chỉ gỡ và xoá bản thừa; bên thực thi phải xác nhận KeepNode thật sự có shard trước khi xoá.",
+   "Dedup chỉ thấy shard trùng giữa các node: shardBits của một node là hợp của mọi đĩa, nên hai bản trên hai đĩa cùng node không bị phát hiện.",
+   "Shell để GlobalMaxMovesPerRack là 0 (dồn một lần cho đều); worker đặt số nhỏ để tiến dần qua nhiều chu kỳ.",
+   "SetNoReceive và SetDiskNoReceive loại node hay đĩa vừa từ chối nhận shard (\"no space left\"), vì số free slot trong heartbeat không còn đáng tin."
+  ]
+ },
+ "weed/storage/disk_location_ec.go": {
+  "character": "EC volume trên một đĩa: mount shard, gỡ, huỷ và quét shard lúc khởi động",
+  "what": "Map ecVolumes theo vid của một DiskLocation. FindEcVolume, FindEcShard, CollectEcShards, MountedEcShardIds, EcShardCount. DestroyEcVolume và deleteEcVolumeById đặt một \"tombstone\" (kênh) trong ecVolumesDestroying, xoá khỏi map, rồi Destroy ngoài khoá; loadEcShardWithIdxDir so tombstone trước và sau khi mở file shard, nếu có lần huỷ xen vào thì đóng và thử lại, để không mount file vừa bị unlink. LoadEcShard tạo EcVolume (có thể dùng .ecx ở thư mục idx của đĩa khác), thêm shard, dọn sạch nếu thêm lỗi hay trùng. ReopenEcShard thay fd của shard đang mount bằng file mới mà không đổi đăng ký (cho rebuild tại chỗ). HasEcxFileOnDisk coi .ecx 0 byte là không có. loadAllEcShards quét Directory và IdxDirectory, chỉ giữ .ecNN và .ecx, sắp theo tên, gom shard theo (collection, vid): xoá shard 0 byte cũ hơn 1 giờ; nhóm có .ecx thì handleFoundEcxFile (nếu còn .dat thật và validateEcVolume thấy shard nhỏ hơn bản encode đầy đủ của .dat thì xoá EC, còn lỗi load thì giữ file); nhóm không có .ecx mà còn .dat thì xoá (encode bị ngắt). removeEcVolumeFiles xoá .ecx, .ecj trước rồi mới tới shard và các file thế hệ.",
+  "why": "Hệ quả: mọi shard EC mà server phục vụ và báo cho master đều được mount qua đây; một lần dọn sai là xoá bản duy nhất của dữ liệu EC phân tán. Thiết kế: mọi chỗ mơ hồ đều giữ file (chỉ xoá khi chứng minh được .dat đủ để dựng lại); tombstone làm số thế hệ để mount và huỷ không giẫm lên nhau; xoá index trước shard để lần khởi động sau không mount shard dở.",
+  "when": "Khởi động volume server; LoadNewVolumes (SIGHUP); VolumeEcShardsMount, Unmount, Delete, Rebuild; teardown theo thế hệ.",
+  "ux": "Log \"removed zero-sized ec shard\", \"Incomplete or invalid EC volume\", \"Found N EC shards without .ecx file\".",
+  "if_broken": "Shard đã có không được mount (đọc phải dựng lại từ parity), hoặc file EC bị xoá nhầm khi còn là bản duy nhất.",
+  "gotchas": [
+   "UnloadEcShard trả true khi volume có trên đĩa kể cả lúc shard không có trong đó; caller đều gọi FindEcShard trước, nên chỉ lệch khi có tranh chấp.",
+   "Tombstone ở lại sau khi huỷ xong như số thế hệ của vid; chỉ lần mount thành công kế tiếp mới xoá nó.",
+   "checkDatFileExists coi .dat nhỏ hơn hoặc bằng superblock là không có, và coi lỗi stat lạ là có (an toàn hơn khi phân loại EC cục bộ hay phân tán)."
+  ]
+ },
+ "weed/storage/store_ec.go": {
+  "character": "Store EC: chọn đĩa nhận shard, mount và unmount, heartbeat, và đường đọc EC có dựng lại từ parity",
+  "what": "FindEcShardTargetLocation chấm điểm từng đĩa theo bậc: đĩa đã giữ chính shard đó, đĩa đã mount vid, đĩa có .ecx, HDD còn chỗ, đĩa bất kỳ còn chỗ; chủ shard chỉ đọc thì trả nil. ecFreeShardCount tính chỗ trống theo slot shard. CollectErasureCodingHeartbeat bỏ qua EC volume đã bị cách ly vì lỗi IO. MountEcShards giữ khoá vòng đời của vid, mount qua LoadEcShardAcrossDisks (.ecx có thể ở đĩa khác), từ chối nếu đĩa bị cách ly, rồi gửi delta lên master kèm FileCount, DeleteCount, EncodeTsNs. UnmountEcShards duyệt mọi đĩa và có hàng rào thế hệ: khi yêu cầu mang EncodeTsNs thì chỉ gỡ bản cũ hơn hẳn. ReadEcShardNeedle định vị needle trong .ecx, đọc các interval song song (tối đa 8): đọc local, rồi peer theo bản đồ vị trí cache từ master (TTL 11 giây, 7 phút hay 37 phút tuỳ độ đủ), rồi dựng lại bằng Reed-Solomon trong ngân sách bộ nhớ 256 MiB, cuối cùng mới đọc từ đĩa bị cách ly. Bỏ qua shard khác lần encode (EncodeTsNs). Nếu byte ghép lại không parse được thì rebuildEcShardNeedle thử lần lượt các giả thuyết shard hỏng (loại mọi nghi phạm, bỏ từng đầu vào, rồi các tập tối đa ParityShards shard) và lấy việc parse needle thành công làm trọng tài.",
+  "why": "Hệ quả: mọi lần đọc và xoá trên volume EC của server đi qua đây; một lỗi ở bản đồ vị trí hay hàng rào thế hệ là đọc ra byte của lần encode khác. Thiết kế: báo đã xoá từ bất kỳ chủ shard nào là có thẩm quyền (xoá không bao giờ bị bịa hay hoàn tác); dựng lại có ngân sách để một loạt peer chậm không làm server hết bộ nhớ; chọn đĩa ưu tiên chủ shard để một shard không bị hai đĩa cùng nhận.",
+  "when": "Mỗi lần GET hay DELETE một needle trên volume EC; VolumeEcShardsMount, Unmount, Copy; heartbeat EC.",
+  "ux": "Đọc file EC chậm hơn khi phải dựng lại; metric VolumeServerECReconstructedIntervalCounter; log \"skip local ec shard … from a different encode run\".",
+  "if_broken": "Đọc trả lỗi hay byte sai khi shard thiếu, hoặc master thấy cùng một shard ở hai đĩa.",
+  "gotchas": [
+   "Bản đồ vị trí shard chỉ được làm mới khi master trả đủ ít nhất DataShards shard; shard không còn trong câu trả lời vẫn giữ vị trí cũ cho tới khi một lần đọc lỗi gọi forgetShardId.",
+   "Chỉ shard data mới dựng lại được trên đường đọc (checkEcShardRebuildable); needle chỉ nằm trên shard data nên đủ dùng.",
+   "EC volume bị cách ly biến khỏi heartbeat, nhưng bản trên đĩa đó vẫn là nguồn cuối cùng khi không bản lành nào trả lời."
+  ]
+ },
+ "weed/storage/store_ec_delete.go": {
+  "character": "Xoá needle trên volume EC: kiểm cookie rồi ghi tombstone lên đúng một chủ shard",
+  "what": "DeleteEcShardNeedle đọc trọn needle qua ReadEcShardNeedle để lấy cookie (cookie 0 là bỏ kiểm, cho dọn rác), rồi gọi VolumeEcBlobDelete trên một server giữ shard data chứa interval đầu tiên của needle. Các bản sao cùng shard được thử lần lượt và dừng ở lần thành công đầu, vì tombstone nhiều nơi sẽ đếm xoá hai lần trong heartbeat. Nếu shard đó không có chủ nào (errEcShardMissing) thì thử các shard khác, data trước rồi parity.",
+  "why": "Hệ quả: lệnh DELETE trên volume EC là xoá bền nhờ một tombstone trong .ecx, .ecj của một chủ shard; các server khác biết needle đã xoá qua câu trả lời IsDeleted của chủ đó. Thiết kế: một nơi ghi để số đếm xoá đúng.",
+  "when": "DELETE qua HTTP trên volume server; BatchDelete trên volume EC.",
+  "ux": "HTTP DELETE trả kích thước needle đã xoá; lỗi \"unexpected cookie\" khi cookie sai.",
+  "if_broken": "Needle đã xoá vẫn đọc được, hoặc số đếm xoá trong heartbeat bị gấp đôi.",
+  "gotchas": [
+   "Phải đọc trọn needle (có thể phải dựng lại từ parity) chỉ để kiểm cookie trước khi xoá.",
+   "Vòng dự phòng dùng hằng TotalShardsCount (14) chứ không dùng tỉ lệ của volume; bản OSS luôn là 10+4 nên không lệch.",
+   "Khi mọi lần thử dự phòng đều lỗi, hàm trả lỗi errEcShardMissing của shard chính chứ không phải lỗi RPC thật của các lần thử sau.",
+   "Server nhận VolumeEcBlobDelete ghi vào runtime đầu tiên của vid chứ không phải runtime giữ primaryShardId; trên server nhiều đĩa, lần đọc shard đó từ server khác vẫn không thấy needle đã xoá (xem issue_note của volume_grpc_erasure_coding.go)."
+  ]
+ },
+ "weed/storage/store_ec_journal.go": {
+  "character": "MergeEcJournal: gộp id đã xoá của peer vào .ecj cục bộ, qua runtime đang mount hoặc ghi thẳng khi chưa mount",
+  "what": "lockEcjPath tuần tự hoá mọi lần gộp vào cùng một đường dẫn .ecj (khoá có đếm tham chiếu). mergeEcJournal tìm đĩa sở hữu theo dataDir, rồi thử tối đa 5 lần: nếu có runtime đang mount journal đó (runtime của chính đĩa cho vid, hoặc runtime đĩa khác ghi vào cùng ecjPath) thì gộp qua handle của nó (MergeJournal) rồi công bố id cho các runtime cùng giữ file đó. Nếu không, đọc .ecj ngoài khoá, rồi dưới read lock của mọi đĩa (chặn mount ở bất kỳ đĩa nào) kiểm lại chưa ai mount và append các id thiếu, sau đó fsync ngoài khoá. fsync lỗi thì rollback nếu được, không thì viết lại và sync lại; vẫn lỗi thì gỡ các id khỏi tập đã xoá trong bộ nhớ để lần gộp sau ghi lại. Journal đổi giữa lúc đọc và lúc ghi (ErrEcjChanged) thì thử lại.",
+  "why": "Hệ quả: khi VolumeEcShardsCopy chép shard sang server đã có volume, các lần xoá của nguồn phải tới được đích, nếu không needle đã xoá sống lại ở đích. Thiết kế: .ecj là một tập nên gộp là phép hợp; fsync chậm không được giữ khoá đĩa vì sẽ chặn mount và mọi lần đọc EC xếp hàng sau nó.",
+  "when": "VolumeEcShardsCopy, khi chép kèm .ecj (copyEcjAndMerge).",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Needle đã xoá ở nguồn đọc lại được ở đích sau ec.balance hay ec.rebuild; hoặc id được coi là đã xoá trong bộ nhớ mà không bền trên đĩa.",
+  "gotchas": [
+   "Thứ tự khoá cố định (theo s.Locations) và không đường nào giữ khoá EC của hai đĩa cùng lúc nên không deadlock; người giữ không được chờ I/O đĩa ngoài ghi page cache.",
+   "Runtime được chọn có thể ghi vào .ecj ở thư mục data thay vì ecjPath; id chỉ được công bố cho runtime giữ đúng file đã ghi."
+  ]
+ },
+ "weed/storage/store_ec_mirror.go": {
+  "character": "Chép .ecx, .ecj, .vif sang mọi đĩa có shard nhưng thiếu chúng, để mỗi đĩa mount độc lập",
+  "what": "mirrorEcMetadataToShardDisks (chỉ khi có từ 2 đĩa): với mỗi đĩa có shard mồ côi mà .ecx ở đĩa khác, nếu đĩa chưa đủ ba file kèm thì mirrorEcSidecarsFrom chép từng file còn thiếu từ đĩa chủ (.ecx, .ecj vào IdxDirectory, .vif vào Directory). Bản cục bộ đã có luôn thắng (có thể mới hơn sau khi journal xoá). Nếu đĩa đích có .vif không mang cấu hình EC (của volume nguồn) trong khi đĩa chủ có, thì không chép, để .vif cũ không che mất .vif EC. copyEcSidecarAtomic ghi vào .mirror.tmp, fsync, đóng, rename.",
+  "why": "Hệ quả: chạy lúc khởi động (sau prune, trước reconcile) và khi khôi phục index; chép hỏng thì đĩa vẫn được mount theo kiểu trỏ sang đĩa khác. Thiết kế: mỗi đĩa tự chứa đủ file để khởi động sau không phụ thuộc đĩa khác còn sống.",
+  "when": "Khởi động volume server; MountRecoveredEcShards sau khi lấy được .ecx từ peer.",
+  "ux": "Log \"mirrored N sidecar(s) … for same-disk invariant\" hoặc \"mirror sidecars … failed\".",
+  "if_broken": "Đĩa có shard nhưng thiếu index phải mount kiểu trỏ sang đĩa khác; nếu đĩa chủ hỏng thì các shard đó không mount được.",
+  "gotchas": [
+   "Sau khi mirror, mỗi đĩa có .ecj riêng và tập đã xoá trong bộ nhớ riêng; lệnh xoá trong lúc chạy (VolumeEcBlobDelete) chỉ vào runtime đầu tiên của vid, nên runtime đĩa khác không thấy, kể cả sau khi khởi động lại (đã tái hiện, xem issue_note của volume_grpc_erasure_coding.go).",
+   "rename không kèm fsync thư mục; sau sự cố có thể mất file đích, nhưng lần khởi động sau sẽ chép lại vì file đích vắng mặt."
+  ]
+ },
+ "weed/storage/store_ec_reconcile.go": {
+  "character": "Đối soát EC giữa các đĩa của một server: mount shard mồ côi bằng .ecx của đĩa khác, dọn EC dở khi .dat ở đĩa khác",
+  "what": "reconcileEcShardsAcrossDisks (từ 2 đĩa): với shard có trên đĩa nhưng chưa mount (collectOrphanEcShards, bỏ file 0 byte), nếu đĩa đã có .ecx cục bộ (sau mirror) thì mount bình thường; nếu .ecx ở đĩa khác (indexEcxOwners quét cả IdxDirectory lẫn Directory, bỏ .ecx 0 byte) thì mount với thư mục idx của đĩa chủ; không có .ecx ở đâu thì để nguyên và cảnh báo. findEcxIdxDirForVolume là bản cho một volume, dùng khi MountEcShards. pruneIncompleteEcWithSiblingDat xoá EC đã mount trên một đĩa khi: số shard ít hơn DataShards của volume, có .dat ở đĩa khác với kích thước đúng bằng DatFileSize ghi trong .vif, và tổng shard khác nhau trên cả server vẫn dưới DataShards; sau đó báo DeletedEcShardsChan (không chặn nếu kênh đầy).",
+  "why": "Hệ quả: sửa hai lỗi bố cục đã gặp: shard ở một đĩa còn .ecx ở đĩa khác (#9212), và server vừa báo volume thường vừa báo shard EC cho cùng vid (#9478). Thiết kế: chỉ xoá khi có nguồn .dat khớp từng byte và không có tập shard đủ dựng lại trên cả server.",
+  "when": "Khởi động volume server (prune, rồi mirror, rồi reconcile); MountRecoveredEcShards.",
+  "ux": "Log \"loading orphan shards … using index files from …\", \"cleaning up leftover EC files\".",
+  "if_broken": "Shard có thật nhưng không được mount; hoặc master thấy cùng một vid vừa là volume thường vừa là EC.",
+  "gotchas": [
+   "pruneIncompleteEcWithSiblingDat chỉ xét EC đã mount; shard chưa mount không bị xoá ở bước này.",
+   "indexDatOwners ghi nhận cả .dat 0 byte; việc .dat có dùng được hay không do so kích thước với .vif quyết định."
+  ]
+ },
+ "weed/storage/store_ec_recover.go": {
+  "character": "Tìm volume EC có shard mà mọi đĩa đều thiếu .ecx, và mount lại sau khi lấy được .ecx từ peer",
+  "what": "CollectEcVolumesMissingIndex quét shard mồ côi trên mọi đĩa, bỏ volume có .ecx ở bất kỳ đĩa nào của server, trả danh sách (collection, vid) kèm IdxDir và DataDir của đĩa đầu tiên có shard để làm đích tải về. Hàm quét file trên đĩa nên thấy cả volume mà master chưa từng biết. MountRecoveredEcShards chạy mirror sang các đĩa có shard, mount các đĩa nay đã có .ecx cục bộ (loadOrphanEcShardsWithLocalIndex, chạy được cả trên server một đĩa), rồi reconcile kiểu trỏ sang đĩa khác cho phần còn lại. Có thể giới hạn theo danh sách vid.",
+  "why": "Hệ quả: lối khôi phục cho #10104, khi index chỉ còn trên server khác. Thiết kế: phần tải .ecx nằm ở tầng server (volume_grpc_erasure_coding_recover.go); ở đây chỉ phát hiện và mount lại.",
+  "when": "Luồng khôi phục index EC của volume server, dưới khoá vòng đời của vid.",
+  "ux": "Không thấy trực tiếp; shard sau khi mount sẽ xuất hiện lại trên master.",
+  "if_broken": "Shard có trên đĩa nhưng mất index thì không bao giờ được mount lại; dữ liệu chỉ còn dựng lại được từ các server khác."
+ },
+ "weed/storage/store_ec_scrub.go": {
+  "character": "Scrub volume EC: đi qua từng needle, đọc mọi interval từ shard local hay remote, báo shard hỏng",
+  "what": "ScrubEcVolume lấy volume đầu tiên khớp vid; ScrubEcVolumeMerged chọn runtime có EncodeTsNs bằng anchor của góc nhìn gộp, để lượt đi needle và pha parity cùng xét một lần encode, và báo thêm các runtime bị bỏ qua. Cả hai làm mới bản đồ vị trí shard rồi chạy scrubEcVolumeWalk: ScrubIndex, rồi với mỗi needle không phải tombstone thì đọc từng interval (local, kể cả đĩa bị cách ly, rồi remote; không dựng lại). Interval không đọc được thì shard đó vào danh sách hỏng. Chế độ FULL dừng needle đó và báo lỗi; READS dựng lại interval từ các shard khác và chỉ báo lỗi khi parity không cứu được. Cuối cùng parse needle; lệch kích thước do cờ xoá giữa index và dữ liệu được bỏ qua trừ khi forceDeletedNeedlesCheck.",
+  "why": "Hệ quả: là nơi phát hiện shard hỏng âm thầm trước khi cần đến nó. Thiết kế: đọc không dựng lại để tìm chính shard hỏng thay vì che nó; READS thật sự dùng tới dữ liệu parity.",
+  "when": "RPC ScrubEcVolume (volume_grpc_scrub.go), từ lệnh shell hay worker scrub.",
+  "ux": "Kết quả scrub: số file đã xét, danh sách shard hỏng, các lỗi theo needle.",
+  "if_broken": "Shard hỏng không bị phát hiện cho tới khi một lần đọc hay rebuild cần đến nó.",
+  "gotchas": [
+   "ScrubEcVolume (không gộp) dùng FindEcVolume khớp đầu tiên, nên trên server nhiều đĩa có thể quét một lần encode cũ hơn; bản gộp tránh được việc này."
+  ]
  }
 }
