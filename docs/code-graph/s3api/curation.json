@@ -4136,5 +4136,107 @@
   "when": "volume.fix.replication, volume.balance và worker balance.",
   "ux": "fix.replication sửa thiếu hay thừa replica mà không mất dữ liệu.",
   "if_broken": "Mất replica có dữ liệu mới nhất, hoặc vòng xoá rồi tạo lại liên tục."
+ },
+ "weed/cluster/cluster.go": {
+  "character": "Sổ thành viên cluster mà master giữ cho các node không phải volume server: filer, broker, s3, vector",
+  "what": "Khai báo các loại node (master, volumeServer, filer, broker, mount, s3, vector) và các kiểu FilerGroupName, DataCenter, Rack. Cluster giữ một ClusterNodeGroups cho filer, broker, s3 và vector, mỗi cái là map filer group → GroupMembers. AddClusterNode và RemoveClusterNode trả các ClusterNodeUpdate cần broadcast khi một node thật sự vào hay ra (master thì luôn trả, không lưu). ListClusterNode, ListClusterNodeUpdates (thành viên hiện tại dưới dạng tin thêm, cho client vừa kết nối lại) và IsKnownNode (không theo group, so địa chỉ có hay không có gRPC port).",
+  "why": "Hệ quả: gateway, filer và broker biết peer của mình qua đây, và Ping của master chỉ chấp nhận đích có trong sổ. Thiết kế: một sổ theo loại và filer group, đếm số stream để một kết nối lại chồng lên kết nối cũ không làm node rơi khỏi sổ.",
+  "when": "KeepConnected của master khi client đăng ký và rời đi; ListClusterNodes; Ping.",
+  "ux": "cluster.ps trong weed shell liệt kê filer, broker, s3.",
+  "if_broken": "Gateway không tìm thấy filer mới, hoặc Ping từ chối peer hợp lệ.",
+  "gotchas": [
+   "Mount không được lưu trong sổ: AddClusterNode chỉ có nhánh cho filer, broker, s3, vector và master."
+  ]
+ },
+ "weed/cluster/group_members.go": {
+  "character": "Tập thành viên của một filer group, có đếm số lần đăng ký",
+  "what": "GroupMembers giữ map địa chỉ → ClusterNode (version, thời điểm tạo, DC, rack, counter). addMember tăng counter nếu đã có, ngược lại tạo mới và trả node; removeMember giảm counter và chỉ xoá khi về 0; GetMembers liệt kê địa chỉ.",
+  "why": "Hệ quả: một node kết nối lại trước khi stream cũ kết thúc có hai đăng ký; xoá ở lần rời đầu tiên sẽ báo nó đã đi trong khi nó vẫn còn. Thiết kế: đếm tham chiếu.",
+  "when": "Mỗi KeepConnected đăng ký hay kết thúc.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Node bị báo rời cluster dù vẫn chạy."
+ },
+ "weed/cluster/master_client.go": {
+  "character": "Hai truy vấn nhỏ tới một master: danh sách peer hiện có và leader hiện tại",
+  "what": "ListExistingPeerUpdates gọi ListClusterNodes cho một loại client và filer group và trả chúng dưới dạng ClusterNodeUpdate thêm vào (kèm thời điểm tạo); lỗi RPC được trả về để caller không nhầm 'không biết' với 'không có'. LookupClusterLeader gọi GetMasterConfiguration và trả leader master đó thấy (rỗng trong lúc bầu).",
+  "why": "Hệ quả: FilerClient của gateway, filer (gộp metadata từ peer) và broker khởi tạo danh sách peer qua đây. Thiết kế: một RPC đơn trên master đang biết.",
+  "when": "wdclient/filer_client.go (discovery), filer.go và filer_server.go (peer filer), mq broker.",
+  "ux": "Log ghi 'the cluster has N filers'.",
+  "if_broken": "Gateway hay filer không thấy peer cho tới khi có tin đẩy.",
+  "gotchas": [
+   "ListExistingPeerUpdates luôn đặt NodeType là filer bất kể clientType được hỏi; mọi caller hiện tại đều hỏi filer."
+  ]
+ },
+ "weed/cluster/admin_locks.go": {
+  "character": "Tên của hai admin lock trên master",
+  "what": "AdminShellLockName = 'shell' (khoá của weed shell và các thao tác bảo trì) và AdminServerPresenceLockName = 'admin-server' (admin server giữ để báo nó đang kết nối).",
+  "why": "Hệ quả: master bỏ qua maintenance scripts của chính nó và vacuum nhường cho plugin khi khoá hiện diện của admin server đang được giữ. Thiết kế: tên cố định dùng chung giữa master, shell và admin.",
+  "when": "Khi shell, admin server hay master hỏi hoặc giữ admin lock.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Master và admin server cùng chạy bảo trì."
+ },
+ "weed/cluster/maintenance/maintenance_config.go": {
+  "character": "Mặc định của các script bảo trì mà master chạy định kỳ",
+  "what": "DefaultMaintenanceSleepMinutes = 17 và DefaultMasterMaintenanceScripts: lock, ec.encode -fullPercent=95 -quietFor=1h, ec.rebuild, ec.balance, fs.log.purge -daysAgo=7, volume.deleteEmpty -quietFor=24h, volume.balance, volume.fix.replication, s3.clean.uploads -timeAgo=24h, unlock.",
+  "why": "Hệ quả: các script này dọn multipart upload bỏ dở của gateway (s3.clean.uploads) và giữ EC, replication cân bằng khi không có admin server. Thiết kế: mặc định chèn vào master.toml mẫu và dùng khi chưa cấu hình.",
+  "when": "weed scaffold sinh master.toml; master và admin server đọc chu kỳ mặc định.",
+  "ux": "master.toml mẫu có sẵn danh sách lệnh bảo trì.",
+  "if_broken": "Không gì chạy bảo trì định kỳ, upload bỏ dở và volume rỗng tích tụ."
+ },
+ "weed/cluster/lock_client.go": {
+  "character": "Client của distributed lock trên các filer, đi thẳng tới filer chủ của key nhờ một bản sao của lock ring",
+  "what": "LockClient giữ filer seed và một bản sao lock ring (SetRing áp LockRingUpdate theo version, giữ ring trước đó 5 s cho PriorOwnerForKey; ResetRing chỉ xoá cổng version khi đổi master). hostForKey chọn filer chủ của key theo ring, hoặc seed khi chưa có ring. NewShortLivedLock (5 s), NewBlockingLongLivedLock và NewBlockingLongLivedLockWithin (gia hạn mỗi nửa TTL, mặc định 7 s) và StartLongLivedLock (chạy nền, báo khi người giữ đổi) tạo LiveLock. retryUntilLocked thử theo nhịp khoảng 1 s: tranh chấp thì chờ (tới maxWait nếu có), còn lỗi hệ thống ('no lock server found', filer không tới được) bị giới hạn 15 s trên một đường rồi quay về seed một lần. doLock gọi DistributedLock (thời hạn mỗi lần 10 s), đi theo LockHostMovedTo, giữ token cũ khi response bị mất (lần sau gia hạn bằng nó), ghi generation (fencing token), và quay về seed sau 3 lần lỗi kết nối. Stop chờ goroutine gia hạn thoát rồi mới unlock để không gửi token đã bị xoay; IsLocked còn đòi lease chưa hết hạn.",
+  "why": "Hệ quả: gateway dùng bản sao ring này để route ghi, đọc và finalize có version của một object tới filer chủ của key (PrimaryForKey, PriorOwnerForKey trong s3api_object_routed_write.go, s3api_object_routed_read.go, s3api_object_versioned_finalize.go), dùng khoá cho các nhánh xoá (withObjectWriteLock) và để một gateway duy nhất đo kích thước bucket; mount, broker, shell và filer cũng dùng. Một client nhầm là còn giữ khoá cho phép hai bên cùng ghi. Thiết kế: lease ngắn có gia hạn và generation để bên dùng chặn ghi cũ; ring phía client để bỏ một bước chuyển tiếp qua filer seed.",
+  "when": "s3api_server.go (object-write lock), bucket_size_metrics.go, mount, mq broker và kafka gateway, s3.clean.uploads, filer (filer_grpc_server.go, autochunk).",
+  "ux": "Hai thao tác trên cùng key qua hai gateway được tuần tự hoá tại cùng một filer thay vì chạy chồng nhau.",
+  "if_broken": "Ghi đồng thời cùng key, khoá treo khi một filer chết, hoặc ghi bị chặn khi lock ring rỗng.",
+  "gotchas": [
+   "NewShortLivedLock chờ tranh chấp không giới hạn (maxWait 0); chỉ lỗi hệ thống mới làm nó trả nil.",
+   "LiveLock.owner được goroutine gia hạn ghi và LockOwner đọc mà không có đồng bộ."
+  ]
+ },
+ "weed/cluster/lock_ring_manager.go": {
+  "character": "Phía master của lock ring: thành viên filer theo group, gộp thay đổi và broadcast nguyên danh sách",
+  "what": "LockRingManager giữ thành viên mỗi filer group. AddServer và RemoveServer đặt lại một timer ổn định 1 s, nên một lần rớt rồi vào lại chỉ thành một bản cập nhật. emit gửi LockRingUpdate với toàn bộ thành viên và version là thời gian nano giây hiện tại (lớn hơn mọi version trước khi master khởi động lại, nếu đồng hồ không lùi), qua broadcastToClients của master; mỗi 30 s nó gửi lại để một bản bị mất không thành vĩnh viễn, trừ khi đang có thay đổi chờ ổn định. Danh sách rỗng không bao giờ được gửi; GetLastUpdate trả bản đã gửi cuối cho client mới kết nối.",
+  "why": "Hệ quả: mọi filer và lock client phải tính cùng một chủ cho mỗi key; một trạng thái trung gian làm khoá bị chuyển qua lại và hai filer cùng cấp một khoá. Thiết kế: gửi nguyên danh sách sau khi ổn định thay vì từng thay đổi; không gửi ring rỗng vì nó làm kẹt mọi client.",
+  "when": "Filer đăng ký hay rời KeepConnected (hoặc gửi LeaveLockRing), và mỗi 30 s.",
+  "ux": "Rolling restart filer không làm khoá bị cấp hai lần.",
+  "if_broken": "Filer và client tính chủ khác nhau, khoá bị cấp đôi hoặc treo."
+ },
+ "weed/cluster/lock_manager/distributed_lock_manager.go": {
+  "character": "Distributed lock manager trên mỗi filer: chỉ chủ của key theo ring cấp khoá, và sao chép sang filer dự phòng",
+  "what": "DistributedLockManager gồm LockManager local, LockRing và ReplicateFn do filer server gắn. LockWithTimeout: không có chủ thì NoLockServerError; không phải chủ thì vẫn phục vụ một lần gia hạn của khoá chính nó còn giữ (cửa sổ giữa đổi ring và chuyển khoá), ngược lại trả movedTo; là chủ thì Lock local rồi sao chép bất đồng bộ (token, token trước, chủ, generation, seq) sang filer dự phòng (server khác kế tiếp trên ring). FindLockOwner và Unlock theo cùng luật. InsertLock (nhận khoá chuyển tới) và InsertBackupLock, RemoveBackupLockIfSeq (dự phòng) bỏ đột biến cũ theo (generation, seq). SelectNotOwnedLocks lấy ra các khoá không còn thuộc filer này theo một danh sách server; PromoteLock và DemoteLock đổi vai.",
+  "why": "Hệ quả: khi filer chủ chết, filer dự phòng đã có bản sao khoá nên không cấp khoá đó cho người khác trong lúc chủ cũ vẫn tưởng mình giữ. Thiết kế: chủ duy nhất theo consistent hashing, bản sao bất đồng bộ có số thứ tự để bản cũ không ghi đè bản mới.",
+  "when": "Mỗi DistributedLock, DistributedUnlock, FindLockOwner gRPC của filer, và khi ring đổi.",
+  "ux": "Khoá vẫn giữ đúng người khi một filer khởi động lại.",
+  "if_broken": "Khoá bị cấp hai lần hoặc không ai cấp được.",
+  "gotchas": [
+   "Sao chép sang dự phòng chạy trong một goroutine không chờ: lời trả về cho client có thể tới trước khi dự phòng nhận bản sao.",
+   "SelectNotOwnedLocks và CalculateTargetServer dựng một HashRing mới (50 vnode mỗi server) cho mỗi key qua hashKeyToServer."
+  ]
+ },
+ "weed/cluster/lock_manager/hash_ring.go": {
+  "character": "Consistent hashing với 50 virtual node mỗi server, xác định chủ và dự phòng của một key",
+  "what": "HashRing giữ các vị trí hash đã sắp và map vị trí → server; vnode là crc32 của 'server#i'. AddServer, RemoveServer, SetServers dựng lại ring (server được sắp để hai vnode trùng hash luôn rơi về cùng server trên mọi node). GetPrimaryAndBackup trả server ở vị trí đầu tiên ≥ hash của key và server khác kế tiếp theo chiều kim đồng hồ; GetPrimary chỉ trả chủ.",
+  "why": "Hệ quả: khi một filer rời đi chỉ các key của nó bị chuyển chủ. Thiết kế: thay cho băm modulo cũ; hai cách cho chủ khác nhau nên mọi filer phải được nâng cấp cùng lúc hoặc trong khoảng TTL của khoá (khoảng 7 s).",
+  "when": "Mỗi lần tính chủ của một khoá ở filer và lock client.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Hai nút tính chủ khác nhau cho cùng key, khoá bị cấp đôi."
+ },
+ "weed/cluster/lock_manager/lock_manager.go": {
+  "character": "Bảng khoá local của một filer: lease, token xoay vòng, generation và số thứ tự",
+  "what": "LockManager giữ map key → Lock (Token, PrevToken, ExpiredAtNs, Owner, IsBackup, Generation, Seq). Lock: khoá đã hết hạn mà đến kèm token thì lỗi, không token thì cấp mới (token UUID, generation mới, seq 1); khoá còn hạn với token khớp thì gia hạn và xoay token (giữ generation, seq + 1); token khớp PrevToken và cùng chủ thì trả lại token hiện tại (response gia hạn trước bị mất); không token thì 'lock already owned by'; token khác thì token mismatch. Unlock nhận token hiện tại hay token trước. CleanUp xoá khoá hết hạn mỗi phút. SelectLocks lấy ra và xoá các khoá được chọn. InsertLock, InsertBackupLock và RemoveBackupLockIfSeq so (generation, seq) và nâng sàn generation. GetLock, GetLockOwner, AllLocks bỏ khoá hết hạn; PromoteLock, DemoteLock.",
+  "why": "Hệ quả: một response gia hạn bị mất không được làm người giữ mất khoá của chính mình cho tới khi hết hạn; một unlock đến muộn không được xoá một khoá đã được cấp lại. Thiết kế: PrevToken cho lần thử lại, và (generation, seq) để sắp thứ tự đột biến giữa chủ và dự phòng.",
+  "when": "Mỗi thao tác khoá trên filer.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Khoá bị cấp hai lần, người giữ mất khoá oan, hoặc khoá hết hạn không bao giờ được giải phóng."
+ },
+ "weed/cluster/lock_manager/lock_ring.go": {
+  "character": "Lock ring trên filer: snapshot thành viên theo version, và chủ cũ trong cửa sổ chuyển giao",
+  "what": "LockRing giữ HashRing hiện tại, version (từ master; bỏ bản cũ hơn, version 0 luôn nhận) và các snapshot (mới nhất trước, mỗi cái có ring dựng sẵn). SetSnapshot thay ring và thêm snapshot trong cùng một khoá, bỏ qua khi danh sách không đổi (chỉ làm mới version) và gọi callback khi topology đổi; snapshot được thu gọn sau 5 s. Reset chỉ xoá cổng version khi đổi master, giữ ring đang dùng. PriorOwner trả chủ của key theo snapshot trước khi ring vừa đổi trong 5 s và chủ đã đổi; WriteOwner trả chủ cũ trong cửa sổ đó, nếu không thì chủ hiện tại.",
+  "why": "Hệ quả: ngay sau khi ring đổi, chủ mới chưa có các khoá mà chủ cũ đang giữ; cấp ngay sẽ cấp đôi. Thiết kế: cửa sổ làm nguội 5 s trong đó ghi được tuần tự hoá tại chủ cũ.",
+  "when": "Mỗi LockRingUpdate tới filer và mỗi lần tính chủ hay chủ cũ.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Khoá bị cấp đôi trong lúc rebalance, hoặc ring cũ được cài sau ring mới."
  }
 }
