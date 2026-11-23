@@ -5195,5 +5195,182 @@
   "gotchas": [
    "Bảng intern chỉ lớn lên, nên chỉ dùng cho giá trị lặp lại ít (collection, loại đĩa, backend)."
   ]
+ },
+ "weed/storage/volume.go": {
+  "character": "Kiểu Volume: một cặp .dat và .idx với khoá, cờ readonly, thông tin .vif và trạng thái báo cho master",
+  "what": "Volume giữ thư mục data và index, collection, backend dữ liệu, needle map, cờ noWriteOrDelete, noWriteCanDelete và ioUnavailable, superblock, ba khoá (dataFileAccessLock cho đọc ghi, dataFileSyncLock gom một thay đổi với fsync làm nó bền, superBlockAccessLock), worker ghi theo lô (chỉ tạo khi có lần ghi bền đầu tiên), các lần ghi đang chờ, mốc thời gian ghi cuối, cờ compact và thế hệ load. NewVolume load hay tạo volume. FileName đặt .idx, .cpx, .ldb, .cpldb, .rdb ở thư mục index, còn lại ở thư mục data. RelocateIndexTo chuyển .idx (và .sdx) sang thư mục khác mà không unmount. UpdateReplicaPlacement ghi lại superblock. SyncToDisk fsync khi đã nhả khoá đọc. Close chờ compact xong. SwapDataBackend đổi backend cùng cờ tier. expired và expiredLongEnough tính hết hạn TTL theo lần ghi cuối (chờ thêm 10% TTL, tối đa 10 phút); ExpireAtSec tính từ lần ghi cuối chứ không từ hiện tại. ToVolumeInformationMessage dựng báo cáo cho heartbeat, bỏ qua volume có .dat đã bị unlink mà vẫn mở (kiểm tra mỗi 30 s). ReadOnlyReasons, UnavailableError, markIoUnavailable (ghi file .unavailable và readonly vào .vif), PersistReadOnly.",
+  "why": "Hệ quả: mọi thao tác volume đi qua kiểu này và các khoá của nó; một lỗi khoá ở đây là deadlock hay dữ liệu đọc giữa lúc đổi file. Thiết kế: fsync chạy khi đã nhả dataFileAccessLock để đọc không phải chờ ghi bền, còn dataFileSyncLock giữ trật tự giữa các lần ghi và compact.",
+  "when": "Mọi đọc, ghi, xoá needle; heartbeat; compact; tier; copy.",
+  "ux": "Volume readonly hiện lý do (thao tác tay, đĩa đầy, lỗi IO) trong metric và volume.list.",
+  "if_broken": "Deadlock giữa ghi và compact, volume hết hạn TTL sai thời điểm, hoặc volume ma vẫn được báo cho master.",
+  "gotchas": [
+   "File .unavailable chỉ được xoá tay sau khi đã kiểm tra cặp .dat/.idx; mỗi lần load nó khôi phục trạng thái unavailable.",
+   "DiskType đọc từ location, nên gọi trên volume chưa gắn vào DiskLocation sẽ panic."
+  ]
+ },
+ "weed/storage/volume_allocated_unix.go": {
+  "character": "Số byte filesystem thật sự giữ cho một file (không phải Windows)",
+  "what": "AllocatedSize trả số block nhân 512 từ stat, lớn hơn kích thước file khi file được preallocate với FALLOC_FL_KEEP_SIZE.",
+  "why": "Hệ quả: tính dung lượng chưa dùng của đĩa và tiền giữ chỗ khi copy dựa vào số này, để volume preallocate không bị đếm thiếu. Thiết kế: build tag !windows.",
+  "when": "UnUsedSpace của DiskLocation; VolumeCopy sau khi tạo .dat preallocate.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Master tạo quá nhiều volume trên đĩa đã bị preallocate gần đầy."
+ },
+ "weed/storage/volume_backup.go": {
+  "character": "Backup tăng dần phía nhận, và các hàm tìm vị trí resume phía nguồn",
+  "what": "GetVolumeSyncStatus trả tail offset, kích thước .idx, compact revision, TTL, replication, version. IncrementalBackup (phía backup) dựng con trỏ của bản local (số entry, khoá, size, cookie, append_at_ns của entry cuối, và hash FNV-1a của (khoá, size) mọi entry, bỏ offset vì offset khác nhau giữa các replica), gọi VolumeIncrementalCopy, ghi phần .dat nhận được vào cuối và phần .idx (chỉ needle map trong bộ nhớ mới nạp lại được các dòng này; map khác thì dựng lại index từ .dat), và lỗi giữa chừng thì cắt cả hai file về mốc trước. Phía nguồn: ResumeByLastEntry kiểm tra entry tại vị trí entry_count - 1 khớp khoá, size, cookie và hash phần đầu, rồi tìm dòng kế tiếp có record trong .dat; BinarySearchByAppendAtNs tìm nhị phân trên .idx theo append_at_ns (bỏ qua tombstone offset 0); DatSizeCoveredByIndex trả cuối .dat mà các dòng index trong giới hạn đã phủ.",
+  "why": "Hệ quả: weed backup dựa vào đây để chỉ tải phần mới; resume theo vị trí index đúng cả khi một replica khác trả lời, vì append_at_ns khác nhau giữa các replica. Thiết kế: hash cả phần đầu vì các lần ghi có replication có thể đến mỗi replica theo thứ tự khác.",
+  "when": "weed backup (phía nhận); VolumeIncrementalCopy và VolumeTailSender (phía nguồn).",
+  "ux": "weed backup chạy định kỳ chỉ tốn băng thông cho phần mới.",
+  "if_broken": "Backup ghép nhầm dữ liệu của replica khác, nhân đôi record, hoặc tail bắt đầu sai chỗ.",
+  "gotchas": [
+   "BinarySearchByAppendAtNs giả định .idx theo thứ tự append; sau vacuum .idx theo thứ tự khoá, chỉ khớp thứ tự ghi vì master cấp khoá tăng dần."
+  ]
+ },
+ "weed/storage/volume_checking.go": {
+  "character": "Kiểm tra toàn vẹn volume lúc load và khi scrub, và sửa đuôi .dat bị cắt dở sau crash",
+  "what": "ScrubIndex kiểm tra .idx; Scrub đọc mọi needle được index (bỏ tombstone offset 0), so id trong header với khoá index, và so kích thước .dat với tổng record. CheckVolumeDataIntegrity lúc load: tìm entry có offset lớn nhất (nhanh khi .idx theo thứ tự append, nếu không quét cả file vì weed fix có thể ghi .idx theo khoá), với volume sẽ load ghi được thì gọi repairUnindexedDatTail, rồi kiểm tra needle cuối khớp index và .dat kết thúc đúng ở đó (tombstone đọc với size 0). repairUnindexedDatTail (chỉ v3, local, dưới 32 GiB): bắt đầu từ needle cuối có index (phải khớp id, size, CRC), index lại mọi needle hoàn chỉnh phía sau (CRC đúng, append_at_ns tăng dần), cắt phần cuối không hoàn chỉnh, sync .dat trước rồi mới ghi .idx; đuôi hỏng theo cách khác thì không sửa và volume load readonly. recoverLastModifiedTs đặt đồng hồ TTL theo lần ghi mới nhất (volume đã vacuum thì phải quét mọi lần ghi, giới hạn 65536 needle). checkIdxFile báo thiếu .idx khi .dat có dữ liệu.",
+  "why": "Hệ quả: một crash giữa lúc ghi .dat và .idx không làm volume thành readonly vĩnh viễn, và needle đã được trả lời cho client không bị bỏ; một kiểm tra quá chặt ở đây làm volume readonly sau mỗi lần khởi động. Thiết kế: chỉ sửa những gì một lần append bị ngắt giải thích được, còn lại giữ volume readonly cho operator.",
+  "when": "Mỗi lần load volume; volume.scrub.",
+  "ux": "Volume server khởi động lại sau mất điện mà volume vẫn ghi được.",
+  "if_broken": "Volume load readonly sau mỗi lần khởi động, needle đã xác nhận bị mất, hoặc volume TTL không bao giờ hết hạn.",
+  "gotchas": [
+   "Một record size 0 được khôi phục có thể là lần xoá chứ không phải lần ghi rỗng; hai loại giống hệt nhau trên đĩa, và code chọn coi là ghi rỗng.",
+   "Volume đã vacuum có hơn 65536 needle sống giữ mtime của .dat làm đồng hồ TTL."
+  ]
+ },
+ "weed/storage/volume_idx_rebuild.go": {
+  "character": "Dựng lại .idx từ .dat",
+  "what": "VolumeFileScanner4RebuildIdx ghi một dòng index cho mỗi record của .dat theo thứ tự append, dừng ở header toàn 0, size âm, hay record vượt cuối file. rebuildIdxFile ghi vào .idx.tmp rồi rename và fsync thư mục; rebuildIdxToTempFile ghi vào file tạm của hệ thống khi thư mục index chỉ đọc.",
+  "why": "Hệ quả: một volume thiếu .idx (đổi -dir.idx sang thư mục rỗng, mất index) tự phục hồi lúc load thay vì làm volume server dừng. Thiết kế: toàn bộ index suy ra được từ .dat.",
+  "when": "Load volume khi .idx không có.",
+  "ux": "Đổi -dir.idx không làm mất volume.",
+  "if_broken": "Volume không load được sau khi đổi thư mục index, hoặc index dựng lại có dòng giả.",
+  "gotchas": [
+   "Record size 0 được index như tombstone."
+  ]
+ },
+ "weed/storage/volume_idx_repair.go": {
+  "character": "Khôi phục các dòng đầu .idx bị tombstone ghi đè (lỗi cũ của volume tier chỉ đọc)",
+  "what": "repairIdxHeadTombstones nhận ra dấu vết: .idx bắt đầu bằng một loạt tombstone offset 0, điều một .idx lành không bao giờ có. Nó đọc header của N record đầu .dat (N là số tombstone đó), bỏ các khoá mà .idx đã nêu ở chỗ khác, rồi ghi các dòng tìm lại được lên đầu .idx qua file tạm và rename, giữ thứ tự các dòng còn lại.",
+  "why": "Hệ quả: các volume đã tier bị xoá file trước bản sửa (SortedFileNeedleMap từng ghi tombstone từ offset 0 của .idx) đọc lại được những needle đầu tiên vốn vẫn nằm nguyên trong .dat. Thiết kế: chỉ đọc header ở đầu .dat, rẻ cả khi .dat nằm trên tier.",
+  "when": "Mỗi lần load volume (bỏ qua khi backend remote không trả superblock).",
+  "ux": "File đầu tiên của volume đã tier hết báo 404.",
+  "if_broken": "Needle đầu volume vẫn 404, hoặc .idx bị ghi lại sai thứ tự."
+ },
+ "weed/storage/volume_info/volume_info.go": {
+  "character": "Đọc và ghi file .vif (VolumeInfo dạng JSON protobuf)",
+  "what": "MaybeLoadVolumeInfo đọc .vif nếu có (file rỗng coi như không có; JSON không parse được thì thử định dạng cũ OldVersionVolumeInfo), trả kèm có file remote hay không. SaveVolumeInfo ghi qua file tạm duy nhất, chmod, fsync, rename, rồi fsync thư mục; fsync thư mục lỗi thì trả NotCrashDurableError (nội dung đã đúng, chỉ có thể mất khi crash) để caller không rollback trạng thái trong bộ nhớ.",
+  "why": "Hệ quả: tier, readonly bền, replication cấu hình lại, cấu hình EC và danh tính lần encode đều nằm trong .vif, nên một lần ghi dở ở đây là mất trạng thái volume. Thiết kế: ghi nguyên tử và phân biệt lỗi trước và sau lúc commit.",
+  "when": "Load volume; đánh dấu readonly; tier; EC encode và copy; cấu hình replication.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Volume mất cờ readonly hay tham chiếu tier sau khởi động lại, hoặc EC đọc sai cấu hình.",
+  "gotchas": [
+   "File .vif rỗng được coi như không tồn tại (ec.decode có thể chép một .vif rỗng)."
+  ]
+ },
+ "weed/storage/volume_loading.go": {
+  "character": "Load một volume: .vif, .dat local hay remote, superblock, .idx và chọn needle map",
+  "what": "load đọc .vif (readonly bền, tier), mở .dat remote (cờ chỉ xoá) hay local (chỉ đọc khi không ghi được hoặc nằm trên mount chỉ đọc), tạo .dat mới nếu được phép, đọc hay ghi superblock, dùng .idx cạnh .dat nếu có, dựng lại .idx khi thiếu, sửa các dòng đầu .idx bị ghi đè, kiểm tra toàn vẹn và sửa đuôi dở (lỗi thì readonly), khôi phục đồng hồ TTL, rồi chọn needle map: volume readonly dùng SortedFileNeedleMap (hoặc map trong bộ nhớ khi thư mục index chỉ đọc), còn lại theo -index (memory, leveldb với bộ đệm 2, 4, 8 MiB và tối đa 16, 32, 64 file SST mở). Cuối cùng kiểm tra không dòng index nào trỏ quá cuối .dat (MaxNeedleEnd, issue #8928; vi phạm thì readonly), khôi phục trạng thái unavailable, và ghi .vif nếu chưa có. reopenIdxForWrite đổi SortedFileNeedleMap sang map ghi được khi volume được bật ghi lại.",
+  "why": "Hệ quả: mọi quyết định volume ghi được hay chỉ đọc lúc khởi động đều ở đây; một kiểm tra sai làm cả cluster mất chỗ ghi sau một lần khởi động lại. Thiết kế: giới hạn số file SST mở mỗi LevelDB vì một volume server có hàng nghìn LevelDB (comment trong file).",
+  "when": "Khởi động volume server; mount; commit compact; chuyển index; bật ghi lại.",
+  "ux": "Volume server với hàng nghìn volume leveldb không hết file descriptor.",
+  "if_broken": "Volume load readonly không lý do, volume không load được, hoặc hết file descriptor.",
+  "gotchas": [
+   "Version superblock không hỗ trợ làm chương trình dừng (glog.Fatalf).",
+   "Volume đã tier không kiểm tra toàn vẹn dữ liệu, để không tải .dat từ remote về."
+  ]
+ },
+ "weed/storage/volume_pending_write.go": {
+  "character": "Theo dõi các lần ghi đang chạy để một lần xoá có thể huỷ chúng",
+  "what": "trackPendingWrite và untrackPendingWrite ghi nhận một lần ghi từ lúc vào volume tới lúc trả về. CancelPendingWrites đánh dấu huỷ các lần ghi cùng khoá và cookie. appendWriteRequest từ chối lần ghi đã bị huỷ; dropCancelledWrite ghi tombstone ngay sau khi lần ghi bị huỷ vừa được publish, trong cùng lần giữ khoá, và trả ErrorDeleted.",
+  "why": "Hệ quả: một lần xoá đến trong lúc lần ghi của chính needle đó còn xếp hàng không bị lần ghi làm sống lại trên một replica (DeleteHandler và BatchDelete dùng). Thiết kế: huỷ theo khoá và cookie để không chạm lần ghi của file khác cùng khoá.",
+  "when": "Mỗi lần ghi needle; DELETE trên volume có replication.",
+  "ux": "Không thấy trực tiếp; file đã xoá không sống lại trên một replica.",
+  "if_broken": "Needle đã xoá sống lại trên một replica, đọc ngẫu nhiên giữa các replica trả file đã xoá."
+ },
+ "weed/storage/volume_read.go": {
+  "character": "Đọc needle từ volume: tra needle map, đọc metadata hay cả needle, stream có kiểm tra CRC, quét .dat",
+  "what": "readNeedle tra needle map (đã xoá thì ErrorDeleted, trừ readDeleted), đọc chỉ metadata khi caller cho phép (needle lớn hơn 1 MiB, HEAD, Range; không áp dụng v1, nén hay chunk manifest), và trả NotFound khi needle quá TTL tính từ append_at_ns. streamNeedleData stream dữ liệu theo bộ đệm: kiểm tra header tại offset thật là đúng needle, đọc lại vị trí khi volume vừa bị compact (và kiểm tra record đã chuyển đúng là record cũ), giữ trang cuối lại tới khi CRC khớp để một needle hỏng không bao giờ được gửi đủ, và với hasSlowRead thì nhả khoá giữa các trang. readNeedleDataInto cho Range: lần đầu đọc cả needle để kiểm CRC và ghi CRC từng khối (64 khối, mỗi khối 64 KiB tới 1 MiB, cache LRU 64 nghìn needle theo thế hệ load), các lần sau chỉ kiểm khối mà range phủ. ReadNeedleBlob, LookupNeedle, readNeedleMetaAt. ScanVolumeFile và ScanVolumeFileFrom quét tuần tự .dat cho các VolumeFileScanner.",
+  "why": "Hệ quả: đây là đường đọc của mọi GET; dữ liệu hỏng trên một replica bị phát hiện trước khi byte nào được gửi để client thử replica khác. Thiết kế: Range không có checksum riêng nên kiểm theo khối, và đọc theo trang để file lớn không nạp hết vào bộ nhớ.",
+  "when": "Mỗi GET, HEAD, Range; vacuum, tail, backup, export quét .dat.",
+  "ux": "Tải file lớn hay tua video không làm server tốn bộ nhớ; file hỏng trả lỗi thay vì byte sai.",
+  "if_broken": "Client nhận byte hỏng, đọc trúng needle khác sau compact, hoặc bộ nhớ tăng vọt khi đọc file lớn.",
+  "gotchas": [
+   "ScanVolumeFileFrom vẫn gọi VisitNeedle khi đọc thân needle lỗi (lệnh trả lỗi bị comment), nên scanner nhận needle dở.",
+   "TTL của needle tính từ append_at_ns; needle v2 có TTL (append_at_ns = 0) luôn bị coi là đã hết hạn."
+  ]
+ },
+ "weed/storage/volume_read_all.go": {
+  "character": "Scanner gửi mọi needle còn sống của volume qua stream ReadAllNeedles",
+  "what": "VolumeFileScanner4ReadAll đọc cả thân needle và chỉ gửi những record mà needle map đang trỏ tới đúng offset đó (bản mới nhất), kèm id, cookie, blob, cờ nén, last_modified, crc, name, mime; kiểm tra volume còn khả dụng ở mỗi needle.",
+  "why": "Hệ quả: ReadAllNeedles không gửi bản cũ bị ghi đè. Thiết kế: lọc bằng needle map thay vì dựng tập khoá riêng.",
+  "when": "RPC ReadAllNeedles (không có caller Go trong repo).",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Công cụ xuất nhận bản cũ hay thiếu needle."
+ },
+ "weed/storage/volume_replica/idx_set.go": {
+  "character": "Chọn replica nguồn cho EC encode bằng cách so tập needle còn sống trong .idx của mọi replica",
+  "what": "SelectSourceIfIndexesMatch chép .idx của từng replica, dựng tập khoá còn sống, và nhận ra các lần xoá mà một replica bỏ lỡ (MissedDeletes): needle còn sống ở replica i mà replica j giữ cùng lần ghi đó (cookie, CRC, last_modified giống, append_at_ns cách nhau dưới 1 phút) rồi tombstone sau đó. Sau khi trừ các needle đó, mọi replica phải có cùng tập khoá; nếu không thì từ chối encode (không lấy hợp). Replica nguồn phải không bỏ lỡ lần xoá nào, ưu tiên replica được chỉ định. RequireCapacitySource đòi nguồn nằm trong nhóm còn chỗ. ReadReplicaIndex đọc .idx của một replica vào MemDb.",
+  "why": "Hệ quả: EC encode xoá các replica gốc sau khi encode, nên encode từ một replica thiếu dữ liệu hay còn file đã xoá là mất dữ liệu hay làm file đã xoá sống lại vĩnh viễn. Thiết kế: chỉ tin bằng chứng từ chính index của các replica, và từ chối thay vì lấy hợp.",
+  "when": "ec.encode của shell (weed/ec/ec_encode.go); task erasure_coding của worker.",
+  "ux": "ec.encode báo replica lệch và gợi ý chạy volume.check.disk -syncDeleted -apply trước.",
+  "if_broken": "Encode từ replica thiếu needle hay còn needle đã xoá."
+ },
+ "weed/storage/volume_replica/replica_sync.go": {
+  "character": "Dựng bản hợp của các replica lên replica lớn nhất trước khi dùng nó làm nguồn",
+  "what": "GetReplicaStatus và GetReplicaStatuses gọi VolumeStatus. SyncAndSelectBestReplica: nếu mọi replica có cùng FileCount thì coi là nhất quán và trả một replica; nếu không thì buildUnionReplica chọn replica có FileCount lớn nhất (không bị loại trừ), đọc .idx của nó và của từng replica khác, và chép bằng ReadNeedleBlob và WriteNeedleBlob những needle còn sống ở replica khác mà replica tốt nhất không có entry nào (một tombstone ở replica đích cũng tính là có), bỏ qua needle được ghi sau lúc bắt đầu khi replica còn ghi được.",
+  "why": "Hệ quả: volume.tier.move không đưa lên tier một replica thiếu file. Thiết kế: chỉ thêm needle còn thiếu, không bao giờ ghi đè một tombstone của replica đích.",
+  "when": "volume.tier.move của shell.",
+  "ux": "volume.tier.move in ra số entry đã chép để hợp nhất.",
+  "if_broken": "Replica được tier thiếu file, hoặc file đã xoá ở một replica sống lại trong bản hợp.",
+  "gotchas": [
+   "Kiểm tra nhất quán chỉ so FileCount (số lần put), nên hai replica mỗi bên thiếu một needle khác nhau vẫn được coi là nhất quán.",
+   "Bản hợp có thể làm sống lại needle mà một replica thứ ba đã xoá, nếu replica đích chưa từng có needle đó."
+  ]
+ },
+ "weed/storage/volume_super_block.go": {
+  "character": "Đọc và ghi superblock của volume, có timeout cho volume tier",
+  "what": "maybeWriteSuperBlock ghi superblock vào .dat rỗng (file chỉ đọc và rỗng thì tạo lại và bật ghi). readSuperBlock đọc superblock local hay remote, rồi lấy replication từ .vif nếu .vif có (ghi đè giá trị trong superblock). readRemoteSuperBlock đọc trong tối đa 10 s; quá thời gian thì backend đó bị bỏ qua 1 phút cho các volume khác.",
+  "why": "Hệ quả: một tier không trả lời không làm volume server khởi động mất hàng phút cho mỗi volume. Thiết kế: replication trong .vif thắng superblock, để volume.configure.replication có hiệu lực cả khi .dat nằm trên tier.",
+  "when": "Load volume.",
+  "ux": "Volume server khởi động nhanh dù S3 chậm.",
+  "if_broken": "Volume tier không load được, hoặc replication cấu hình lại bị mất."
+ },
+ "weed/storage/volume_tier.go": {
+  "character": "Phần tier của Volume: .vif, backend remote, chuyển sang đọc từ remote, cho phép xoá sau khi tier",
+  "what": "maybeLoadVolumeInfo đọc .vif, intern các chuỗi lặp lại, và dừng chương trình khi BytesOffset trong .vif khác kích thước offset của bản build (4 hay 5 byte). LoadRemoteFile và loadRemoteFileLocked đổi backend sang object remote (RemoteFile đầu tiên). MarkTieredDeletable cho volume một bản sao vừa tier được xoá ngay, như lúc load lại (volume có replication thì không, vì shell chép .idx và .vif sang các replica sau khi upload). AttachRemoteDatFile ghi RemoteFile vào .vif và đổi backend, chỉ khi .dat không bị compact thay và kích thước không đổi trong lúc chép. SaveVolumeInfo cập nhật ExpireAtSec rồi ghi .vif.",
+  "why": "Hệ quả: một lần xoá trên volume vừa tier mà bị từ chối thì filer bỏ qua và byte nằm lại trong object remote mãi (comment của MarkTieredDeletable). Thiết kế: kiểm tra và đổi backend dưới cùng khoá dữ liệu, để một lần ghi hay commit hoặc xảy ra trước (và bị thấy) hoặc sau (và bị từ chối).",
+  "when": "Load volume; volume.tier.upload và volume.tier.download.",
+  "ux": "Volume đã tier vẫn xoá được file.",
+  "if_broken": "Volume tier không load được, hay mất dữ liệu ghi vào lúc tier.",
+  "gotchas": [
+   "BytesOffset lệch làm process thoát (glog.Exitf) với gợi ý dùng bản build large_disk."
+  ]
+ },
+ "weed/storage/volume_vacuum.go": {
+  "character": "Vacuum một volume: compact sang .cpd/.cpx, áp phần thay đổi trong lúc compact, commit bằng marker .cpc",
+  "what": "garbageLevel là byte đã xoá chia nội dung (ước lượng từ kích thước .dat khi .idx không có size đã xoá). CompactByIndex chép các needle còn sống theo .idx sang .cpd (bỏ needle quá TTL theo TTL của volume; bỏ entry hỏng vĩnh viễn như EOF, size sai, CRC sai nhưng dừng khi gặp lỗi IO tạm, issue #8928), ghi .cpx, kiểm tra .cpd không ngắn hơn số byte còn sống, và dựng needle map tạm; CompactByVolumeData là cách cũ quét .dat. CommitCompact: makeupDiff chép sang file mới các lần ghi và xoá đến sau lúc compact bắt đầu (chỉ khi compact revision khớp), đóng volume, ghi marker .cpc bền, rename .cpd thành .dat và .cpx thành .idx, xoá .ldb cũ, xoá marker, rồi load lại. reconcileCompactState lúc khởi động: có .cpc thì hoàn tất rename, không có thì xoá .cpd/.cpx mồ côi. cleanupCompact từ chối khi còn .cpc. Volume đã tier không được compact.",
+  "why": "Hệ quả: đây là cách duy nhất lấy lại dung lượng của needle đã xoá; một crash giữa hai lần rename từng để lại .idx cũ mà lần vacuum sau compact thành rỗng, nên marker .cpc làm cặp rename nguyên tử. Thiết kế: compact không khoá volume, rồi bù phần thay đổi lúc commit dưới khoá.",
+  "when": "VacuumVolumeCompact, Commit, Cleanup; CompactVolumeFiles sau EC decode; khởi động (reconcile).",
+  "ux": "Dung lượng đĩa giảm sau vacuum.",
+  "if_broken": "Mất needle còn sống, .dat và .idx lệch nhau sau crash, hoặc volume kẹt với .cpd/.cpx.",
+  "gotchas": [
+   "Volume có MemoryMapMaxSizeMb khác 0 bỏ qua compact và commit mà vẫn trả thành công; trên Linux tham số này không tạo memory map nên volume đó chỉ đơn giản không được vacuum tới lần khởi động lại.",
+   "Needle bị bỏ vì quá TTL theo TTL của volume, không phải TTL riêng của needle.",
+   "Tombstone mà makeupDiff ghi vào .dat mới mang cookie giả 0x12345678."
+  ]
+ },
+ "weed/storage/volume_write.go": {
+  "character": "Ghi và xoá needle trên volume: kiểm tra cookie, append, fsync theo lô, publish vào needle map, huỷ volume",
+  "what": "syncWrite (dưới hai khoá) kiểm tra readonly và volume đã đóng; không fsync thì append và publish ngay; có fsync thì append, nhả khoá đọc để fsync .dat, rollback (cắt .dat, khôi phục mốc thời gian) khi fsync lỗi, publish vào needle map, rồi fsync .idx (lỗi thì volume ngừng nhận ghi). writeNeedle2 gán TTL của volume cho needle không có TTL và đưa lần ghi bền vào worker theo lô. appendWriteRequest bỏ qua nội dung không đổi, kiểm tra cookie với needle đang có (entry index trỏ tới record khác thì coi là cũ và ghi đè; batch delete không cookie lấy cookie cũ), tính append_at_ns tăng dần rồi Append. Xoá: appendDeleteRequest ghi tombstone vào .dat (volume tier thì không ghi gì), publishDeleteRequest cập nhật map. Worker theo lô gom tối đa 128 request hay 4 MiB, chờ thêm tối đa 500 µs khi lô còn nhỏ, áp theo từng đoạn khoá khác nhau, fsync một lần cho cả đoạn rồi mới publish, và một lỗi index làm các request sau bị từ chối. WriteNeedleBlob kiểm tra header và kích thước blob rồi append. Destroy (có only_empty, only_garbage, keep_remote_data) xoá object remote trước, dừng worker, và xoá mọi file của volume (giữ .vif khi có EC volume cùng vid).",
+  "why": "Hệ quả: đây là đường ghi của mọi needle; thứ tự fsync .dat, publish, fsync .idx bảo đảm một index entry không bao giờ trỏ tới byte chưa bền và một lần đọc không bao giờ thấy offset sẽ bị cắt. Thiết kế: một fsync cho cả lô để nhiều lần ghi nhỏ đồng thời không trả mỗi lần một fsync.",
+  "when": "Mỗi POST, PUT, DELETE needle; BatchDelete; tail; replica sync; xoá volume.",
+  "ux": "Ghi bền (fsync=true) nhiều file nhỏ cùng lúc vẫn nhanh.",
+  "if_broken": "Mất lần ghi đã xác nhận, needle đã xoá sống lại, hoặc .idx trỏ quá cuối .dat sau crash.",
+  "gotchas": [
+   "Worker theo lô chỉ được tạo ở lần ghi bền đầu tiên, để hàng triệu volume không tốn một goroutine mỗi cái.",
+   "Volume TTL không bao giờ dùng kiểm tra nội dung không đổi (isFileUnchanged)."
+  ]
  }
 }
