@@ -4238,5 +4238,324 @@
   "when": "Mỗi LockRingUpdate tới filer và mỗi lần tính chủ hay chủ cũ.",
   "ux": "Không thấy trực tiếp.",
   "if_broken": "Khoá bị cấp đôi trong lúc rebalance, hoặc ring cũ được cài sau ring mới."
+ },
+ "weed/pb/volume_server.proto": {
+  "character": "Hợp đồng gRPC của volume server: 49 RPC cho dữ liệu, vacuum, sao chép, EC, tier, scrub, và các message được lưu xuống đĩa",
+  "what": "Khai báo service VolumeServer (49 RPC) và các message của nó. Ngoài request và response, vài message là định dạng file trên đĩa: VolumeServerState (cờ maintenance và version, store lưu lại), VolumeInfo trong file .vif (các RemoteFile của tier, version, replication, dat_file_size, expire_at_sec, read_only và read_only_can_delete, EcShardConfig), EcShardConfig (số shard data và parity, encode_ts_ns là danh tính của một lần encode, block_size cho layout khối đều, 0 là layout cũ 1 GiB/1 MiB), EcBitrotProtection và EcShardChecksums (nội dung sidecar .ecsum: CRC32C theo khối, mặc định 16 MiB). OldVersionVolumeInfo giữ để đọc .vif cũ. VolumeScrubMode gồm INDEX, FULL, LOCAL, CHECKSUM (chỉ EC) và READS.",
+  "why": "Hệ quả: master, filer, shell, worker và các volume server khác đều nói với volume server qua hợp đồng này, và VolumeInfo, EcShardConfig, EcBitrotProtection là định dạng file, nên đổi số hay ý nghĩa một field làm hỏng cả dữ liệu đã lưu chứ không chỉ giao tiếp. Thiết kế: field mới chỉ được thêm, giá trị 0 giữ hành vi cũ (encode_ts_ns, full_teardown_done để caller nhận ra một server cũ đã bỏ qua teardown).",
+  "when": "Mọi lời gọi gRPC tới volume server; mỗi lần đọc hay ghi .vif và .ecsum.",
+  "ux": "Các lệnh volume.* và ec.* của weed shell, task của worker và console admin đều dựa trên các RPC này.",
+  "if_broken": "Hai phiên bản server hiểu khác nhau một request; .vif hay .ecsum đọc ra sai, volume mount lỗi hoặc EC đọc theo sai layout.",
+  "gotchas": [
+   "Server Rust (seaweed-volume) giữ một bản sao riêng của proto này; commit 284796c7 phải thêm field ở cả hai nơi.",
+   "ReceiveFileInfo để dành số field 8 tới 11 cho versioned-EC; disk_type nằm ở 12.",
+   "BatchDelete không truyền lệnh xoá tới replica (comment trong proto); caller tự gọi từng replica."
+  ]
+ },
+ "weed/pb/volume_server_pb/volume_server_helper.go": {
+  "character": "Helper nhỏ của volume_server_pb: tên backend của một RemoteFile",
+  "what": "Một hàm: RemoteFile.BackendName ghép BackendType và BackendId bằng dấu chấm (ví dụ s3.default), là khoá để tra backend.BackendStorages.",
+  "why": "Hệ quả: volume đã tier tìm backend lưu trữ của mình từ .vif bằng tên này (volume.go, volume_tier.go, volume_super_block.go). Thiết kế: một chỗ duy nhất định nghĩa cách ghép, để .vif và cấu hình storage.backend khớp nhau.",
+  "when": "Khi volume đã tier được load, khi đọc superblock từ remote, khi tải .dat về hay xoá bản remote.",
+  "ux": "Không thấy trực tiếp; tên như s3.default là tên backend trong cấu hình.",
+  "if_broken": "Volume đã tier không tìm thấy backend của mình và load lỗi."
+ },
+ "weed/server/volume_grpc_admin.go": {
+  "character": "RPC quản trị volume: kiểm tra whitelist gRPC, cấp phát, mount, xoá, readonly và writable, cấu hình, trạng thái, Ping",
+  "what": "checkGrpcAdminAuth lấy IP của peer gRPC và so với whitelist của guard: không có peer info thì từ chối, whitelist rỗng thì cho mọi IP qua. AllocateVolume, VolumeMount, VolumeUnmount, VolumeDelete và VolumeConfigure giữ volumeCopyGuard của volume và trả Unavailable khi một VolumeCopy đang chạy. DeleteCollection; VolumeConsolidateIndex đưa .idx về thư mục index. VolumeDelete được phép cả khi maintenance (#11066), bỏ qua request đã bị huỷ trước khi chạy (như server Rust), và hỗ trợ only_empty, only_garbage, keep_remote_data. volumeStatusError gắn mã NotFound, FailedPrecondition, ResourceExhausted mà giữ nguyên message. makeVolumeReadonly làm ba bước: báo master là readonly, đánh dấu local, báo master lần nữa để chặn một heartbeat chen vào giữa; makeVolumeWritable đánh dấu local rồi báo master, và bị chặn khi maintenance. notifyMasterVolumeReadonly thử lại một lần ở leader Raft khi master trả Not current leader. VolumeStatus, VolumeServerStatus, VolumeServerLeave (dừng heartbeat), VolumeNeedleStatus. Ping chỉ nhận đích là master hiện tại hoặc một seed master; đích rỗng là tự kiểm tra sống.",
+  "why": "Hệ quả: shell, worker và master điều khiển vòng đời volume qua các RPC này, và whitelist ở đây là lớp quyền duy nhất trước các lệnh phá huỷ. Thiết kế: phân quyền theo người gọi chứ không theo mức nguy hiểm, vì volume server gọi lẫn nhau và whitelist của operator thường không chứa mọi peer (danh sách RPC không kiểm tra nằm trong volume_grpc_admin_auth_coverage_test.go).",
+  "when": "volume.move, volume.balance, volume.delete, volume.mark, volume.configure.replication, volumeServer.leave của shell; task balance và vacuum của worker; master gọi AllocateVolume khi grow; scrub khoá volume hỏng.",
+  "ux": "Khi một volume chuyển readonly, master ngừng gán ghi cho nó trước khi volume thật sự từ chối ghi, nên client ít gặp 409.",
+  "if_broken": "Volume bị xoá hay mount giữa lúc đang copy, readonly không tới master nên client vẫn được gán ghi vào volume đã khoá, hoặc máy ngoài whitelist chạy được lệnh phá huỷ.",
+  "gotchas": [
+   "Whitelist rỗng nghĩa là cho phép tất cả; muốn bảo vệ các RPC phá huỷ phải đặt -whiteList hoặc guard.white_list.",
+   "Ping chỉ nhận đích kiểu master: isKnownPingTarget trả false cho mọi loại khác, nên nhánh filer và volume server trong Ping không chạy được với một đích khác rỗng.",
+   "Lỗi không phải leader được nhận ra bằng cách so chuỗi Not current leader."
+  ]
+ },
+ "weed/server/volume_grpc_batch_delete.go": {
+  "character": "BatchDelete: xoá nhiều fid trên một volume server, không lan sang replica",
+  "what": "Kiểm tra whitelist và maintenance, rồi với mỗi fid: parse (lỗi là 400); nếu không skip_cookie_check thì đọc header và trailer của needle (không có là 404) và so cookie (sai là 400); từ chối chunk manifest (406); rồi xoá ở volume thường (DeleteVolumeNeedle, fsync tuỳ chọn) hay volume EC (DeleteEcShardNeedle). Kết quả từng fid: 202 kèm kích thước, 304 khi đã xoá từ trước (cả EC lẫn thường), 500 khi lỗi. Với skip_cookie_check, cookie lấy từ fid được gắn vào needle để lệnh xoá huỷ các lần ghi còn đang chờ mang cookie đó.",
+  "why": "Hệ quả: filer xoá chunk qua đây (operation.DeleteFileIdsWithLookupVolumeId tra mọi vị trí của volume rồi gọi BatchDelete ở từng server), nên lỗi ở đây để lại chunk mồ côi chiếm đĩa. Thiết kế: chỉ xoá local; caller chịu trách nhiệm gọi đủ các replica.",
+  "when": "Filer xoá chunk của file bị xoá hay ghi đè (filer_deletion.go); volume.fsck, volume.check.disk, fs.merge.volumes của shell.",
+  "ux": "Không thấy trực tiếp; dung lượng được trả lại sau vacuum.",
+  "if_broken": "Chunk không bao giờ bị xoá và đĩa đầy dần, hoặc một replica còn giữ chunk mà các replica khác đã xoá.",
+  "gotchas": [
+   "Filer gọi với skip_cookie_check = true (DeleteFileIdsWithLookupVolumeId truyền includeCookie = false).",
+   "Với skip_cookie_check, needle không được đọc trước, nên kiểm tra chunk manifest (dựa vào cờ của needle) không có tác dụng: cờ chỉ có sau khi đọc."
+  ]
+ },
+ "weed/server/volume_grpc_client_to_master.go": {
+  "character": "Vòng heartbeat của volume server tới master: tìm leader, báo volume và shard EC, nhận cấu hình",
+  "what": "checkWithMaster lặp qua các seed master (nghỉ 1,79 s mỗi vòng) tới khi một master trả GetMasterConfiguration, để lấy địa chỉ và chu kỳ đẩy metrics. heartbeat chạy mãi: thử master hiện tại, đi theo leader mà master gợi ý (mỗi gợi ý một lần, nghỉ 3 s), và khi stream hỏng thì hỏi các master khác ai là leader (refreshLeaderFromPeers hỏi master vừa mất sau cùng); trước lần đăng ký đầu tiên, ngay sau khi mất leader, hoặc khi vừa biết leader, nó kết nối lại sau 1 s thay vì chờ cả pulse. doHeartbeatWithRetry mở stream SendHeartbeat: gửi danh sách volume đầy đủ và heartbeat EC lúc đầu; mỗi pulse gửi CollectHeartbeat (store chỉ gửi volume đã đổi khi master hỗ trợ digest, và gửi lại đầy đủ khi master yêu cầu); heartbeat EC mỗi 17 pulse; delta volume và shard EC mới hay bị xoá, và state, ngay khi có. Từ phản hồi, nó cập nhật volume size limit và leader; khi master báo DuplicatedUuids thì thử lại sau 2, 4, 8 s rồi os.Exit(1) sau 3 lần. StopHeartbeat đặt isHeartbeating = false và đóng stopChan; stream khi đó gửi một heartbeat rỗng để master gỡ mọi volume của server ngay.",
+  "why": "Hệ quả: master chỉ biết volume nào ở đâu qua heartbeat này; mất heartbeat thì master gỡ server khỏi topology và client không được gán ghi vào đó. Thiết kế: một stream với delta ngay khi có thay đổi và bản đầy đủ theo nhịp, để master biết nhanh mà vẫn tự sửa khi lệch; UUID thư mục trùng (một thư mục được hai server dùng) thì dừng hẳn process để hai server không cùng ghi một volume.",
+  "when": "Suốt đời volume server, từ NewVolumeServer tới khi dừng; VolumeServerLeave gọi StopHeartbeat.",
+  "ux": "Volume mới hiện ra ở master gần như ngay; server dừng biến mất khỏi topology ngay chứ không đợi hết hạn.",
+  "if_broken": "Master không biết volume mới, vẫn gán ghi vào server đã dừng, hoặc server kẹt với một master không phải leader.",
+  "gotchas": [
+   "UUID thư mục trùng làm process thoát (os.Exit(1)) sau 3 lần thử, không chỉ ghi lỗi.",
+   "isHeartbeating là bool được đọc (healthz) và ghi (StopHeartbeat) ở các goroutine khác nhau mà không có khoá.",
+   "GetMaster trả master hiện tại của heartbeat, có thể rỗng sau khi stream hỏng mà chưa biết leader."
+  ]
+ },
+ "weed/server/volume_grpc_copy.go": {
+  "character": "Sao chép volume giữa các volume server: VolumeCopy, CopyFile, ReceiveFile, ReadVolumeFileStatus",
+  "what": "VolumeCopy (whitelist, maintenance, kiểm tra địa chỉ nguồn chống SSRF) chỉ cho một bản copy mỗi volume tại một thời điểm qua volumeCopyGuard. Nó hỏi nguồn VolumeStatus và ReadVolumeFileStatus, đặt trước chỗ trên một disk cùng loại (tính cả preallocate theo cấu hình master), kéo .dat, .idx, .vif bằng CopyFile vào thư mục copying/ với giới hạn tốc độ và gửi tiến độ mỗi 128 MiB. Sau đó nó kiểm tra kích thước file và số file (số file lệch khi nguồn ổn định là lỗi; số đã xoá lệch chỉ cảnh báo), tìm append_at_ns cuối, rồi mới thay replica cũ: hard-link file cũ vào copying/replaced_* để quay lại được, xoá volume cũ qua store (giữ dữ liệu remote), ghi .note trong lúc rename (.vif trước), và mount kèm kiểm tra lại số file trước khi báo master. Thất bại ở bất kỳ bước nào thì gỡ bản copy, khôi phục file cũ và mount lại replica cũ. CopyFile (không kiểm tra whitelist) phục vụ một file theo ext, chặn ext và collection có thể thoát khỏi thư mục volume, kiểm tra compaction revision, sync volume (EC thì Sync trước, #7751), và gửi ModifiedTsNs một lần kể cả cho file rỗng. writeToFile nhận stream: file tuỳ chọn ghi vào .copying rồi rename, lỗi thì xoá phần dở, nguồn không có file thì xoá file rỗng. ReceiveFile (không kiểm tra whitelist) nhận file được đẩy tới: shard EC (từ chối khi EC volume đang mount, chọn disk, đăng ký writer cho .ecj), file của volume chưa có ở đây (chế độ staged: ghi <base><ext>.copying trên disk cùng loại không giữ shard nào của vid), hoặc file của volume đã có.",
+  "why": "Hệ quả: volume.move, volume.balance, volume.fix.replication và task balance, EC của worker đều đi qua đây; lỗi ở đây mất một replica hoặc để hai bản lệch nhau. Thiết kế: stage và kiểm tra trước khi xoá replica cũ, vì xoá trước khi xác nhận nguồn sẽ phá một bản tốt khi nguồn lỗi tạm thời, và có thể mất volume khi thử lại.",
+  "when": "volume.copy, volume.move, volume.balance, volume.fix.replication của shell; task balance của worker; EC encode, decode, rebuild và replica sync kéo file qua CopyFile.",
+  "ux": "Di chuyển volume giữa server không mất dữ liệu khi nguồn rớt mạng giữa chừng; thử lại an toàn.",
+  "if_broken": "Volume đích có .dat ngắn hay .idx sai mà vẫn mount, replica cũ bị xoá trước khi bản mới tốt, hoặc file .copying tồn đọng chặn lần copy sau.",
+  "gotchas": [
+   "Thư mục copying/ dùng chung cho mọi volume của disk và không bị xoá; tên file staged cố định theo vid, nên lần copy sau dọn phần thừa của lần trước.",
+   "volumeLoadGuard được nối vào store: trong lúc một copy chạy, store bỏ qua việc load volume cùng vid.",
+   "Volume đã tier chỉ kéo .idx và .vif; .dat nằm lại trên tier.",
+   "Chế độ staged của ReceiveFile và from_staged của VolumeEcShardsToVolume không có caller Go nào trong repo."
+  ],
+  "issue": "bug",
+  "issue_note": "Nhánh volume thường của ReceiveFile ghi đè file của một volume đang mount. Khi volume đã có trên server, filePath = v.FileName(ext) rồi os.Create cắt file đó về 0 byte và ghi đè ngay trên inode mà DataBackend của volume đang mở. Nhánh EC ngay phía trên từ chối đúng trường hợp này, với lý do được ghi trong comment: os.Create truncates in place; a mounted EcVolume holds fds on the same inodes, so overwriting corrupts live readers. Nhánh volume thường không có kiểm tra tương tự. ReceiveFile nằm trong danh sách RPC không kiểm tra whitelist (volume_grpc_admin_auth_coverage_test.go), và trong repo không có caller nào gửi ReceiveFile cho một volume thường đã có (shard_distribution.go chỉ gửi shard EC; chế độ staged chỉ dành cho volume chưa có). Vì vậy đây là một đường không ai dùng nhưng ai gọi được cổng gRPC đều dùng được: ReceiveFile với is_ec_volume = false và ext = .dat cho một volume đang mount làm hỏng .dat của volume đó."
+ },
+ "weed/server/volume_grpc_copy_incremental.go": {
+  "character": "Sao chép tăng dần một volume cho backup: VolumeIncrementalCopy và VolumeSyncStatus",
+  "what": "VolumeIncrementalCopy (không kiểm tra whitelist) chụp compaction revision và kích thước .dat, .idx trước, rồi tìm điểm bắt đầu: nếu client gửi vị trí index (entry_count, khoá, cookie, size của entry cuối và hash FNV-1a của mọi entry) thì ResumeByLastEntry xác minh cả phần đầu và trả FailedPrecondition khi backup đã lệch; nếu chỉ có since_ns thì tìm nhị phân theo append_at_ns. Nó gửi phần đuôi .dat, giới hạn ở phần đã có dòng index để một record chưa được index không bị gửi lần nữa ở lần sau, rồi gửi các dòng .idx sau entry_count, và kiểm tra lại revision ở cuối: volume bị compact giữa chừng thì trả FailedPrecondition. VolumeSyncStatus trả trạng thái để so (tail offset, compact revision, kích thước idx, version).",
+  "why": "Hệ quả: weed backup (Volume.IncrementalBackup trong storage/volume_backup.go) dựa vào RPC này; một offset sai là backup thiếu hay thừa record. Thiết kế: resume theo vị trí index thay vì append_at_ns, vì cùng một needle có append_at_ns khác nhau trên các replica; tombstone của volume đã tier chỉ có trong .idx nên .idx phải được gửi.",
+  "when": "weed backup.",
+  "ux": "weed backup chỉ tải phần mới thay vì cả volume.",
+  "if_broken": "Backup thiếu lần xoá, nhân đôi record, hoặc tiếp tục trên một volume đã bị compact và lệch hẳn.",
+  "gotchas": [
+   "Client cũ chỉ gửi since_ns: khi đó .idx chỉ được gửi nếu since_ns = 0 (gửi cả file).",
+   "Mỗi khối gửi đều kiểm tra UnavailableError của volume, nên volume bị unmount hay hỏng giữa chừng làm stream dừng."
+  ]
+ },
+ "weed/server/volume_grpc_erasure_coding.go": {
+  "character": "RPC erasure coding của volume server: encode, rebuild, chép, xoá, mount, đọc shard, xoá blob, decode về volume thường, thông tin shard",
+  "what": "VolumeEcShardsGenerate dỡ EC volume cũ và xoá tàn dư EC của lần encode trước trên mọi disk, ghi .ecx từ .idx trước khi ghi shard (một lần ghi chen vào chỉ làm shard có thêm dữ liệu không được index), ghi shard theo tỉ lệ trong .vif nếu có (mặc định 10+4), sidecar bitrot .ecsum (best-effort), và .vif với EncodeTsNs là danh tính của lần encode, DatFileSize đúng bằng số byte đã đọc. VolumeEcShardsRebuild (giữ EcLifecycleLock) chọn disk có .ecx và nhiều shard nhất, dựng lại shard thiếu (kiểm tra shard có sẵn với sidecar, trừ khi unsafe_ignore_sidecar), gộp .ecj vào .ecx dưới khoá journal rồi mở lại journal ở mọi disk dùng chung, mở lại handle của shard đang mount, và ghi sidecar TOFU khi chưa có ở đâu. VolumeEcShardsCopy (giữ lifecycle lock) chọn disk (disk_id > 0 là chọn tay; 0 thì ưu tiên disk đã có shard đó, đã mount, có .ecx, rồi HDD; từ chối khi các shard đã thuộc nhiều disk), stage .ecx (phải khác rỗng), shard, .vif, .ecsum dưới tên .copying, gộp .ecj như phép hợp tập hợp, rồi commit theo thứ tự sidecar, shard (mở lại shard đang mount), .ecx (ghi đè tại chỗ để handle đang mở thấy nội dung mới); lỗi thì chỉ xoá file nó đã tạo. VolumeEcShardsDelete có bốn chế độ: full teardown không fence (xoá mọi tàn dư EC của vid trên mọi disk), full teardown fence theo encode_ts_ns (chỉ xoá disk có generation cũ hơn), dọn các generation 2PC cũ, và xoá các shard được nêu, trong đó .ecx, .ecj, .vif chỉ bị xoá khi cả node không còn shard nào. VolumeEcShardsMount (có thể khôi phục .ecx từ peer trước, #10104, và nạp lại sidecar) và VolumeEcShardsUnmount (fence theo encode_ts_ns). VolumeEcShardRead đọc shard trên đúng disk giữ nó, từ chối shard của lần encode khác hay trên disk bị cách ly vì lỗi IO, và báo needle đã xoá. VolumeEcBlobDelete ghi lệnh xoá vào .ecx và .ecj. VolumeEcShardsToVolume decode: gộp .ecj, không còn needle sống thì FailedPrecondition, kiểm tra shard data với sidecar, ghi .dat và kiểm tra kích thước, ghi .idx, compact offline, bỏ sidecar, đặt .idx cạnh .dat; chế độ from_staged nhận một volume đã được decode ở nơi khác. VolumeEcShardsInfo gộp shard từ mọi disk và đếm file qua .ecx.",
+  "why": "Hệ quả: mọi đường EC của shell (ec.encode, ec.rebuild, ec.balance, ec.decode) và worker đều kết thúc ở đây; lỗi ở đây trộn shard của hai lần encode, làm mất index, hoặc xoá shard còn đang dùng. Thiết kế: mọi thao tác ghi file EC chuẩn của một vid được tuần tự qua EcLifecycleLock, mỗi file được stage rồi mới commit, và EncodeTsNs đi cùng .vif để mỗi lần đọc kiểm tra shard thuộc đúng lần encode.",
+  "when": "ec.encode, ec.rebuild, ec.balance, ec.decode của shell; task erasure_coding và ec_balance của worker; đọc và xoá file trong volume EC.",
+  "ux": "Volume EC 10+4 dùng 1,4 lần dung lượng thay vì 3 lần cho ba replica, và vẫn đọc được khi mất tới 4 shard.",
+  "if_broken": "Đọc trả dữ liệu từ shard của lần encode khác, rebuild bằng sai ma trận, file đã xoá sống lại sau decode, hoặc shard bị xoá trong khi disk khác vẫn cần index.",
+  "gotchas": [
+   "VolumeEcShardsMount, VolumeEcShardRead, VolumeEcBlobDelete và VolumeEcShardsInfo không kiểm tra whitelist, vì các volume server khác gọi chúng.",
+   "Nhánh full teardown có fence không giữ EcLifecycleLock như nhánh không fence; nó dựa vào thứ tự generation đọc từ .vif.",
+   "VolumeEcShardsGenerate không tự kiểm tra volume đã readonly; caller (worker, shell) phải đánh dấu trước.",
+   "disk_id = 0 nghĩa là tự chọn, nên Locations[0] không thể được chọn tay.",
+   "VolumeEcShardsToVolume giữ khoá journal từ lúc ghi .idx tới hết compact offline, nên lệnh xoá trên volume EC đó chờ trong suốt thời gian ấy."
+  ]
+ },
+ "weed/server/volume_grpc_erasure_coding_recover.go": {
+  "character": "Tự chữa EC volume thiếu .ecx: lấy index từ peer rồi mount shard",
+  "what": "recoverMissingEcIndexes tìm các EC volume có shard trên server mà không có .ecx ở disk local nào (lọc theo vid, 0 là tất cả), hỏi master LookupEcVolume (timeout 1 phút) để biết các peer giữ shard, rồi với từng volume giữ EcLifecycleLock: kiểm tra lại (một copy có thể vừa cài index), tải .ecx từ peer đầu tiên có bản khác rỗng (bắt buộc), gộp .ecj của peer như phép hợp tập hợp và chép .vif (cả hai best-effort), rồi MountRecoveredEcShards. Một .ecx dở hay rỗng bị xoá để lần sau không bị chặn.",
+  "why": "Hệ quả: shard nằm trên đĩa mà không mount được thì không ai đọc được và master không biết tới (issue #10104); đường này đưa chúng trở lại. Thiết kế: .ecx không đổi kể từ lúc encode và giống nhau ở mọi nơi giữ nên lấy từ peer nào cũng được; .ecj khác nhau giữa các node, và mô hình xoá của EC chấp nhận sự lệch đó.",
+  "when": "VolumeEcShardsMount với recover_missing_index, do ec.rebuild gọi; không có vòng chạy nền.",
+  "ux": "ec.rebuild chữa được cả volume đã hỏng từ trước khi nâng cấp.",
+  "if_broken": "Shard mồ côi mãi không mount, hoặc mount với một .ecx rỗng hay của volume khác.",
+  "gotchas": [
+   "Không kết nối được master thì không tìm được peer; shard được để nguyên, không mount.",
+   "Node được khôi phục nhận cách nhìn về các lần xoá (.ecj) của peer nguồn."
+  ]
+ },
+ "weed/server/volume_grpc_query.go": {
+  "character": "Query thử nghiệm: lọc và chọn trường của file JSON-lines ngay trên volume server",
+  "what": "Với mỗi fid: đọc needle từ volume thường, so cookie, và nếu input là JSON thì duyệt từng dòng bằng gjson, giữ dòng qua bộ lọc (field, operand, value) và gửi các trường được chọn thành một QueriedStripe. Không kiểm tra whitelist hay JWT.",
+  "why": "Hệ quả: một client có thể lọc file JSON-lines mà không phải tải cả file. Thiết kế: bản thử nghiệm (proto ghi experimental); chỉ input JSON được cài.",
+  "when": "Không có caller nào trong repo; chỉ client gRPC bên ngoài.",
+  "ux": "Không có lệnh shell hay API HTTP nào dùng tới.",
+  "if_broken": "Kết quả lọc sai hoặc rỗng; không ảnh hưởng đường đọc ghi thường.",
+  "gotchas": [
+   "Một lỗi ở bất kỳ fid nào dừng cả stream; các fid sau không được xử lý.",
+   "Chỉ đọc volume thường; fid thuộc volume EC trả lỗi không tìm thấy."
+  ],
+  "issue": "bug",
+  "issue_note": "Khi cookie trong fid không khớp với needle, Query thực hiện return err, nhưng err lúc đó là biến của operation.ParseFileId vừa thành công, tức nil. Stream kết thúc như thành công: fid đó không có dòng nào và mọi fid phía sau bị bỏ qua mà không báo lỗi. Ngoài ra nhánh CsvInput để trống, nên input CSV luôn cho kết quả rỗng. RPC được đánh dấu experimental và không có caller nào trong repo, nên ảnh hưởng chỉ tới client bên ngoài."
+ },
+ "weed/server/volume_grpc_read_all.go": {
+  "character": "ReadAllNeedles: stream mọi needle còn sống của một hay nhiều volume",
+  "what": "Kiểm tra whitelist, rồi với mỗi vid quét file .dat từ sau superblock bằng VolumeFileScanner4ReadAll của storage và gửi từng needle (id, cookie, blob, cờ nén, last_modified, crc, name, mime). Scanner chỉ gửi bản ghi mà needle map đang trỏ tới, nên bản cũ bị ghi đè bị bỏ qua. Volume không có hay không khả dụng thì dừng cả stream và tăng bộ đếm đọc lỗi.",
+  "why": "Hệ quả: một client đọc được toàn bộ nội dung volume qua gRPC theo thứ tự trên đĩa. Thiết kế: quét tuần tự .dat (đọc nhanh trên đĩa quay) và lọc bằng needle map.",
+  "when": "Không có caller Go nào trong repo; dành cho công cụ bên ngoài.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Công cụ xuất dữ liệu nhận thiếu needle hoặc nhận cả bản cũ.",
+  "gotchas": [
+   "Volume không khả dụng giữa chừng làm stream dừng (scanner kiểm tra UnavailableError mỗi needle)."
+  ]
+ },
+ "weed/server/volume_grpc_read_write.go": {
+  "character": "Đọc và ghi needle dạng blob thô giữa các volume server: ReadNeedleBlob, ReadNeedleMeta, WriteNeedleBlob",
+  "what": "ReadNeedleBlob đọc nguyên khối byte của needle tại offset và size cho trước. ReadNeedleMeta đọc header và trailer tại offset (cookie, last_modified, crc, ttl, append_at_ns); không hỗ trợ volume EC. WriteNeedleBlob (chặn khi maintenance) ghi một blob đã đóng gói vào volume. Cả ba không kiểm tra whitelist; lỗi đọc hay ghi tăng bộ đếm thất bại.",
+  "why": "Hệ quả: đồng bộ replica, vacuum và rebuild EC đọc và vá needle của nhau qua đây mà không phải parse lại needle. Thiết kế: chuyển blob nguyên vẹn, kể cả CRC, nên bản vá giống từng byte với bản gốc.",
+  "when": "volume.check.disk và weed/storage/volume_replica khi so và vá replica lệch; đọc needle từ peer.",
+  "ux": "volume.check.disk sửa được replica thiếu needle.",
+  "if_broken": "Replica được vá bằng blob hỏng, hoặc so sánh metadata báo lệch sai.",
+  "gotchas": [
+   "Caller phải biết offset và size thật (từ .idx của nguồn); RPC không tra needle map."
+  ]
+ },
+ "weed/server/volume_grpc_remote.go": {
+  "character": "Chặn SSRF cho mọi lần volume server, filer và gateway dial một endpoint do người dùng đưa vào, và FetchAndWriteNeedle",
+  "what": "validateRemoteEndpoint chỉ cho http và https, chặn tên IMDS (metadata.google.internal, metadata), loopback, link-local (gồm 169.254.169.254), unspecified, RFC 1918, CGNAT, và IPv4 nhúng trong địa chỉ IPv6 chuyển tiếp (NAT64, 6to4, Teredo, IPv4-compatible). validateReplicaTarget đòi host:port trần và cho phép IP riêng, vì peer nằm trong mạng nội bộ. guardedDialer kiểm tra lại từng IP ngay lúc dial để chặn DNS rebinding; guardedGrpcDialOption làm vậy cho gRPC. newGuardedHTTPClient không đi qua proxy, giới hạn kết nối mỗi host (WEED_REMOTE_MAX_CONNS_PER_HOST, mặc định 64) và đặt timeout cho dial, TLS, header và lúc body đứng yên (2 phút). BuildGuardedRemoteStorageClient là builder duy nhất cho RemoteConf do người gọi đưa vào, cache một client cho mỗi cấu hình và phiên bản credentials (hash của key, file credentials AWS và biến môi trường); ValidateRemoteConfForLoad kiểm tra tĩnh (không resolve DNS) khi filer load /etc/remote; checkGcsCredentials chỉ nhận credentials dạng khoá tĩnh. FetchAndWriteNeedle (whitelist, maintenance) đọc một khoảng từ remote storage (concurrency tối đa 64), từ chối khi đọc thiếu byte, kiểm tra mọi replica trước khi ghi, rồi ghi local và POST type=replicate tới các replica song song (thời hạn 30 s cộng 1 s mỗi MiB); lỗi local được ưu tiên, và object không tồn tại giữ mã gRPC NotFound.",
+  "why": "Hệ quả: volume server, filer và gateway vào được mạng nội bộ, nên một RemoteConf hay một địa chỉ replica do người dùng đưa vào có thể biến chúng thành proxy tới IMDS hay dịch vụ nội bộ; mọi đường đó đi qua các kiểm tra ở đây. Thiết kế: kiểm tra cả lúc dựng client lẫn lúc dial, vì DNS có thể đổi giữa hai lần; tắt được bằng -volume.allowUntrustedRemoteEndpoints.",
+  "when": "Filer cache một chunk từ remote mount (filer_grpc_server_remote.go gọi FetchAndWriteNeedle); filer (filer_server_handlers_read.go) và gateway (s3api_object_handlers.go) đọc lazy từ remote; VolumeCopy, VolumeEcShardsCopy, VolumeTailReceiver kiểm tra địa chỉ nguồn.",
+  "ux": "remote.mount và remote.cache chạy với S3, Azure, GCS công khai; endpoint nội bộ bị từ chối trừ khi bật cờ cho phép.",
+  "if_broken": "Một RemoteConf trỏ vào 169.254.169.254 lấy được credentials của máy, hoặc ngược lại một remote hợp lệ bị chặn và remote.cache thất bại.",
+  "gotchas": [
+   "Client guarded không đi qua HTTP proxy; môi trường bắt buộc dùng proxy phải bật allowUntrustedRemoteEndpoints.",
+   "ValidateRemoteConfForLoad không resolve DNS, để một lỗi DNS tạm thời không làm mất mount; kiểm tra IP thật diễn ra lúc dial.",
+   "Đọc remote thiếu byte là lỗi, vì chunk được ghi với kích thước đã yêu cầu."
+  ]
+ },
+ "weed/server/volume_grpc_scrub.go": {
+  "character": "Scrub volume và volume EC: kiểm tra index, dữ liệu, checksum, và có thể khoá volume hỏng",
+  "what": "ScrubVolume (whitelist) quét các volume được nêu hoặc mọi volume của server: INDEX chỉ kiểm tra .idx; FULL, LOCAL và READS đều kiểm tra toàn bộ với volume thường. Volume hỏng được liệt kê kèm chi tiết, và với mark_broken_volumes_readonly thì bị đánh dấu readonly bền qua makeVolumeReadonly. ScrubEcVolume (whitelist) loại vid trùng giữa các disk, gộp mọi runtime của một vid (MergeEcRuntimes fence theo generation và hình học) rồi chạy INDEX, LOCAL, FULL hay READS (READS dựng lại từ parity những khoảng không shard nào phục vụ được), hoặc CHECKSUM (so byte của shard với sidecar bitrot). Khi quét toàn server, volume biến mất giữa chừng bị bỏ qua; volume được nêu tên mà không có thì lỗi. Cập nhật metric thời điểm scrub và số volume, shard hỏng.",
+  "why": "Hệ quả: phát hiện hỏng dữ liệu im lặng (bitrot, .idx lệch) trước khi client đọc phải, và khoá volume hỏng để không nhận thêm ghi. Thiết kế: một lần quét toàn server không dừng ở volume biến mất, vì không có khoá nào giữ danh sách volume trong suốt lần quét và dừng lại sẽ bỏ hết kết quả đã có.",
+  "when": "volume.scrub và ec.scrub của shell; weed/ec (ec_scrub.go, ec_rebuild.go).",
+  "ux": "Operator biết volume nào hỏng và volume đó tự thành readonly.",
+  "if_broken": "Hỏng dữ liệu không bị phát hiện, hoặc volume tốt bị khoá vì báo sai.",
+  "gotchas": [
+   "Nếu đánh dấu readonly thất bại cho bất kỳ volume hỏng nào, RPC trả lỗi và bỏ toàn bộ kết quả quét.",
+   "force_deleted_needles_check chỉ hợp lệ với FULL và READS, và có thể báo sai khi các index EC không khớp nhau."
+  ]
+ },
+ "weed/server/volume_grpc_state.go": {
+  "character": "GetState và SetState: đọc và đặt cờ trạng thái bền của volume server (maintenance)",
+  "what": "GetState trả VolumeServerState hiện tại của store (maintenance, version). SetState (whitelist) thay toàn bộ cờ một lượt qua store.State.Update, vốn đòi version trong request bằng version hiện tại, tăng version, lưu xuống đĩa và khôi phục trạng thái cũ nếu lưu lỗi; RPC trả trạng thái sau khi đổi.",
+  "why": "Hệ quả: chế độ maintenance chặn mọi RPC ghi của volume server (CheckMaintenanceMode) và được báo cho master trong mọi heartbeat. Thiết kế: cập nhật kiểu so-và-đổi theo version, để hai operator không ghi đè cờ của nhau.",
+  "when": "volumeServer.state của shell.",
+  "ux": "Đặt một volume server vào maintenance để rút nó khỏi việc ghi trước khi bảo trì.",
+  "if_broken": "Maintenance không có tác dụng, hoặc cờ mất sau khi khởi động lại.",
+  "gotchas": [
+   "SetState không đẩy state vào StateUpdateChan; master biết trạng thái mới ở heartbeat kế tiếp, vì state đi kèm mọi heartbeat.",
+   "Phải gửi kèm version đọc từ GetState; sai version thì bị từ chối."
+  ]
+ },
+ "weed/server/volume_grpc_tail.go": {
+  "character": "Tail một volume: stream các needle mới từ volume nguồn và áp chúng vào volume đích",
+  "what": "VolumeTailSender (không kiểm tra whitelist) tìm offset theo since_ns bằng tìm nhị phân trên append_at_ns, quét .dat từ đó và gửi từng needle (header và body chia khối 2 MiB), rồi cứ 2 s quét lại. Khi không có gì mới, nó gửi một tin IsLastChunk làm nhịp sống. idle_timeout_seconds = 0 là tail mãi; khác 0 thì dừng sau đủ số vòng không có needle mới. VolumeTailReceiver (whitelist, kiểm tra địa chỉ nguồn) gọi operation.TailVolumeFromSource và áp từng needle qua writeTailedNeedle: record size 0 là lệnh xoá nếu khoá đã có ở đích (bỏ qua nếu đã xoá), ngược lại là một lần ghi rỗng.",
+  "why": "Hệ quả: volume.move bắt kịp các lần ghi vào volume nguồn trong lúc copy (volume_move.go gọi VolumeTailReceiver), và volume.merge đọc needle từ replica. Thiết kế: tail theo append_at_ns của nguồn và quét lại định kỳ, không đăng ký sự kiện ghi.",
+  "when": "volume.move (giai đoạn bắt kịp sau khi copy), volume.merge của shell.",
+  "ux": "Di chuyển một volume vẫn đang nhận ghi mà không mất lần ghi nào trong lúc copy.",
+  "if_broken": "Volume đích thiếu các lần ghi hay xoá diễn ra trong lúc move, hoặc tail không bao giờ dừng.",
+  "gotchas": [
+   "Bộ đếm idle giảm một mỗi vòng, mà mỗi vòng nghỉ 2 s cộng thời gian quét, nên idle_timeout_seconds = N thực tế chờ khoảng 2N giây.",
+   "Lệnh xoá và lần ghi rỗng giống nhau trên dây (size 0); writeTailedNeedle phân biệt bằng việc khoá đã có ở đích hay chưa."
+  ]
+ },
+ "weed/server/volume_grpc_tier_download.go": {
+  "character": "Đưa .dat của volume từ tier remote về đĩa local",
+  "what": "VolumeTierMoveDatFromRemote (whitelist) kiểm tra volume đang ở remote, tìm backend theo tên trong .vif, tải .dat về (concurrency tối đa 1024, tiến độ mỗi giây), khôi phục mtime, fsync thư mục, bỏ tham chiếu remote khỏi .vif và lưu (có fsync) trước khi đụng tới object remote, fsync thư mục lần nữa, đổi backend dữ liệu sang file local dưới khoá của volume, rồi xoá object remote trừ khi keep_remote_dat_file.",
+  "why": "Hệ quả: sai thứ tự ở đây có thể để .vif trỏ vào một object đã bị xoá, tức mất volume. Thiết kế: sửa .vif trước và xoá remote sau, nên crash ở giữa chỉ làm rò object remote chứ không mất dữ liệu.",
+  "when": "volume.tier.download của shell.",
+  "ux": "Volume đã tier lên S3 lại được đọc từ đĩa local.",
+  "if_broken": "Volume trỏ vào object remote đã xoá, hoặc nhiều replica cùng xoá một object dùng chung.",
+  "gotchas": [
+   "Chỉ replica cuối cùng nên xoá object dùng chung; các replica khác phải gọi với keep_remote_dat_file.",
+   "Khác chiều upload, chiều download không kiểm tra maintenance."
+  ]
+ },
+ "weed/server/volume_grpc_tier_upload.go": {
+  "character": "Đưa .dat của volume lên tier remote",
+  "what": "VolumeTierMoveDatToRemote (whitelist, maintenance) yêu cầu .dat đang ở đĩa local (đã ở remote thì trả nil), backend đích có trong cấu hình và chưa được ghi trong .vif. Nó chép .dat lên backend (concurrency tối đa 1024, tiến độ mỗi giây), rồi AttachRemoteDatFile ghi RemoteFile vào .vif và chuyển volume sang đọc từ remote, chỉ khi .dat không bị compact thay thế và kích thước không đổi trong lúc chép; thất bại thì xoá bản remote chưa được .vif ghi nhận. Sau đó nó bật việc xoá cho volume đã tier (MarkTieredDeletable) và xoá .dat local trừ khi keep_local_dat_file. clampTierConcurrency dùng chung cho cả hai chiều.",
+  "why": "Hệ quả: dữ liệu lạnh rời đĩa local; nếu .dat được ghi thêm trong lúc chép mà vẫn attach thì bản remote thiếu record và .dat local bị xoá. Thiết kế: kiểm tra backend và kích thước dưới khoá dữ liệu lúc attach, thay vì khoá volume trong suốt lần chép.",
+  "when": "volume.tier.upload của shell.",
+  "ux": "Volume ít dùng nằm trên S3 mà vẫn đọc được qua volume server.",
+  "if_broken": "Bản remote thiếu dữ liệu, object remote mồ côi, hoặc volume vẫn đọc một .dat đã xoá.",
+  "gotchas": [
+   "Volume đã ở remote trả nil chứ không lỗi.",
+   "Upload không đòi volume readonly; một lần ghi chen vào làm attach thất bại thay vì làm hỏng dữ liệu."
+  ]
+ },
+ "weed/server/volume_grpc_vacuum.go": {
+  "character": "Các bước vacuum của volume server: kiểm tra rác, compact, commit, cleanup",
+  "what": "VacuumVolumeCheck (không kiểm tra whitelist) trả tỉ lệ rác và cờ disk_space_low (volume readonly chỉ vì đĩa sắp đầy, điều mà compact tự giải được). VacuumVolumeCompact (whitelist, maintenance) chạy store.CompactVolume với giới hạn tốc độ, gửi tiến độ mỗi 128 MiB kèm load average 1 phút chia số CPU, và dừng khi client huỷ. VacuumVolumeCommit (whitelist, maintenance) chờ một chỗ trong -compactionMaxParallelCommits (thời gian chờ tính vào deadline của caller và không giữ khoá volume), kiểm tra maintenance lần nữa, rồi CommitCompactVolume và trả readonly cùng kích thước mới. VacuumVolumeCleanup bỏ file compact dở. Lỗi được gắn mã gRPC qua volumeStatusError; có metric thời gian và số lần.",
+  "why": "Hệ quả: master (topology_vacuum.go) và task vacuum của worker lấy lại dung lượng của needle đã xoá qua chuỗi này; commit là bước đổi file nên giới hạn số commit đồng thời tránh nghẽn IO. Thiết kế: chờ slot trước khi giữ khoá volume, để commit xếp hàng không chặn ghi.",
+  "when": "Vòng vacuum của master theo -garbageThreshold, volume.vacuum của shell, task vacuum của worker.",
+  "ux": "Dung lượng đĩa giảm sau khi xoá nhiều file.",
+  "if_broken": "Volume kẹt readonly sau compact lỗi, file compact dở tồn đọng, hoặc nhiều commit cùng lúc làm nghẽn đĩa.",
+  "gotchas": [
+   "-compactionMaxParallelCommits mặc định 0, tức không giới hạn.",
+   "vacuumCommitsWaiting chỉ được đọc trong test."
+  ]
+ },
+ "weed/server/volume_server.go": {
+  "character": "Khởi tạo volume server: cấu hình, store, guard JWT, route HTTP và vòng heartbeat",
+  "what": "Struct VolumeServer giữ giới hạn dữ liệu đang tải lên và xuống, master hiện tại, store, guard, tốc độ compaction và maintenance, slot commit vacuum, ecDecodesInFlight và volumeCopyGuards. NewVolumeServer đọc khoá JWT ghi (mặc định hết hạn sau 10 s) và đọc (60 s) cùng khoá trước đó để xoay khoá, gộp whitelist với guard.white_list, chặn tới khi lấy được cấu hình từ master (checkWithMaster), tạo store và nối volumeLoadGuard, gắn /status, /healthz, /readyz, /ui/index.html (chỉ khi không có khoá ký hoặc bật access.ui) và / vào cổng admin, gắn route chỉ đọc vào cổng public nếu tách cổng, rồi chạy heartbeat và đẩy metric. Reload nạp lại whitelist và khoá ký; SetStopping, Shutdown, LoadNewVolumes; MaintenanceMode và CheckMaintenanceMode đọc cờ maintenance của store.",
+  "why": "Hệ quả: đây là gốc của mọi đường vào volume server; một khoá JWT, whitelist hay route sai ở đây áp lên mọi request. Thiết kế: cổng public riêng chỉ phục vụ đọc, và trang UI chi tiết chỉ mở khi không ký JWT hoặc được bật rõ.",
+  "when": "weed volume, weed server, weed mini lúc khởi động; SIGHUP gọi LoadNewVolumes và Reload.",
+  "ux": "Đổi security.toml (jwt.signing, guard.white_list) rồi gửi SIGHUP là có hiệu lực, không cần khởi động lại.",
+  "if_broken": "Volume server không khởi động khi master chưa lên, JWT hết hạn quá sớm, hoặc trang UI lộ thông tin trong môi trường có ký JWT.",
+  "gotchas": [
+   "NewVolumeServer chặn trong checkWithMaster cho tới khi một master trả cấu hình.",
+   "isHeartbeating bắt đầu bằng true, nên /healthz trả 200 cả trước heartbeat đầu tiên.",
+   "Khi có cổng public riêng, mọi lệnh ghi phải tới cổng admin."
+  ]
+ },
+ "weed/server/volume_server_handlers.go": {
+  "character": "Router HTTP của volume server: phân phối theo method, giới hạn dữ liệu đang tải, kiểm tra JWT",
+  "what": "privateStoreHandler (cổng admin) phục vụ GET và HEAD, DELETE và PUT, POST (qua whitelist), OPTIONS (CORS); method khác trả 400. publicReadOnlyHandler (cổng public) chỉ có GET, HEAD và OPTIONS. Cả hai ghi metric theo method và status. checkDownloadLimit: khi tổng byte đang tải xuống vượt -concurrentDownloadLimitMB, nó proxy request sang một replica (nếu volume có replication, readMode khác local và request chưa được proxy), nếu không thì chờ tới -inflightDownloadDataTimeout rồi trả 429, hoặc 499 nếu client huỷ. checkUploadLimit làm tương tự cho upload, bỏ qua request type=replicate; số byte đang ghi tính theo Content-Length. checkJwtAuthorizationWithKey thử khoá hiện tại rồi khoá trước đó và so Fid trong token với vid,fid của request, sau khi bỏ phần đuôi _N của fid.",
+  "why": "Hệ quả: mọi request HTTP vào volume server đi qua đây; giới hạn dữ liệu đang tải là thứ duy nhất ngăn một loạt request lớn làm cạn bộ nhớ. Thiết kế: khi quá tải đọc, ưu tiên chuyển sang replica thay vì bắt client chờ.",
+  "when": "Mọi upload, download và xoá needle qua HTTP.",
+  "ux": "Client nhận 429 khi server quá tải thay vì treo; đọc tự chuyển sang replica khi một server bận.",
+  "if_broken": "Server hết bộ nhớ dưới tải, client nhận 401 với token hợp lệ sau khi xoay khoá, hoặc request ghi bị chặn sai.",
+  "gotchas": [
+   "Số byte upload đang bay tính theo header Content-Length; request chunked không có header được tính là 0."
+  ],
+  "issue": "bug",
+  "issue_note": "publicReadOnlyHandler không có nhánh default: PUT, POST hay DELETE gửi tới cổng public chạy hết switch mà không ghi gì, nên net/http trả 200 với body rỗng dù không có gì được ghi hay xoá. privateStoreHandler trả 400 unsupported method cho cùng trường hợp. Client của SeaweedFS (upload trong weed/operation) đọc JSON từ body nên sẽ báo lỗi, nhưng một client HTTP thông thường (curl, proxy, script) sẽ coi lần ghi hay xoá là thành công. Chỉ xảy ra khi chạy với cổng public riêng (-port.public khác -port)."
+ },
+ "weed/server/volume_server_handlers_admin.go": {
+  "character": "/healthz, /readyz và /status của volume server",
+  "what": "healthzHandler (dùng cho cả /healthz và /readyz) chỉ kiểm tra điều kiện local: server đang dừng, không còn heartbeat tới master, hoặc có volume bị cách ly vì lỗi IO thì trả 503; ngược lại 200. statusHandler trả JSON gồm version, trạng thái từng disk và danh sách VolumeInfo.",
+  "why": "Hệ quả: load balancer và Kubernetes dựa vào /healthz để rút server khỏi vòng; một kiểm tra từng phụ thuộc vào peer đã làm các server khoẻ bị đánh rớt khi một peer chết (issue #6823). Thiết kế: chỉ kiểm tra local, và báo suy giảm khi đĩa có lỗi IO để load balancer rút server.",
+  "when": "Probe của Kubernetes hay load balancer; công cụ giám sát đọc /status.",
+  "ux": "Server có đĩa lỗi tự bị rút khỏi load balancer.",
+  "if_broken": "Cả cụm bị đánh rớt khi một peer chết, hoặc server có đĩa lỗi vẫn nhận traffic.",
+  "gotchas": [
+   "/readyz và /healthz là cùng một handler."
+  ]
+ },
+ "weed/server/volume_server_handlers_helper.go": {
+  "character": "Phân tích header Range cho đường đọc HTTP, chép từ net/http/fs.go",
+  "what": "httpRange (start, length) với contentRange và mimeHeader; parseRange phân tích bytes=a-b, c-, -n theo RFC 7233: suffix rỗng hay bắt đầu ở cuối nội dung không chồng lấn, range bắt đầu sau kích thước bị bỏ, và nếu không range nào chồng lấn thì trả errNoOverlap (416). rangesMIMESize tính kích thước một response multipart/byteranges; sumRangesSize cộng độ dài các range.",
+  "why": "Hệ quả: ProcessRangeRequest trong common.go dùng các hàm này cho GET của volume server và filer; một range tính sai là client nhận sai byte. Thiết kế: chép logic của net/http để ProcessRangeRequest tự điều khiển việc ghi từng range qua prepareWriteFn.",
+  "when": "Mọi GET có header Range tới volume server hoặc filer.",
+  "ux": "Tải tiếp tục và tua video hoạt động.",
+  "if_broken": "Range trả sai byte, 416 sai, hoặc multipart thiếu phần.",
+  "gotchas": [
+   "parseRange trả (nil, nil) cho bytes= hay bytes=, (không có spec nào); ProcessRangeRequest khi đó kết thúc mà không ghi gì (xem cờ lỗi của common.go)."
+  ]
+ },
+ "weed/server/volume_server_handlers_read.go": {
+  "character": "GET và HEAD needle trên volume server: đọc local hay EC, proxy hoặc redirect, conditional GET, nén, ảnh, chunk manifest",
+  "what": "GetOrHeadHandler kiểm tra JWT đọc và parse vid, fid; volume không ở đây thì trả 404 (readMode local hoặc request đã được proxy) hoặc gọi proxyReqToTargetServer. Nó đọc needle từ volume thường (chỉ đọc header khi không cần payload: HEAD, Range, không đổi ảnh) hoặc từ EC, và trả lại số byte vào giới hạn đang tải khi xong. Không có, đã xoá hay sai cookie là 404; lỗi khác là 500. Nó đặt Last-Modified và ETag, trả 304 theo If-None-Match rồi mới If-Modified-Since, áp các cặp header lưu kèm needle, phục vụ chunk manifest bằng cách đọc lần lượt các chunk (cm=false để lấy chính manifest), lấy tên và mime từ needle, chuyển thẳng gzip cho client nhận gzip khi không có Range và không đổi ảnh, nếu không thì giải nén, và cắt hay đổi kích thước ảnh png, jpg, gif, webp theo width, height, mode, crop_*. proxyReqToTargetServer tra vị trí volume qua master, chọn ngẫu nhiên một server khác mình, rồi với readMode proxy thì chuyển request (bỏ header hop-by-hop, đánh dấu proxied=true) và stream response về, còn với redirect thì trả 301.",
+  "why": "Hệ quả: đây là đường đọc của mọi client HTTP vào volume server; filer và S3 gateway đọc chunk qua đây. Thiết kế: đọc meta trước rồi stream phần cần, để needle lớn không phải nạp hết vào bộ nhớ; readMode mặc định là proxy để client không cần biết volume đã chuyển đi.",
+  "when": "Mọi GET, HEAD fid tới volume server; filer đọc chunk; trình duyệt mở URL public của file.",
+  "ux": "Ảnh lấy được ở kích thước nhỏ hơn bằng ?width=; trình duyệt nhận 304 khi đã cache.",
+  "if_broken": "Client nhận nội dung sai hay nội dung nén không có Content-Encoding, cache không bao giờ trúng, hoặc request bị proxy qua lại giữa hai server.",
+  "gotchas": [
+   "Chế độ redirect dựng URL đích chỉ với collection và proxied: các tham số khác như jwt, width, height, crop_*, readDeleted bị bỏ, và 301 là chuyển hướng vĩnh viễn mà trình duyệt có thể cache.",
+   "Server đích được chọn bằng strings.Contains(loc.Url, ip:port của mình), tức so chuỗi con chứ không so bằng.",
+   "readDeleted=true đọc được needle đã xoá."
+  ]
+ },
+ "weed/server/volume_server_handlers_ui.go": {
+  "character": "Trang /ui/index.html của volume server",
+  "what": "uiStatusHandler dựng dữ liệu cho template volume_server_ui: thời gian chạy, trạng thái disk, volume thường, volume EC, volume remote (kèm khoá remote đọc từ volume trên chính server này), seed master và bộ đếm. Lỗi template thì trả 500.",
+  "why": "Hệ quả: operator xem nhanh một volume server mà không cần shell. Thiết kế: khoá remote được đọc từ volume local thay vì nhận từ master, vì store không còn giữ khoá đó theo từng volume (comment của remoteVolumeRow).",
+  "when": "Khi mở /ui/index.html trên cổng admin; route chỉ được gắn khi không có khoá ký JWT hoặc bật access.ui.",
+  "ux": "Trang trạng thái HTML của volume server.",
+  "if_broken": "Trang lỗi 500 hay thiếu volume; không ảnh hưởng dữ liệu.",
+  "gotchas": [
+   "Trang liệt kê seed master từ cấu hình chứ không phải master hiện tại."
+  ]
+ },
+ "weed/server/volume_server_handlers_write.go": {
+  "character": "POST, PUT và DELETE needle trên volume server, kèm replication",
+  "what": "PostHandler parse form, kiểm tra JWT ghi với khoá được chụp một lần (với multipart, token hết hạn được báo bằng header WriteOutcome expired JWT before append, để client biết thử lại là an toàn), tạo needle từ request (giới hạn -fileSizeLimitMB, có thể sửa hướng JPEG), rồi gọi topology.ReplicatedWrite với context không bị huỷ khi client ngắt. Volume readonly trả 409; ErrorWriteRefused gắn header refused before append; nội dung không đổi trả 204; thành công trả 201 với tên, kích thước, ETag, mime và Content-MD5. replicaContentMd5 bỏ MD5 của client khi việc sửa hướng JPEG đã đổi byte, vì replica kiểm tra MD5 với byte nó nhận. DeleteHandler kiểm tra JWT; volume EC thì xoá qua DeleteEcShardNeedle (đã xoá thì 404); volume thường thì đọc header và trailer để lấy cookie, nếu không thấy mà volume có replication thì huỷ lần ghi còn đang chờ cùng cookie rồi đọc lại. Vẫn không thấy thì trả 404, nhưng trước đó một lần thử lại của client vẫn chuyển lệnh xoá tới các replica, vì chúng có thể còn giữ needle. Cookie sai là 400; chunk manifest thì xoá các chunk con trước; ts= đặt thời điểm xoá; rồi gọi ReplicatedDelete và trả 202 kèm kích thước.",
+  "why": "Hệ quả: mọi lần ghi và xoá qua HTTP đi qua đây; các header WriteOutcome cho client phân biệt chưa ghi gì với có thể đã ghi, để thử lại mà không tạo bản trùng. Thiết kế: dùng context.WithoutCancel để client ngắt kết nối không bỏ dở việc fan-out tới replica.",
+  "when": "weed upload, filer và S3 gateway ghi chunk; xoá file qua filer hay DELETE trực tiếp.",
+  "ux": "Ghi trả 201 kèm ETag; xoá trả 202 kèm kích thước.",
+  "if_broken": "Ghi thành công một nửa giữa các replica, xoá không tới replica, hoặc client thử lại tạo bản trùng.",
+  "gotchas": [
+   "DeleteHandler bỏ qua lỗi parse vid.",
+   "404 khi xoá được caller coi là thành công."
+  ]
  }
 }
