@@ -4557,5 +4557,487 @@
    "DeleteHandler bỏ qua lỗi parse vid.",
    "404 khi xoá được caller coi là thành công."
   ]
+ },
+ "weed/storage/backend/all/all.go": {
+  "character": "Gói chỉ để đăng ký các backend tier bằng blank import",
+  "what": "Không có code: import trắng rclone_backend và s3_backend để hàm init của chúng ghi factory vào backend.BackendStorageFactories.",
+  "why": "Hệ quả: binary nào phục vụ volume đã tier phải import gói này, nếu không backend.LoadConfiguration không tìm thấy loại s3 và dừng chương trình. Thiết kế: tách việc đăng ký khỏi weed/storage để thư viện dùng storage không phải kéo SDK của các backend (comment của gói).",
+  "when": "Lúc khởi động binary weed (import ở composition root).",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Master dừng với backend storage type s3 not found; volume server bỏ qua backend mà master gửi.",
+  "gotchas": [
+   "rclone_backend chỉ được build với tag rclone, nằm ngoài phạm vi graph này."
+  ]
+ },
+ "weed/storage/backend/backend.go": {
+  "character": "Giao diện backend lưu trữ cho file .dat (đĩa hay tier remote) và sổ đăng ký các backend tier",
+  "what": "BackendStorageFile là file .dat trừu tượng (ReadAt, WriteAt, Truncate, Close, GetStat, Name, Sync). BackendStorage là một tier remote (NewStorageFile, CopyFile, DownloadFile, DeleteFile, ToProperties). Hai map toàn cục: BackendStorageFactories (theo loại, các gói backend tự đăng ký) và BackendStorages (theo tên loại.id, kèm bí danh loại cho id default). LoadConfiguration (master, weed fix) dựng backend từ storage.backend.<loại>.<id> có enabled = true; LoadFromPbStorageBackends (volume server) dựng từ danh sách master gửi; ToPbStorageBackends đóng gói lại để gửi. BackendNameToTypeId tách s3.default, tên không có dấu chấm là id default.",
+  "why": "Hệ quả: volume tier và volume local đọc ghi qua cùng một giao diện, nên Volume không cần biết .dat ở đâu. Thiết kế: cấu hình tier chỉ nằm ở master; volume server nhận nó qua GetMasterConfiguration nên không cần file cấu hình riêng.",
+  "when": "Master khởi động; volume server trong checkWithMaster; mọi lần đọc ghi .dat.",
+  "ux": "Cấu hình [storage.backend.s3.default] trong master.toml là đủ để volume.tier.upload dùng.",
+  "if_broken": "Volume tier không đọc được, hoặc master dừng khi khởi động vì loại backend không đăng ký.",
+  "gotchas": [
+   "Master gửi cả aws_secret_access_key cho mọi volume server trong GetMasterConfiguration (ToProperties).",
+   "Volume server chỉ nạp backend một lần lúc khởi động và bỏ qua tên đã có, nên sửa cấu hình tier ở master cần khởi động lại volume server.",
+   "Loại backend không có factory làm master dừng (glog.Fatalf), không chỉ cảnh báo."
+  ]
+ },
+ "weed/storage/backend/disk_file.go": {
+  "character": "BackendStorageFile cho file .dat trên đĩa local",
+  "what": "DiskFile bọc *os.File và tự theo dõi kích thước logic (làm tròn lên bội số 8 lúc mở) cùng mtime: WriteAt nâng mốc khi ghi quá cuối, Write ghi vào cuối, Truncate đặt lại. ReadAt bỏ io.EOF khi đã đọc đủ. Close sync rồi đóng và đặt File = nil; mọi thao tác sau đó trả os.ErrClosed. Sync bỏ qua trên macOS.",
+  "why": "Hệ quả: offset của needle mới lấy từ GetStat của DiskFile chứ không stat lại file, nên kích thước theo dõi ở đây quyết định needle được ghi vào đâu. Thiết kế: giữ kích thước trong bộ nhớ để không gọi stat mỗi lần append.",
+  "when": "Mọi volume có .dat local; vacuum, copy, tier.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Needle ghi đè lên nhau hoặc để lại khoảng trống nếu kích thước theo dõi lệch với file thật.",
+  "gotchas": [
+   "NewDiskFile làm tròn kích thước lên bội số 8, nên một .dat có đuôi lẻ được coi như đã có padding.",
+   "NewDiskFile dừng chương trình (glog.Fatalf) nếu stat file lỗi."
+  ]
+ },
+ "weed/storage/backend/memory_map/memory_map.go": {
+  "character": "Kiểu dữ liệu memory map và hàm đọc tham số memoryMapMaxSizeMb",
+  "what": "Khai báo MemoryBuffer và MemoryMap (dùng bởi bản cài Windows và các stub), và ReadMemoryMapMaxSizeMb parse tham số chuỗi thành uint32 MB (rỗng là 0).",
+  "why": "Hệ quả: master parse memoryMapMaxSizeMb của /dir/assign và /vol/grow qua hàm này. Thiết kế: kiểu chung cho mọi nền tảng, cài đặt theo build tag.",
+  "when": "Master xử lý ?memoryMapMaxSizeMb= khi assign hay grow volume.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Assign với memoryMapMaxSizeMb không hợp lệ trả lỗi.",
+  "gotchas": [
+   "Trên Linux memory map không được cài (xem memory_map_other.go); tham số này chỉ có tác dụng trên Windows."
+  ]
+ },
+ "weed/storage/backend/memory_map/memory_map_backend.go": {
+  "character": "MemoryMappedFile: BackendStorageFile trên memory map (chỉ dùng được trên Windows)",
+  "what": "NewMemoryMappedFile tạo memory map cho file với kích thước tối đa cho trước; ReadAt, WriteAt đọc ghi vào map; Truncate và Sync không làm gì; Close xoá file và map; GetStat trả End_of_file + 1.",
+  "why": "Hệ quả: volume tạo với memoryMapMaxSizeMb giữ .dat trong bộ nhớ trên Windows. Thiết kế: không khai báo kiểu thoả backend.BackendStorageFile để tránh vòng import.",
+  "when": "Chỉ volume_create_windows.go gọi NewMemoryMappedFile.",
+  "ux": "Không có trên Linux.",
+  "if_broken": "Không ảnh hưởng gì trên Linux.",
+  "gotchas": [
+   "GetStat trả err (biến trả về, đang nil) thay vì lỗi của Stat khi Stat thất bại."
+  ],
+  "issue": "dead",
+  "issue_note": "Trên Linux (phạm vi graph này) không có caller nào: NewMemoryMappedFile chỉ được gọi từ volume_create_windows.go, còn volume_create_linux.go bỏ qua memoryMapSizeMB và luôn trả DiskFile. Vì vậy cả kiểu MemoryMappedFile là code chết trên Linux."
+ },
+ "weed/storage/backend/memory_map/memory_map_other.go": {
+  "character": "Stub memory map cho các nền tảng không phải Windows",
+  "what": "CreateMemoryMap, WriteMemory và DeleteFileAndMemoryMap không làm gì; ReadMemory trả lỗi Memory Map not implemented for this platform.",
+  "why": "Hệ quả: gói memory_map biên dịch được trên Linux. Thiết kế: build tag !windows thay cho bản cài thật.",
+  "when": "Không có lời gọi nào trên Linux.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Không ảnh hưởng gì trên Linux.",
+  "issue": "dead",
+  "issue_note": "Chỉ tồn tại để MemoryMappedFile biên dịch được trên Linux, mà MemoryMappedFile không có caller nào ngoài volume_create_windows.go. Nếu có ai dùng, WriteMemory sẽ bỏ dữ liệu trong khi WriteAt của MemoryMappedFile vẫn báo đã ghi đủ byte."
+ },
+ "weed/storage/backend/s3_backend/s3_backend.go": {
+  "character": "Backend tier S3: đọc .dat của volume đã tier qua range GET, chép lên và tải về",
+  "what": "Factory s3 tự đăng ký trong init. newS3BackendStorage đọc aws_access_key_id, aws_secret_access_key, region, bucket, endpoint, storage_class (mặc định STANDARD_IA), force_path_style (mặc định true), upload/download_concurrency (mặc định 5), disable_http2, max_connections, idle_connection_timeout_seconds, rồi tạo client qua createSession. CopyFile chép .dat lên dưới một khoá UUID ngẫu nhiên (có util.Retry); DownloadFile tải về; DeleteFile xoá. S3BackendStorageFile.ReadAt gửi GET với Range, đọc tới đủ byte, huỷ khi body đứng yên quá s3ReadTimeout (1 phút), trả io.EOF khi đọc quá kích thước trong .vif; GetStat lấy kích thước và mtime từ RemoteFile đầu tiên trong .vif; WriteAt và Truncate panic.",
+  "why": "Hệ quả: mỗi lần đọc needle của volume đã tier là một range GET tới S3, nên độ trễ và lỗi của S3 thành độ trễ và lỗi của đọc. Thiết kế: volume tier chỉ đọc; mọi ghi panic để lộ lỗi ngay.",
+  "when": "Đọc needle của volume đã tier; volume.tier.upload và volume.tier.download.",
+  "ux": "Dữ liệu lạnh nằm trên S3 mà vẫn đọc được qua volume server.",
+  "if_broken": "Đọc volume tier lỗi hoặc treo; ghi vào volume tier làm panic volume server.",
+  "gotchas": [
+   "WriteAt và Truncate panic; mọi đường ghi phải chặn volume tier trước.",
+   "Khoá object là UUID, không chứa vid hay collection, nên nhìn bucket không biết object thuộc volume nào nếu thiếu .vif."
+  ]
+ },
+ "weed/storage/backend/s3_backend/s3_download.go": {
+  "character": "Tải .dat của volume tier từ S3 về file local",
+  "what": "downloadFromS3 lấy kích thước bằng HeadObject, mở file đích với O_TRUNC, tải song song bằng s3manager (phần 64 MiB, concurrency cho trước), báo tiến độ qua WriterAt, rồi fsync file trước khi trả.",
+  "why": "Hệ quả: VolumeTierMoveDatFromRemote dựa vào fsync ở đây trước khi bỏ tham chiếu remote khỏi .vif và xoá object. Thiết kế: fsync trong hàm tải để caller không cần mở lại file.",
+  "when": "volume.tier.download.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": ".dat tải về chưa bền mà object remote đã bị xoá.",
+  "gotchas": [
+   "File đích bị cắt về 0 ngay khi mở; tải lỗi giữa chừng để lại .dat dở."
+  ]
+ },
+ "weed/storage/backend/s3_backend/s3_sessions.go": {
+  "character": "Client S3 dùng chung cho các backend tier: transport, timeout, cache theo endpoint",
+  "what": "createSession dựng client aws-sdk-go với transport riêng (timeout kết nối 10 s, timeout header 60 s, tắt HTTP/2 hay giới hạn kết nối và idle timeout theo tuỳ chọn), credentials tĩnh khi có, User-Agent SeaweedFS, và tắt kiểm tra Content-MD5. Client được cache theo region|endpoint, cộng tuỳ chọn HTTP khi khác mặc định. deleteFromS3 xoá một object.",
+  "why": "Hệ quả: mọi lần đọc và chép của volume tier dùng client này; timeout ở đây quyết định một endpoint chết giữ một request hay cả quá trình khởi động bao lâu. Thiết kế: cache client để các backend cùng endpoint dùng chung kết nối.",
+  "when": "Khi master hay volume server dựng một backend s3.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Đọc volume tier treo vô hạn trên endpoint không trả lời, hoặc backend dùng nhầm credentials.",
+  "issue": "bug",
+  "issue_note": "Khoá cache của createSession là region|endpoint (cộng tuỳ chọn HTTP), không gồm access key, secret hay force_path_style. Backend thứ hai có cùng region và endpoint nhưng credentials khác nhận lại client của backend đầu tiên, kèm credentials của nó. Ví dụ hai tier s3.default và s3.archive cùng ở us-east-1 trên AWS với hai IAM user khác nhau: mọi lần chép, đọc và xoá của s3.archive chạy bằng khoá của s3.default, nên hoặc bị AccessDenied, hoặc ghi vào bucket kia dưới danh tính sai. Test hiện có (TestS3BackendSessionsDifferByHTTPOptions) chỉ kiểm tra tuỳ chọn HTTP, không kiểm tra credentials."
+ },
+ "weed/storage/backend/s3_backend/s3_upload.go": {
+  "character": "Chép .dat của volume lên S3 bằng multipart upload",
+  "what": "uploadToS3 mở file, chọn part size bắt đầu 64 MiB và nhân 4 tới khi số part dưới 1000, upload bằng s3manager với storage class cho trước, và báo tiến độ qua ReadAt (bỏ qua lần đọc đầu của mỗi offset, là lần SDK đọc để ký).",
+  "why": "Hệ quả: VolumeTierMoveDatToRemote dựa vào hàm này; kích thước trả về là kích thước file lúc mở, được AttachRemoteDatFile so lại. Thiết kế: part lớn để volume 30 GiB vẫn dưới giới hạn số part của S3.",
+  "when": "volume.tier.upload.",
+  "ux": "Thanh tiến độ trong shell khi upload.",
+  "if_broken": "Upload thất bại với volume lớn, hoặc tiến độ báo sai."
+ },
+ "weed/storage/backend/volume_create_linux.go": {
+  "character": "Tạo file .dat mới trên Linux, có preallocate",
+  "what": "CreateVolumeFile mở file với O_CREATE|O_TRUNC (qua OpenVolumeFile), và khi preallocate khác 0 thì gọi fallocate với FALLOC_FL_KEEP_SIZE để giữ chỗ mà không đổi kích thước file; lỗi fallocate chỉ được ghi log. PreallocateSupported = true.",
+  "why": "Hệ quả: volume mới có thể giữ trước dung lượng bằng volume size limit của master, nên đĩa không bị phân mảnh và không hết chỗ giữa chừng. Thiết kế: KEEP_SIZE để offset append vẫn bắt đầu từ cuối dữ liệu thật.",
+  "when": "Tạo volume mới (AllocateVolume) và staging .dat trong VolumeCopy.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Volume mới không được giữ chỗ, hoặc file .dat cũ bị cắt nhầm.",
+  "gotchas": [
+   "Tham số memoryMapSizeMB bị bỏ qua trên Linux.",
+   "Mở với O_TRUNC: gọi trên một .dat đã có sẽ xoá nội dung."
+  ]
+ },
+ "weed/storage/backend/volume_open_linux.go": {
+  "character": "Mở file volume với O_NOATIME trên Linux",
+  "what": "OpenVolumeFile mở file .dat hay .idx với cờ O_NOATIME; khi kernel từ chối (EPERM vì không sở hữu file hay thiếu CAP_FOWNER) thì mở lại không có cờ.",
+  "why": "Hệ quả: đọc needle không làm bẩn inode, tránh một lần ghi metadata cho mỗi chu kỳ đọc ghi trên volume đang hoạt động (comment trong file). Thiết kế: thử cờ trước, lùi về mở thường khi không được phép.",
+  "when": "Mọi lần mở .dat và .idx.",
+  "ux": "Không thấy trực tiếp; IO metadata của đĩa thấp hơn.",
+  "if_broken": "Mở file thất bại khi chạy dưới user không sở hữu file, nếu bỏ đường lùi."
+ },
+ "weed/storage/dir_scan.go": {
+  "character": "Duyệt thư mục theo lô 1024 entry",
+  "what": "eachDirEntry đọc thư mục bằng ReadDir(1024) và gọi visit cho từng entry theo thứ tự hệ thống file trả, dừng khi visit trả false.",
+  "why": "Hệ quả: một đĩa có hàng triệu volume (ba file mỗi volume) không phải dựng và sắp xếp cả danh sách như os.ReadDir, vốn tốn hàng trăm MB heap lúc khởi động (comment trong file). Thiết kế: caller cần thứ tự thì tự sắp xếp phần nhỏ nó giữ lại.",
+  "when": "Quét volume lúc khởi động, tìm volume theo vid, quét file compact dở, quét shard EC.",
+  "ux": "Volume server nhiều volume khởi động với bộ nhớ thấp hơn.",
+  "if_broken": "Bộ nhớ đỉnh lúc khởi động tăng mạnh, hoặc bỏ sót entry khi quét."
+ },
+ "weed/storage/disk_location.go": {
+  "character": "Một thư mục dữ liệu của volume server: load volume, theo dõi dung lượng, xoá và tìm volume",
+  "what": "DiskLocation giữ thư mục data và index, loại đĩa, tag, số volume tối đa, MinFreeSpace, dung lượng còn (trừ phần đã hứa cho các copy đang chạy), map volume và EC volume. NewDiskLocation tạo vol_dir.uuid (trên mount chỉ đọc thì suy ra uuid ổn định từ host, đường dẫn và device) và mỗi phút gọi CheckDiskSpace (đo dung lượng, lỗi đĩa, cờ đĩa sắp đầy). loadExistingVolume load một volume từ tên .idx hay .vif: giữ load guard khi có copy, bỏ stub .dat rỗng của volume EC, bỏ qua .vif chỉ là metadata EC, kiểm tra EC volume và xoá file EC dở để load .dat, xoá volume còn .note (copy dở), không tạo .dat mới khi không có .dat và không có file remote. Lúc khởi động, reconcileCompactStates khôi phục commit compact dở trước khi load song song (số worker theo GOMAXPROCS, tối thiểu 10). Còn có DeleteCollectionFromDiskLocation, DeleteVolume, UnloadVolume, LoadVolume, LocateVolume, đếm volume (local, ghi được theo collection), UnUsedSpace.",
+  "why": "Hệ quả: volume nào được load, volume nào bị coi là rác và bị xoá lúc khởi động đều quyết định ở đây; một kiểm tra sai có thể xoá shard EC thật hay load một volume rỗng che replica thật. Thiết kế: không bao giờ để NewVolume tạo .dat mới khi load volume có sẵn; khôi phục compact trước khi quét volume.",
+  "when": "Volume server khởi động; SIGHUP (LoadNewVolumes); VolumeMount; xoá collection; mỗi phút kiểm tra dung lượng.",
+  "ux": "Đĩa sắp đầy làm volume trên đó thành readonly và master ngừng tạo volume mới ở đó.",
+  "if_broken": "Volume biến mất sau khi khởi động lại, shard EC bị xoá nhầm, hoặc master tạo volume trên đĩa đã đầy.",
+  "gotchas": [
+   "DeleteCollectionFromDiskLocation bỏ qua các volume đang compact, nên chúng còn lại sau khi xoá collection.",
+   "Volume load lại từ đĩa luôn có memoryMapMaxSizeMb = 0.",
+   "Load song song dùng GOMAXPROCS nếu biến môi trường được đặt, kể cả khi nhỏ hơn 10."
+  ]
+ },
+ "weed/storage/idx/check.go": {
+  "character": "Kiểm tra tính toàn vẹn của file .idx hay .ecx",
+  "what": "CheckIndexFile đọc mọi entry, sắp theo offset, bỏ tombstone offset 0 (lần xoá trên volume tier, không chiếm chỗ trong .dat), rồi báo các needle chồng lên nhau và kích thước file không bằng số entry nhân 16 byte. Kiểm tra các entry liền nhau bị tắt vì SeaweedFS có thể bỏ entry index mà giữ dữ liệu (issue #8204).",
+  "why": "Hệ quả: scrub INDEX của volume và EC volume dựa vào hàm này để phát hiện .idx hỏng. Thiết kế: chỉ báo lỗi chắc chắn (chồng lấn, kích thước), không báo khoảng trống.",
+  "when": "ScrubIndex của volume và EC volume (volume.scrub, ec.scrub).",
+  "ux": "Báo cáo scrub liệt kê needle chồng lấn.",
+  "if_broken": "Scrub bỏ sót .idx hỏng hoặc báo sai trên volume có file đã xoá.",
+  "gotchas": [
+   "Phải đọc hết index vào bộ nhớ để sắp xếp."
+  ]
+ },
+ "weed/storage/idx/walk.go": {
+  "character": "Duyệt file .idx theo lô 1024 dòng và giải mã một dòng index",
+  "what": "WalkIndexFile đọc từ dòng startFrom theo khối 1024 entry và gọi fn(key, offset, size) cho từng entry, dừng ở lỗi đầu tiên của fn. IdxFileEntry giải mã một entry 16 byte (8 byte key, 4 byte offset, 4 byte size).",
+  "why": "Hệ quả: mọi nơi dựng needle map từ .idx (load volume, copy, EC, scrub) đi qua đây. Thiết kế: đọc theo khối để không đọc từng entry.",
+  "when": "Load volume, rebuild index, kiểm tra index, chuyển .idx sang .ecx.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Needle map thiếu hay sai entry, volume đọc trả 404 cho file có thật.",
+  "gotchas": [
+   "Một đuôi không đủ 16 byte bị bỏ qua im lặng; CheckIndexFile mới phát hiện được."
+  ]
+ },
+ "weed/storage/io_error.go": {
+  "character": "Theo dõi lỗi IO liên tiếp của volume để cách ly đĩa hỏng",
+  "what": "IoErrorTracker giữ lỗi IO cuối, số lần liên tiếp và cờ cách ly. checkReadWriteError tăng bộ đếm khi lỗi là EIO, và xoá bộ đếm khi thành công hay gặp lỗi không phải IO. markIoQuarantined đặt cờ; resetIoErrorState xoá hết. IoErrorTolerance = 3.",
+  "why": "Hệ quả: khi có ba lỗi EIO liên tiếp, store đánh dấu volume bị cách ly, ngừng báo nó cho master để master tạo lại bản sao từ replica khoẻ, và chặn ghi; dữ liệu không bị xoá, cách ly chỉ được gỡ bằng MarkVolumeWritable, và /healthz trả 503. Thiết kế: chỉ EIO được tính, để lỗi logic không làm cách ly đĩa.",
+  "when": "Mỗi lần đọc ghi volume; heartbeat của store; healthz.",
+  "ux": "Server có đĩa hỏng tự rút khỏi master và load balancer.",
+  "if_broken": "Đĩa hỏng vẫn được gán ghi, hoặc đĩa tốt bị cách ly vì lỗi tạm."
+ },
+ "weed/storage/io_error_other.go": {
+  "character": "Stub nhận diện lỗi IO kiểu Windows trên các nền tảng khác",
+  "what": "isWindowsStorageIoError luôn trả false.",
+  "why": "Hệ quả: trên Linux chỉ EIO được tính là lỗi IO. Thiết kế: build tag !windows.",
+  "when": "Mỗi lần IoErrorTracker phân loại một lỗi.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Không ảnh hưởng trên Linux."
+ },
+ "weed/storage/needle/async_request.go": {
+  "character": "Yêu cầu ghi bất đồng bộ cho hàng đợi ghi theo lô của volume",
+  "what": "AsyncRequest mang needle, cờ ghi, offset, size, isUnchanged, lỗi và một channel done. WaitComplete chờ channel đóng rồi trả kết quả; Complete ghi kết quả rồi đóng; UpdateResult chỉ ghi kết quả; Submit chỉ đóng channel.",
+  "why": "Hệ quả: các lần ghi đồng thời vào một volume được gom thành lô và fsync một lần, mỗi caller chờ kết quả của riêng mình. Thiết kế: một channel đóng một lần thay cho mutex hay callback.",
+  "when": "Ghi needle qua hàng đợi bất đồng bộ (volume_write.go).",
+  "ux": "Không thấy trực tiếp; ghi nhỏ đồng thời nhanh hơn.",
+  "if_broken": "Caller chờ mãi, hoặc nhận kết quả của lần ghi khác.",
+  "gotchas": [
+   "Gọi Complete hay Submit hai lần làm panic vì đóng channel hai lần."
+  ]
+ },
+ "weed/storage/needle/crc.go": {
+  "character": "CRC32-C của needle và ETag",
+  "what": "CRC dùng bảng Castagnoli; NewCRC và Update tính checksum. Value là phép biến đổi cũ (dùng trước 3.09), chỉ còn để kiểm tra file cũ. Etag là hex của checksum thô. Kiểu CRCwriter được khai báo mà không có method.",
+  "why": "Hệ quả: checksum lưu trong mỗi needle và ETag trả cho client đều từ đây; đổi thuật toán làm mọi needle cũ báo CRC sai. Thiết kế: giữ phép biến đổi cũ để .dat của bản cũ vẫn kiểm tra được.",
+  "when": "Mỗi lần ghi và đọc needle; mỗi response có ETag.",
+  "ux": "ETag của file trên volume server.",
+  "if_broken": "Mọi lần đọc báo CRC sai, hoặc ETag đổi giữa các phiên bản.",
+  "gotchas": [
+   "CRCwriter không có method và không ai dùng."
+  ]
+ },
+ "weed/storage/needle/file_id.go": {
+  "character": "FileId: vid, key và cookie của một file, cùng dạng chuỗi vid,keycookie",
+  "what": "FileId giữ VolumeId, NeedleId và Cookie. ParseFileIdFromString tách chuỗi vid,keycookie (cookie là 8 ký tự hex cuối). String và GetNeedleIdCookie dựng lại chuỗi: key và cookie viết hex, bỏ các byte 0 đứng đầu của key.",
+  "why": "Hệ quả: fid là định danh file của toàn hệ thống (filer lưu fid trong chunk, client dùng trong URL), nên cách dựng chuỗi phải khớp ở mọi nơi. Thiết kế: chép splitVolumeId từ operation để tránh vòng import.",
+  "when": "Assign trả fid; filer ghi và đọc chunk; mọi URL needle.",
+  "ux": "URL dạng /3,01637037d6 của file.",
+  "if_broken": "Fid parse sai, đọc nhầm needle hay 404."
+ },
+ "weed/storage/needle/needle.go": {
+  "character": "Kiểu Needle (một file lưu trong volume) và dựng needle từ một upload HTTP",
+  "what": "Needle gồm cookie, id, size, dữ liệu, cờ, tên, mime, các cặp header, last modified (lưu 5 byte), TTL, checksum, append_at_ns (v3) và padding. CreateNeedleFromRequest gọi ParseUpload rồi đặt tên và mime (chỉ khi dưới 256 byte), các header Seaweed-* thành JSON pairs (dưới 64 KiB), cờ nén, TTL, chunk manifest (cm), sửa hướng JPEG nếu bật, tính CRC và parse fid từ path. ParsePath đọc key, cookie và hậu tố _N (cộng N vào key, có kiểm tra tràn). UpdateAppendAtNs lấy max(now, lần append trước + 1).",
+  "why": "Hệ quả: đây là cách mọi upload HTTP thành một bản ghi trên đĩa; một trường bị bỏ ở đây là mất ở mọi replica. Thiết kế: hậu tố _N cho phép một lần assign count > 1 cấp N fid liên tiếp từ một fid.",
+  "when": "Mỗi POST hay PUT tới volume server.",
+  "ux": "Header Seaweed-Xxx khi upload được trả lại là Xxx khi đọc.",
+  "if_broken": "Mất tên, mime hay TTL của file, hoặc fid với hậu tố _N trỏ sai needle.",
+  "gotchas": [
+   "Tên hay mime từ 256 byte trở lên bị bỏ im lặng, không báo lỗi.",
+   "append_at_ns tăng nghiêm ngặt trong một volume, kể cả khi đồng hồ lùi."
+  ]
+ },
+ "weed/storage/needle/needle_parse_upload.go": {
+  "character": "Parse một request upload thành dữ liệu, tên, mime, cờ nén, TTL và kiểm tra Content-MD5",
+  "what": "ParseUpload gom các header Seaweed-*, gọi parseUpload, đọc ts và ttl từ form, tính kích thước gốc (giải nén khi cần kiểm tra MD5, nếu không chỉ đếm luồng gunzip), tự nén gzip các loại file nén được khi tiết kiệm trên 10% (trừ request type=replicate, vốn giữ trạng thái nén của nguồn), rồi so Content-MD5 với dữ liệu chưa nén (ở chế độ FIPS thì bỏ qua). parseUpload: POST multipart lấy part có filename đầu tiên, giữ các trường điều khiển type và fsync dù đứng trước hay sau file, giới hạn kích thước bằng sizeLimit + 1; request khác lấy tên từ Content-Disposition hoặc từ đường dẫn; rồi suy mime từ đuôi file khi Content-Type không có hay không khớp.",
+  "why": "Hệ quả: mọi byte được lưu đều qua đây; quyết định nén ở đây ảnh hưởng tới ETag, kích thước lưu và Content-Encoding khi đọc. Thiết kế: cấp trước bộ đệm tối đa 4 MiB theo Content-Length (#6541) để upload nhỏ không phải grow nhiều lần, mà Content-Length giả cũng chỉ tốn tối đa chừng đó.",
+  "when": "Mỗi upload tới volume server.",
+  "ux": "File văn bản được nén khi lưu và giải nén khi đọc; Content-MD5 sai bị từ chối với 400.",
+  "if_broken": "File bị nén hai lần, MD5 bị từ chối sai, hoặc replica có trạng thái nén khác nguồn.",
+  "gotchas": [
+   "PUT không có Content-Disposition lấy tên file là phần cuối của đường dẫn, tức chính fid.",
+   "Multipart: chỉ part có filename đầu tiên được lưu; các part file khác bị bỏ."
+  ]
+ },
+ "weed/storage/needle/needle_read.go": {
+  "character": "Đọc và giải mã needle từ .dat: các cờ, header, thân v1, v2, v3, kiểm tra kích thước",
+  "what": "Cờ needle: nén 0x01, tên 0x02, mime 0x04, last modified 0x08, TTL 0x10, pairs 0x20, chunk manifest 0x80. ReadNeedleBlob đọc nguyên khối; ReadBytes kiểm tra size trong header khớp với index rồi giải mã thân và đuôi; ReadData khi size không khớp với offset 4 byte thì thử lại ở offset + 32 GiB (volume vượt giới hạn offset). readNeedleDataVersion2 và NonData đọc DataSize, dữ liệu, cờ và các trường tuỳ chọn, mỗi bước kiểm tra biên và trả ErrorCorrupted. ReadNeedleHeader và ReadNeedleBody dùng khi quét tuần tự .dat; ReadNeedleBodyBytes kiểm tra size của header (có thể hỏng) không vượt độ dài thân.",
+  "why": "Hệ quả: mọi lần đọc needle, quét .dat (vacuum, tail, scrub, copy) đi qua bộ giải mã này; ErrorCorrupted cho phép vacuum phân biệt byte hỏng với lỗi IO. Thiết kế: không tin size trong header, luôn kiểm tra biên trước khi cắt slice.",
+  "when": "Mỗi GET needle; vacuum; tail; scrub; ReadAllNeedles.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Đọc panic vì slice ngoài biên trên needle hỏng, hoặc trả dữ liệu sai thay vì lỗi.",
+  "gotchas": [
+   "Thử lại ở offset + 32 GiB chỉ áp dụng với offset 4 byte, để đọc volume vượt 32 GiB."
+  ]
+ },
+ "weed/storage/needle/needle_read_page.go": {
+  "character": "Đọc một phần dữ liệu của needle và đọc metadata mà không đọc dữ liệu",
+  "what": "ReadNeedleData đọc tối đa len(data) byte của phần dữ liệu từ needleOffset, dựa vào DataSize đã biết. ReadNeedleMeta đọc header và DataSize, kiểm tra size, rồi chỉ đọc phần sau dữ liệu (tối đa 128 KiB) để lấy cờ, tên, mime, các trường khác và đuôi; panic được bắt thành lỗi.",
+  "why": "Hệ quả: đọc needle lớn và Range đi qua đây để không nạp cả file vào bộ nhớ. Thiết kế: tách đọc metadata khỏi đọc dữ liệu, rồi stream dữ liệu theo khối.",
+  "when": "GET needle lớn hay có Range; HEAD; DELETE đọc header và trailer; ReadNeedleMeta RPC.",
+  "ux": "Tải file lớn không làm volume server tốn bộ nhớ bằng kích thước file.",
+  "if_broken": "Stream trả sai byte, hoặc metadata thiếu.",
+  "gotchas": [
+   "Metadata sau dữ liệu lớn hơn 128 KiB bị coi là lỗi."
+  ]
+ },
+ "weed/storage/needle/needle_read_tail.go": {
+  "character": "Đuôi của needle: kiểm tra CRC, append_at_ns, và độ dài padding",
+  "what": "readNeedleTail so CRC của dữ liệu với checksum lưu (chấp nhận cả phép biến đổi cũ của bản dưới 3.09), hoặc chỉ đọc checksum khi dữ liệu không được nạp; v3 đọc thêm append_at_ns 8 byte. ParseNeedleTrailer kiểm tra độ dài trước khi đọc. PaddingLength và NeedleBodyLength tính kích thước thân theo version.",
+  "why": "Hệ quả: CRC sai làm đọc trả lỗi ErrorCorrupted thay vì dữ liệu hỏng; độ dài thân tính ở đây quyết định offset của needle kế tiếp khi quét .dat. Thiết kế: chấp nhận cả hai cách mã hoá CRC để nâng cấp không làm .dat cũ hỏng.",
+  "when": "Mỗi lần đọc needle và quét .dat.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Mọi lần đọc báo CRC sai, hoặc quét .dat lệch offset từ một needle trở đi.",
+  "gotchas": [
+   "Padding luôn từ 1 tới 8 byte, không bao giờ 0, kể cả khi kích thước đã chia hết cho 8."
+  ]
+ },
+ "weed/storage/needle/needle_write.go": {
+  "character": "Append một needle vào cuối .dat, và ghi một blob đã đóng gói",
+  "what": "Append lấy cuối file làm offset, từ chối khi offset đã vượt MaxPossibleVolumeSize (32 GiB với offset 4 byte) mà needle có dữ liệu, đóng gói theo version rồi WriteAt; lỗi thì truncate về cuối cũ. WriteNeedleBlob ghi một blob đã đóng gói (từ replica sync), với v3 thì đặt lại append_at_ns trong blob trước khi ghi, và truncate khi lỗi.",
+  "why": "Hệ quả: mọi needle mới vào .dat qua đây; truncate khi lỗi giữ cho .dat không có đuôi dở. Thiết kế: offset luôn là cuối file, vì .dat chỉ được append.",
+  "when": "Mỗi lần ghi needle; WriteNeedleBlob RPC; vacuum ghi sang file mới.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Volume vượt 32 GiB ghi đè từ đầu, hoặc để lại needle dở sau lỗi.",
+  "gotchas": [
+   "Lỗi của Truncate trong Append bị bỏ qua (nhánh trống)."
+  ]
+ },
+ "weed/storage/needle/needle_write_legacy.go": {
+  "character": "Bản đóng gói needle cũ, chỉ còn để đối chiếu trong test",
+  "what": "LegacyPrepareWriteBuffer đóng gói needle theo v1, v2, v3 như các hàm writeNeedleV* mới; LegacyAppend append bằng bản cũ.",
+  "why": "Hệ quả: needle_write_test.go so byte của bản mới với bản cũ để bảo đảm định dạng không đổi. Thiết kế: giữ bản cũ làm chuẩn tham chiếu sau khi tách theo version.",
+  "when": "Chỉ trong test.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Không ảnh hưởng production.",
+  "issue": "dead",
+  "issue_note": "Không có caller nào ngoài test: LegacyPrepareWriteBuffer chỉ được needle_write_test.go dùng làm bản đối chiếu, còn LegacyAppend không ai gọi. Nội dung trùng với writeNeedleV1 và writeNeedleCommon."
+ },
+ "weed/storage/needle/needle_write_v1.go": {
+  "character": "Đóng gói needle version 1",
+  "what": "writeNeedleV1 ghi header (cookie, id, size = độ dài dữ liệu), dữ liệu, checksum và padding.",
+  "why": "Hệ quả: chỉ volume version 1 (rất cũ) dùng định dạng này. Thiết kế: v1 không có tên, mime hay cờ.",
+  "when": "Ghi vào volume version 1.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Volume v1 ghi sai định dạng."
+ },
+ "weed/storage/needle/needle_write_v2.go": {
+  "character": "Đóng gói needle version 2, và phần chung với version 3",
+  "what": "writeNeedleCommon tính size (4 byte DataSize, dữ liệu, 1 byte cờ, rồi tên, mime, last modified 5 byte, TTL 2 byte, pairs khi có cờ), ghi header và thân, rồi gọi hàm footer của version; trả size là DataSize và actualSize là kích thước trên đĩa. writeNeedleV2 ghi checksum và padding.",
+  "why": "Hệ quả: định dạng thân dùng chung cho v2 và v3, nên đổi ở đây là đổi định dạng file của mọi volume mới. Thiết kế: footer khác nhau được truyền vào như một hàm.",
+  "when": "Mỗi lần ghi needle vào volume v2 hay v3.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Needle mới không đọc lại được.",
+  "gotchas": [
+   "Needle không có dữ liệu có size 0 và không ghi cờ, tên hay mime.",
+   "MimeSize = uint8(len(Mime)) sẽ tràn với mime từ 256 byte; caller (CreateNeedleFromRequest) bảo đảm dưới 256."
+  ]
+ },
+ "weed/storage/needle/needle_write_v3.go": {
+  "character": "Đóng gói needle version 3 (mặc định hiện nay)",
+  "what": "writeNeedleV3 dùng writeNeedleCommon với footer gồm checksum, append_at_ns 8 byte và padding.",
+  "why": "Hệ quả: append_at_ns trong mỗi needle là cơ sở cho incremental copy, tail và tìm nhị phân theo thời gian. Thiết kế: thêm timestamp vào đuôi mà giữ nguyên thân của v2.",
+  "when": "Mỗi lần ghi needle vào volume v3.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Backup và tail không tìm được vị trí theo thời gian."
+ },
+ "weed/storage/needle/needle_write_version.go": {
+  "character": "Chọn bộ đóng gói needle theo version",
+  "what": "writeNeedleByVersion gọi writeNeedleV1, V2 hay V3, version khác trả lỗi.",
+  "why": "Hệ quả: Append dùng hàm này nên mọi version đều đi qua một chỗ. Thiết kế: tách lệnh switch khỏi needle_write.go.",
+  "when": "Mỗi lần Append.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Ghi thất bại với unsupported version."
+ },
+ "weed/storage/needle/volume_id.go": {
+  "character": "VolumeId: số hiệu volume 32 bit",
+  "what": "NewVolumeId parse chuỗi thập phân; String; Next trả vid + 1.",
+  "why": "Hệ quả: vid xuất hiện trong mọi fid và tên file volume. Thiết kế: kiểu uint32.",
+  "when": "Mọi nơi parse vid từ URL, fid, tên file.",
+  "ux": "Số trước dấu phẩy trong fid.",
+  "if_broken": "Đọc ghi nhầm volume.",
+  "gotchas": [
+   "NewVolumeId parse 64 bit rồi cắt về 32 bit, nên vid 4294967297 thành volume 1 mà không báo lỗi."
+  ]
+ },
+ "weed/storage/needle/volume_ttl.go": {
+  "character": "TTL của volume và needle: parse, lưu 2 byte, đổi ra giây",
+  "what": "TTL gồm Count (1 byte) và Unit (phút, giờ, ngày, tuần, tháng 30 ngày, năm 365 ngày). ReadTTL parse 3m, 4h, 5d, 6w, 7M, 8y, số trơn là phút, rồi fitTtlCount chuẩn hoá về đơn vị lớn nhất mà số đếm còn dưới 256, ưu tiên khớp chính xác. TTL được lưu 2 byte (ToBytes, LoadTTLFromBytes) hay trong uint32 (heartbeat); các giá trị được intern trong một bảng 256 × 7 để master không cấp phát cho mỗi volume. ToSeconds, Minutes, String, SecondsToTTL.",
+  "why": "Hệ quả: volume TTL được nhóm và hết hạn theo giá trị này (master xoá cả volume khi hết hạn), nên parse sai là dữ liệu hết hạn sớm hay không bao giờ hết hạn. Thiết kế: 2 byte để vừa superblock và needle; intern để tiết kiệm bộ nhớ ở master.",
+  "when": "Assign với ttl, ghi needle có ttl, heartbeat, vòng xoá volume hết hạn của master.",
+  "ux": "weed upload -ttl=3d hay ?ttl=3d làm file hết hạn sau 3 ngày.",
+  "if_broken": "File hết hạn sai thời điểm, hoặc volume TTL bị trộn với volume thường.",
+  "gotchas": [
+   "Đơn vị không hỗ trợ (ví dụ 5s) bị hiểu là không có TTL mà không báo lỗi.",
+   "Khi không khớp chính xác, fitTtlCount làm tròn xuống (301 phút thành 5h).",
+   "Không ghi qua con trỏ trả về từ bảng intern: nó dùng chung."
+  ]
+ },
+ "weed/storage/needle/volume_version.go": {
+  "character": "Version định dạng của volume và needle",
+  "what": "Version1, Version2, Version3; GetCurrentVersion trả 3; IsSupportedVersion nhận 1 tới 3.",
+  "why": "Hệ quả: volume mới tạo với version 3 (có append_at_ns). Thiết kế: version nằm ở byte đầu của superblock.",
+  "when": "Tạo và load volume.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Volume không load được vì version không được hỗ trợ."
+ },
+ "weed/storage/types/needle_id_type.go": {
+  "character": "NeedleId: khoá 64 bit của needle",
+  "what": "Chuyển đổi giữa NeedleId, byte và uint64; String là hex; FileId dựng chuỗi vid,key với key hex độ dài chẵn và cookie 00000000; ParseNeedleId parse hex.",
+  "why": "Hệ quả: khoá của needle là khoá của needle map và nằm trong fid. Thiết kế: hex trong fid để ngắn.",
+  "when": "Mọi nơi đọc ghi index và fid.",
+  "ux": "Phần giữa của fid.",
+  "if_broken": "Fid không parse được hay trỏ sai needle.",
+  "gotchas": [
+   "NeedleId.FileId đặt cookie 00000000, chỉ hợp với đường không kiểm tra cookie."
+  ]
+ },
+ "weed/storage/types/needle_types.go": {
+  "character": "Offset, Size, Cookie và các hằng kích thước của định dạng needle và index",
+  "what": "Size là int32: âm hay TombstoneFileSize (-1) là đã xoá; IsValid chỉ khi dương; Raw trả kích thước tuyệt đối. Cookie 32 bit, parse hex. Hằng: header 16 byte (cookie 4, id 8, size 4), DataSize 4, entry index 16 byte, timestamp 8, padding 8.",
+  "why": "Hệ quả: cách đánh dấu xoá bằng size âm ở đây là cách mọi needle map và .idx biểu diễn lần xoá. Thiết kế: giữ kích thước cũ (đổi dấu) khi xoá để vẫn tính được dung lượng rác.",
+  "when": "Mọi thao tác needle map, index và needle.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Needle đã xoá đọc được, hoặc dung lượng rác tính sai.",
+  "gotchas": [
+   "Size = 0 không phải đã xoá: needle tồn tại mà không có dữ liệu."
+  ]
+ },
+ "weed/storage/types/offset_4bytes.go": {
+  "character": "Offset 4 byte (build mặc định): đơn vị 8 byte, volume tối đa 32 GiB",
+  "what": "OffsetHigher rỗng; OffsetLower 4 byte big-endian. ToOffset chia offset thật cho 8; ToActualOffset nhân lại. MaxPossibleVolumeSize = 32 GiB. Uint32ToOffset ghi là chỉ dùng cho test.",
+  "why": "Hệ quả: giới hạn 32 GiB mỗi volume của build mặc định đến từ đây; volume lớn hơn cần build tag 5BytesOffset (ngoài phạm vi graph). Thiết kế: mọi needle căn 8 byte nên offset lưu theo đơn vị 8 byte.",
+  "when": "Mọi lần ghi và đọc index.",
+  "ux": "volumeSizeLimitMB của master không thể vượt 32 GiB với build mặc định.",
+  "if_broken": "Needle sau 32 GiB bị đọc ở offset sai.",
+  "gotchas": [
+   "Uint32ToOffset được ghi là chỉ cho test nhưng ToOffset dùng nó."
+  ]
+ },
+ "weed/storage/types/volume_disk_type.go": {
+  "character": "DiskType và DiskId của volume server",
+  "what": "DiskType là chuỗi: rỗng là hdd, ssd, nvme hay bất kỳ tên nào khác (viết thường). ToDiskType chuẩn hoá; ReadableString trả hdd cho rỗng. DiskId là chỉ số vào Store.Locations.",
+  "why": "Hệ quả: master xếp volume theo loại đĩa, nên một tên loại khác nhau chút ít (SSD và ssd được chuẩn hoá; ssd1 thì không) tạo ra một loại đĩa riêng. Thiết kế: loại đĩa tự do để operator đặt nhãn tuỳ ý.",
+  "when": "Cấu hình -disk của volume server; assign và grow theo diskType.",
+  "ux": "Tạo collection trên SSD bằng diskType=ssd.",
+  "if_broken": "Volume được tạo trên loại đĩa sai, hoặc không tìm được đĩa phù hợp.",
+  "gotchas": [
+   "Loại rỗng và hdd là một; master và volume server so chuỗi sau khi chuẩn hoá."
+  ]
+ },
+ "weed/storage/super_block/replica_placement.go": {
+  "character": "ReplicaPlacement: chuỗi replication xyz (khác DC, khác rack, cùng rack) và mã hoá 1 byte",
+  "what": "NewReplicaPlacementFromString đọc tối đa 3 chữ số (thêm 0 phía trước khi ngắn hơn), từ chối khi giá trị dc×100 + rack×10 + same vượt 255. NewReplicaPlacementFromByte trả phần tử dùng chung của một bảng 256 phần tử dựng sẵn. HasReplication, Equals, Byte, String, GetCopyCount (tổng + 1). ResolveReplicaPlacement chọn ràng buộc đặt shard EC: giá trị chỉ định, nếu không thì mặc định của cluster; không hợp lệ hay không có replication thì nil.",
+  "why": "Hệ quả: số bản sao của một volume và cách master chọn server cho bản sao đều từ đây; byte này nằm trong superblock và heartbeat. Thiết kế: bảng dựng sẵn để master giải mã mỗi heartbeat mà không cấp phát.",
+  "when": "Assign và grow theo replication; load volume; heartbeat; EC encode, repair, balance.",
+  "ux": "replication=001 là hai bản trên cùng rack; 010 là hai rack.",
+  "if_broken": "Volume có sai số bản sao, hoặc bản sao cùng rack khi đáng ra khác rack.",
+  "gotchas": [
+   "Chuỗi dài hơn 3 ký tự bị cắt im lặng; ký tự không phải chữ số chỉ bị từ chối khi giá trị vượt 255.",
+   "Không ghi qua con trỏ của NewReplicaPlacementFromByte: nó dùng chung."
+  ]
+ },
+ "weed/storage/super_block/super_block.go": {
+  "character": "Superblock 8 byte ở đầu mỗi .dat",
+  "what": "SuperBlock gồm version, replica placement, TTL, compaction revision (số lần đã compact) và phần Extra protobuf tuỳ chọn (v2 trở lên, tối đa 65534 byte). Bytes đóng gói; BlockSize là 8 cộng ExtraSize; Initialized khi có replica placement và TTL.",
+  "why": "Hệ quả: replication và TTL của volume được lưu ở đây chứ không phải ở master; compaction revision giúp copy và incremental copy phát hiện volume đã bị compact. Thiết kế: kích thước cố định cộng phần mở rộng có độ dài.",
+  "when": "Tạo volume, load volume, compact, cấu hình lại replication.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Volume load sai replication hay TTL, hoặc copy không biết volume đã bị compact.",
+  "gotchas": [
+   "Bytes dừng chương trình (glog.Fatalf) khi Extra quá lớn hay không marshal được."
+  ]
+ },
+ "weed/storage/super_block/super_block_read.go.go": {
+  "character": "Đọc superblock từ .dat",
+  "what": "ReadSuperBlock đọc 8 byte đầu, giải mã version, replica placement, TTL, compaction revision và ExtraSize, rồi đọc và unmarshal phần Extra nếu có.",
+  "why": "Hệ quả: load volume dựa vào hàm này; một superblock không đọc được làm volume không load. Thiết kế: đọc qua BackendStorageFile nên dùng được cho cả .dat trên tier.",
+  "when": "Load volume; đọc superblock của volume tier.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Volume không load được sau khởi động lại.",
+  "gotchas": [
+   "Tên file có hai đuôi .go (super_block_read.go.go)."
+  ]
+ },
+ "weed/storage/needle_map.go": {
+  "character": "Giao diện needle map của volume và phần chung ghi file .idx",
+  "what": "NeedleMapKind: in-memory, LevelDB nhỏ, vừa, lớn. NeedleMapper: Put, Get, Delete, Close, Destroy, các số liệu (kích thước nội dung, đã xoá, số file, khoá lớn nhất, cuối needle lớn nhất), IndexFileSize, Sync, ReadIndexEntry. baseNeedleMapper giữ file .idx và offset ghi: appendToIndexFile ghi một entry 16 byte dưới khoá, truncateIndex cắt về một offset (rollback lô ghi), ReadIndexEntry đọc entry thứ n. TempNeedleMapper thêm DoOffsetLoading và UpdateNeedleMap cho lúc dựng lại index.",
+  "why": "Hệ quả: mọi lần ghi needle thêm một dòng vào .idx qua đây, và .idx là nguồn để dựng lại needle map khi khởi động. Thiết kế: một giao diện chung để chọn giữa map trong bộ nhớ (nhanh, tốn RAM) và LevelDB (ít RAM).",
+  "when": "Mỗi lần ghi và xoá needle; load volume; vacuum.",
+  "ux": "-index=memory, leveldb, leveldbMedium, leveldbLarge của volume server.",
+  "if_broken": "Needle map và .idx lệch nhau, needle mất sau khởi động lại.",
+  "gotchas": [
+   "appendToIndexFile ghi ở offset tự theo dõi, không phải cuối file thật."
+  ]
+ },
+ "weed/storage/needle_map/needle_value.go": {
+  "character": "NeedleValue: một entry của needle map (key, offset, size) và mã hoá 16 byte",
+  "what": "NeedleValue có Less theo key (cho btree) và ToBytes; ToBytes đóng gói key 8 byte, offset 4 byte, size 4 byte.",
+  "why": "Hệ quả: định dạng 16 byte này chính là một dòng của .idx và .ecx. Thiết kế: cùng một mã hoá cho bộ nhớ, file và LevelDB.",
+  "when": "Mọi lần ghi index.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": ".idx ghi sai định dạng."
+ },
+ "weed/storage/needle_map/needle_value_map.go": {
+  "character": "Giao diện map key → NeedleValue",
+  "what": "NeedleValueMap: Set (trả offset và size cũ), Delete (đánh dấu xoá, trả size cũ), Remove (xoá hẳn), Get, AscendingVisit.",
+  "why": "Hệ quả: CompactMap và MemDb cài giao diện này. Thiết kế: tách cấu trúc dữ liệu khỏi phần ghi file .idx.",
+  "when": "Needle map trong bộ nhớ.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Không ảnh hưởng trực tiếp."
+ },
+ "weed/storage/needle_map/compact_map.go": {
+  "character": "CompactMap: needle map trong bộ nhớ tiết kiệm RAM, chia đoạn theo khoá",
+  "what": "Khoá được chia thành đoạn 50000 khoá; mỗi đoạn là một slice sắp theo khoá với khoá rút gọn 16 bit, offset 4 byte và size, tìm bằng nhị phân (nhanh khi thêm theo thứ tự). Set chèn hay cập nhật và trả giá trị cũ; Delete đổi dấu size (size 0 thành tombstone) và trả size cũ; Remove xoá hẳn entry; AscendingVisit duyệt theo khoá tăng dần dưới khoá đọc. Đoạn đầy được cố định capacity để không tốn bộ nhớ thừa.",
+  "why": "Hệ quả: chế độ -index=memory dùng cấu trúc này cho mọi volume, nên bộ nhớ của volume server tỉ lệ với số needle ở đây. Thiết kế: khoá rút gọn và offset 4 byte để mỗi entry chỉ khoảng 10 byte.",
+  "when": "Mỗi Put, Get, Delete của needle map in-memory.",
+  "ux": "Volume server chứa hàng trăm triệu file với RAM vừa phải.",
+  "if_broken": "Tra needle sai, needle đã xoá vẫn đọc được, hoặc panic khi một đoạn vượt 50000 entry.",
+  "gotchas": [
+   "Insert vào đoạn đã có 50000 entry làm panic; điều này không xảy ra vì mỗi đoạn chỉ chứa 50000 khoá khác nhau."
+  ]
  }
 }
