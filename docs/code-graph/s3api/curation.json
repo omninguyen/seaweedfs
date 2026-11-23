@@ -6433,5 +6433,149 @@
   "when": "Mỗi message của worker kiểu cũ; mỗi job plugin mang TaskParams.",
   "ux": "Không thấy trực tiếp.",
   "if_broken": "Worker không giải mã được task, hoặc task chạy với tham số sai."
+ },
+ "weed/worker/tasks/vacuum/config.go": {
+  "character": "Cấu hình vacuum cho maintenance kiểu cũ: ngưỡng rác và tuổi tối thiểu của volume",
+  "what": "Config nhúng BaseConfig (mặc định bật, quét mỗi 2 giờ, 2 task song song) và thêm GarbageThreshold (0,3) và MinVolumeAgeSeconds (24 giờ). ToTaskPolicy và FromTaskPolicy đổi qua TaskPolicy (tuổi lưu theo giờ, làm tròn lên). LoadConfigFromPersistence đọc chính sách đã lưu nếu đối tượng lưu trữ có LoadVacuumTaskPolicy, không thì cảnh báo và dùng mặc định. GetConfigSpec mô tả form (khoảng quét 10 phút tới 24 giờ, tuổi 1 giờ tới 7 ngày).",
+  "why": "Hệ quả: maintenance của admin và worker kiểu cũ dùng cấu hình này; plugin worker có cấu hình riêng (plugin_handler.go). Thiết kế: tuổi tối thiểu tránh vacuum volume còn đang ghi.",
+  "when": "Khi admin khởi động (nạp từ lưu trữ) và khi lưu trang cấu hình vacuum.",
+  "ux": "Trang cấu hình vacuum của maintenance trong admin UI.",
+  "if_broken": "Vacuum chạy quá sớm (volume còn đang ghi) hoặc không bao giờ chạy.",
+  "gotchas": [
+   "Tuổi tối thiểu được lưu theo giờ: giá trị dưới một giờ thành một giờ sau khi lưu và nạp lại."
+  ]
+ },
+ "weed/worker/tasks/vacuum/register.go": {
+  "character": "Đăng ký loại task vacuum vào các registry của worker và admin",
+  "what": "RegisterVacuumTask dựng TaskDefinition: tên hiển thị, Config mặc định, ConfigSpec, CreateTask (đòi ít nhất một nguồn, tạo VacuumTask cho mọi nguồn), DetectionFunc là Detection, quét mỗi 2 giờ, SchedulingFunc, 2 task song song, lặp lại mỗi 7 ngày; tuỳ chọn TLS gRPC lấy từ mục grpc.worker. init đăng ký cùng hàm UpdateConfigFromPersistence, hàm này thay Config của định nghĩa bằng cấu hình đã lưu.",
+  "why": "Hệ quả: import package là loại task vacuum xuất hiện ở maintenance của admin và worker kiểu cũ. Thiết kế: một chỗ duy nhất nối định nghĩa vào mọi registry (qua base.RegisterTask).",
+  "when": "Lúc init; một lần khi admin nạp cấu hình đã lưu.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Vacuum không xuất hiện ở maintenance của admin hay worker kiểu cũ."
+ },
+ "weed/worker/tasks/vacuum/scheduling.go": {
+  "character": "Quyết định có được chạy thêm một task vacuum lúc này (maintenance kiểu cũ)",
+  "what": "Scheduling: false khi số task vacuum đang chạy đã bằng MaxConcurrent của cấu hình; true khi có ít nhất một worker còn chỗ và có capability vacuum.",
+  "why": "Hệ quả: maintenance queue của admin hỏi hàm này trước khi giao task vacuum. Thiết kế: giới hạn lấy từ cấu hình hiện tại chứ không từ TaskDefinition.",
+  "when": "Mỗi lần maintenance queue chọn task vacuum để giao.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Quá nhiều vacuum chạy cùng lúc, hoặc vacuum không bao giờ được giao."
+ },
+ "weed/worker/tasks/vacuum/detection.go": {
+  "character": "Phát hiện volume cần vacuum: gom replica theo volume, chọn replica rác nhất, tạo tham số task",
+  "what": "Detection gom metrics theo vid (giữ thứ tự gặp). pickPrimaryReplica chọn replica không có bản remote, có tỉ lệ rác ít nhất bằng ngưỡng và đủ tuổi, lấy replica rác nhất; không có thì bỏ volume (đếm lý do bỏ để log). Ưu tiên cao nếu rác trên 60%. Bỏ volume đang có task bất kỳ trong ActiveTopology. createVacuumTaskParams đưa mọi replica không remote (địa chỉ đã phân giải, khử trùng) vào Sources, VolumeSize lấy từ replica chính, kèm VacuumParams (ngưỡng, batch 1000, kiểm checksum).",
+  "why": "Hệ quả: dùng chung bởi maintenance kiểu cũ và plugin worker. Thiết kế: một task cho cả volume, gồm mọi replica; replica nào thật sự vacuum được quyết định lại lúc thực thi.",
+  "when": "Mỗi lần phát hiện vacuum (maintenance hay plugin).",
+  "ux": "Log \"VACUUM: No tasks created …\" kèm số volume bị bỏ vì rác hay tuổi.",
+  "if_broken": "Volume đầy rác không được vacuum, hoặc vacuum volume có bản remote.",
+  "gotchas": [
+   "Replica có bản remote (tier) bị loại khỏi cả việc chọn lẫn danh sách nguồn."
+  ]
+ },
+ "weed/worker/tasks/vacuum/vacuum_task.go": {
+  "character": "VacuumTask: kiểm lại rác trên từng replica, compact, commit, rồi đánh dấu ghi được",
+  "what": "Execute: đọc ngưỡng và kích thước volume từ tham số; checkVacuumEligibility gọi VacuumVolumeCheck trên mọi server (lỗi ở một server là dừng cả task, không vacuum một phần) rồi chọn các replica có rác từ ngưỡng trở lên; không ai đủ thì kết thúc thành công. performVacuum: compact lần lượt từng replica được chọn (lỗi thì gọi cleanup trên mọi replica được chọn), commit từng replica (gom lỗi), nếu không replica nào còn read-only sau commit thì VolumeMarkWritable trên từng replica. verifyVacuumResults chỉ log tỉ lệ rác sau khi xong. Timeout mỗi bước nhân theo số GiB của volume (compact 3 phút mỗi GiB, các bước khác 1 phút mỗi GiB).",
+  "why": "Hệ quả: là phần thực thi cho cả worker kiểu cũ và plugin worker. Thiết kế: chỉ vacuum replica thật sự nhiều rác; kiểm lúc thực thi vì đề xuất có thể đã cũ.",
+  "when": "Khi một task hay job vacuum được chạy.",
+  "ux": "Tiến độ 10, 50, 90, 100% của job vacuum.",
+  "if_broken": "Volume không được thu hồi chỗ, hoặc bị kẹt read-only sau vacuum.",
+  "gotchas": [
+   "Các replica có thể được compact khác nhau: replica dưới ngưỡng bị bỏ qua, nên kích thước file .dat giữa các replica lệch nhau sau vacuum.",
+   "Commit lỗi ở một replica không được hoàn tác ở các replica đã commit.",
+   "GetProgress luôn trả 0 vì trường progress không được cập nhật; tiến độ thật đi qua ReportProgress."
+  ]
+ },
+ "weed/worker/tasks/vacuum/plugin_handler.go": {
+  "character": "Handler vacuum của plugin worker: form cấu hình, phát hiện và thực thi",
+  "what": "Tự đăng ký (bí danh vol.vacuum, volume.vacuum; nhóm default). Form admin: lọc collection, trạng thái volume (ALL, ACTIVE, FULL), DC, rack, node. Form worker: garbage_threshold (mặc định 0,3). Mặc định chạy: mỗi 17 phút, tối đa 200 job mỗi lần, 16 job toàn cụm và 4 mỗi worker, thử lại 1 lần, tối đa 30 phút. Detect lấy metrics từ master, lọc, gọi Detection dùng chung, gửi một hoạt động tóm tắt cùng 3 volume đầu, rồi đề xuất mỗi volume một job (dedupe key vacuum:<vid>[:<collection>], thời gian ước tính 5 phút mỗi GiB). Execute giải mã task_params_pb (hoặc dựng từ volume_id và server), bổ sung ngưỡng nếu thiếu, chạy VacuumTask và báo tiến độ.",
+  "why": "Hệ quả: đây là đường vacuum hiện hành qua admin plugin. Thiết kế: dùng lại Detection và VacuumTask của maintenance kiểu cũ.",
+  "when": "Mỗi 17 phút (mặc định) khi scheduler phát hiện vacuum; mỗi job vacuum.",
+  "ux": "Trang plugin: job \"Vacuum volume N on S\", hoạt động \"VACUUM: Created/No tasks …\".",
+  "if_broken": "Không còn vacuum tự động qua plugin; ổ đĩa đầy dần vì rác.",
+  "gotchas": [
+   "Form worker không có tuổi tối thiểu và deriveVacuumConfig đặt MinVolumeAgeSeconds = 0, nên đường plugin vacuum cả volume mới tạo (đường kiểu cũ mặc định 24 giờ).",
+   "ActiveTopology trong lần phát hiện là bản mới dựng, nên kiểm HasAnyTask luôn false; tránh trùng dựa vào dedupe key phía admin."
+  ]
+ },
+ "weed/worker/tasks/balance/config.go": {
+  "character": "Cấu hình balance: ngưỡng lệch, số server tối thiểu, giới hạn băng thông dời volume",
+  "what": "Config nhúng BaseConfig (bật, quét 30 phút, 1 task song song) và thêm ImbalanceThreshold (0,2), MinServerCount (2), IoBytePerSecond (0 là không giới hạn), cùng bộ lọc DC, rack, node chỉ dùng trong một lần phát hiện (không lưu). GetConfigSpec mô tả form (ngưỡng 0,05 tới 0,5, tối đa 3 task song song). ToTaskPolicy, FromTaskPolicy và LoadConfigFromPersistence giống mẫu của vacuum.",
+  "why": "Hệ quả: cấu hình chung của Detection cho cả maintenance và plugin; plugin dựng Config từ form worker của nó (plugin_handler.go). Thiết kế: bộ lọc vị trí là trường runtime để Detection không phải nhận thêm tham số.",
+  "when": "Khi admin nạp hay lưu cấu hình balance; mỗi lần phát hiện.",
+  "ux": "Trang cấu hình balance của maintenance.",
+  "if_broken": "Balance quá hăng (dời liên tục) hoặc không bao giờ dời."
+ },
+ "weed/worker/tasks/balance/register.go": {
+  "character": "Đăng ký loại task balance cho maintenance kiểu cũ",
+  "what": "RegisterBalanceTask dựng TaskDefinition: CreateTask tạo BalanceTask từ nguồn đầu tiên, DetectionFunc gọi Detection không giới hạn số kết quả, quét 30 phút, 1 task song song, lặp lại 2 giờ; init đăng ký thêm UpdateConfigFromPersistence.",
+  "why": "Hệ quả: loại task balance xuất hiện trong maintenance của admin. Thiết kế: cùng mẫu với các loại task khác qua base.RegisterTask.",
+  "when": "Lúc init; khi admin nạp cấu hình đã lưu.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Balance không có trong maintenance kiểu cũ."
+ },
+ "weed/worker/tasks/balance/scheduling.go": {
+  "character": "Có được chạy thêm task balance lúc này không (maintenance kiểu cũ)",
+  "what": "Scheduling: false nếu số task balance đang chạy đã bằng MaxConcurrent; true nếu có ít nhất một worker có capability balance.",
+  "why": "Hệ quả: maintenance queue hỏi trước khi giao. Thiết kế: giới hạn thấp (mặc định 1) vì mỗi lần dời chép cả volume.",
+  "when": "Mỗi lần maintenance queue chọn task balance.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Nhiều lần dời volume chạy cùng lúc làm nghẽn mạng.",
+  "gotchas": [
+   "Khác vacuum, hàm này không kiểm worker còn chỗ (CurrentLoad < MaxConcurrent)."
+  ]
+ },
+ "weed/worker/tasks/balance/replica_placement.go": {
+  "character": "Kiểm một lần dời volume có giữ đúng replica placement (bọc weed/storage/balancer)",
+  "what": "IsGoodMove đổi các ReplicaLocation sang balancer.Location rồi gọi balancer.IsGoodMove; hostFromAddress gọi balancer.HostFromAddress để biết máy vật lý.",
+  "why": "Hệ quả: detection balance không chọn đích làm hai replica nằm chung máy hay sai số rack, DC so với placement. Thiết kế: dùng chung quy tắc với shell volume.balance.",
+  "when": "Mỗi lần chọn đích cho volume có replication.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Balance dời một replica tới chỗ phá replica placement."
+ },
+ "weed/worker/tasks/balance/detection.go": {
+  "character": "Detection của balance: dời volume từ server đầy nhất sang server vơi nhất, theo từng loại đĩa",
+  "what": "Bỏ volume có bản remote (dời sẽ xoá object remote mà đích đang trỏ tới). Với mỗi loại đĩa (theo thứ tự tên): đếm volume mỗi server, gồm cả server trống lấy từ ActiveTopology (có lọc DC, rack, node, bỏ mục phantom), cộng MaxVolumeCount và dung lượng đĩa. Cộng điều chỉnh của các task balance đang chờ. Lặp tới khi đủ maxResults: so sánh theo tỉ lệ volume trên MaxVolumeCount (hoặc số thô nếu có server thiếu thông tin), dừng khi độ lệch không vượt ngưỡng, khi chênh lệch số volume tối đa là 1, hoặc khi lần dời làm đích đầy hơn nguồn. Chọn volume có vid nhỏ nhất chưa có task trên server đầy nhất; bỏ đích nếu nhận volume này sẽ vượt ngưỡng đầy đĩa (có tính phần đã lên kế hoạch). createBalanceTask: thử đích là server vơi nhất (đĩa đúng loại còn chỗ), không được thì chấm điểm mọi đĩa (ít đầy, khác rack hay cùng rack tuỳ placement, khác DC), kiểm IsGoodMove khi volume có replication, rồi tạo TaskParams (nguồn có disk id, đích có disk id, timeout 10 phút) và AddPendingTask vào ActiveTopology.",
+  "why": "Hệ quả: dùng chung bởi maintenance kiểu cũ và plugin; phần đặt chỗ trong ActiveTopology ngăn các lần lặp sau chọn trùng đích. Thiết kế: cân theo tỉ lệ để server lớn nhận nhiều volume hơn, và theo dõi byte đã lên kế hoạch để không làm đầy đích.",
+  "when": "Mỗi lần phát hiện balance.",
+  "ux": "Log \"BALANCE [loại]: No tasks created - cluster well balanced …\" hoặc \"Created N task(s) …\".",
+  "if_broken": "Volume dồn không đều giữa các server, hoặc bị dời qua lại không ngừng.",
+  "gotchas": [
+   "Server chỉ có volume ngoài bộ lọc collection vẫn được tính với số volume 0, nên một server đầy volume của collection khác trông như trống.",
+   "Khi không phân giải được server vơi nhất, đường dự phòng chấm điểm có thể chọn server khác, miễn là nằm trong tập đích hợp lệ của vòng đó."
+  ]
+ },
+ "weed/worker/tasks/balance/balance_task.go": {
+  "character": "BalanceTask: dời một volume bằng LiveMoveVolume",
+  "what": "Execute đòi BalanceParams, nguồn và đích; gọi volume_move.NewMover(...).LiveMoveVolume từ nguồn sang đích, idle timeout 60 giây, giới hạn băng thông IoBytePerSecond, báo tiến độ và giai đoạn qua callback. Validate kiểm vid và nguồn khớp server của task.",
+  "why": "Hệ quả: là phần thực thi duy nhất của balance cho cả worker kiểu cũ lẫn plugin (cả job đơn lẫn từng lần dời trong batch). Thiết kế: dời \"sống\" (chép, bắt kịp phần ghi mới, rồi chuyển) qua package volume_move.",
+  "when": "Mỗi lần dời một volume.",
+  "ux": "Tiến độ và giai đoạn của job balance.",
+  "if_broken": "Volume không được dời, hoặc lần dời dở để lại bản sao thừa.",
+  "gotchas": [
+   "EstimateTime cố định 14 giây và GetProgress luôn trả 0; tiến độ thật đi qua ReportProgress."
+  ]
+ },
+ "weed/worker/tasks/balance/execution.go": {
+  "character": "TypedTask của balance: bản mô phỏng chỉ ngủ theo từng bước, không dời volume",
+  "what": "TypedTask nhúng BaseTypedTask; ValidateTyped kiểm tham số; EstimateTimeTyped; ExecuteTyped đặt tiến độ qua sáu bước có tên (\"Moving volume data\"…) và chỉ time.Sleep tổng khoảng 13 giây, không gọi RPC nào. init đăng ký NewTypedTask vào globalTypedTaskRegistry.",
+  "why": "Hệ quả: không có, vì registry đó không có hàm đọc. Thiết kế: phần còn lại của một bước chuyển sang task typed.",
+  "when": "Không bao giờ trên đường chạy thật.",
+  "ux": "Không thấy trực tiếp.",
+  "if_broken": "Không ảnh hưởng.",
+  "issue": "dead",
+  "issue_note": "NewTypedTask chỉ được truyền vào types.RegisterGlobalTypedTask, và TypedTaskRegistry trong weed/worker/types/typed_task_interface.go không có hàm đọc nào, nên TypedTask không bao giờ được tạo. Nếu có ai nối nó vào, ExecuteTyped chỉ ngủ theo sáu bước rồi báo thành công mà không dời volume. Balance thật chạy qua BalanceTask (balance_task.go)."
+ },
+ "weed/worker/tasks/balance/plugin_handler.go": {
+  "character": "Handler volume_balance của plugin worker: phát hiện, gom batch, thực thi có kiểm lại trước khi dời",
+  "what": "Tự đăng ký (bí danh balance, volume.balance, volume-balance; nhóm default). Form admin: lọc collection (có chế độ cân riêng từng collection), trạng thái volume, DC, rack, node. Form worker: ngưỡng lệch, số server tối thiểu, giới hạn băng thông, số lần dời song song trong một batch (mặc định 5, tối đa 50), kích thước batch (mặc định 20, tối đa 100). Mặc định chạy: mỗi 30 phút, 100 job mỗi lần, 16 job toàn cụm và 4 mỗi worker. Detect lấy metrics và bản đồ replica, lọc, gọi Detection (từng collection hoặc gộp), gửi hoạt động giải thích, rồi đề xuất từng lần dời (dedupe key volume_balance:<vid>[:<collection>]) hoặc gom thành batch có danh sách Moves. Execute: job đơn thì kiểm lại (đĩa đích có đúng loại, master vẫn thấy volume trên nguồn và chưa có trên đích) rồi chạy BalanceTask; batch thì chạy các lần dời song song có giới hạn, mỗi lần kiểm lại riêng, báo tiến độ gộp.",
+  "why": "Hệ quả: đường balance hiện hành qua admin plugin. Thiết kế: kiểm lại lúc thực thi vì đề xuất có thể cũ sau nhiều phút trong hàng chờ.",
+  "when": "Mỗi 30 phút (mặc định) và mỗi job balance.",
+  "ux": "Trang plugin: \"Move volume N from A to B\", \"Batch balance K volumes\", tiến độ \"[Move i/n vol:N] …\".",
+  "if_broken": "Volume không được cân lại, hoặc bị dời tới chỗ không còn hợp lệ.",
+  "gotchas": [
+   "Batch báo thành công khi có ít nhất một lần dời thành công (succeeded > 0 || failed == 0), kể cả khi phần lớn thất bại; lỗi chỉ nằm ở ErrorMessage.",
+   "Dedupe key của batch là khoá ghép volume_balance_batch:…, khác khoá của job đơn, nên phía admin không coi một job đơn và một batch cùng chứa một volume là trùng.",
+   "Lần dời trong batch không mang disk id đích (buildMoveTaskParams chỉ có node)."
+  ]
  }
 }
