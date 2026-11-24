@@ -38,6 +38,7 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 
 	var metadata tableBucketMetadata
 	var bucketPolicy string
+	var bucketTags map[string]string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 		if err != nil {
@@ -55,7 +56,9 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 			return fmt.Errorf("failed to fetch bucket policy: %v", err)
 		}
 
-		return nil
+		// The policy may condition on the bucket's own tags.
+		bucketTags, err = h.readTags(r.Context(), client, bucketPath)
+		return err
 	})
 
 	if err != nil {
@@ -75,6 +78,8 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 		Subject:          callerSubject(r),
 		IsLocalAccountID: h.localAccountIDs,
 		TableBucketName:  bucketName,
+		TableBucketTags:  bucketTags,
+		ResourceTags:     bucketTags,
 		IdentityActions:  identityActions,
 		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
@@ -196,11 +201,20 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 
 				bucketARN := h.generateTableBucketARN(metadata.OwnerAccountID, entry.Entry.Name)
 				identityActions := getIdentityActions(r)
+				// The tags come with the listed entry. A bucket whose tags do not
+				// decode is left out, as one whose metadata does not: a Deny on
+				// them could not be evaluated.
+				bucketTags, err := tagsFromExtended(entry.Entry.Extended)
+				if err != nil {
+					continue
+				}
 				if !CheckPermissionWithContext("GetTableBucket", accountID, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 					TrustedIssuers:   h.trustedIssuers(r),
 					Subject:          callerSubject(r),
 					IsLocalAccountID: h.localAccountIDs,
 					TableBucketName:  entry.Entry.Name,
+					TableBucketTags:  bucketTags,
+					ResourceTags:     bucketTags,
 					IdentityActions:  identityActions,
 					DefaultAllow:     h.defaultAllowFor(r),
 				}) {
@@ -329,6 +343,12 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 			bucketPolicy = string(policyData)
 		}
 
+		// The policy may condition on the bucket's own tags.
+		bucketTags, err := h.readTags(r.Context(), client, bucketPath)
+		if err != nil {
+			return err
+		}
+
 		bucketARN := h.generateTableBucketARN(metadata.OwnerAccountID, bucketName)
 		principal := h.getAccountID(r)
 		identityActions := getIdentityActions(r)
@@ -337,6 +357,8 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 			Subject:          callerSubject(r),
 			IsLocalAccountID: h.localAccountIDs,
 			TableBucketName:  bucketName,
+			TableBucketTags:  bucketTags,
+			ResourceTags:     bucketTags,
 			IdentityActions:  identityActions,
 			DefaultAllow:     h.defaultAllowFor(r),
 		}) {

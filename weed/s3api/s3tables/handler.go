@@ -633,6 +633,20 @@ func (h *S3TablesHandler) readTags(ctx context.Context, client filer_pb.SeaweedF
 		}
 		return nil, err
 	}
+	return decodeTags(data)
+}
+
+// tagsFromExtended returns the tags stored in a catalog entry's extended
+// attributes, or nil when it has none.
+func tagsFromExtended(extended map[string][]byte) (map[string]string, error) {
+	data, ok := extended[ExtendedKeyTags]
+	if !ok {
+		return nil, nil
+	}
+	return decodeTags(data)
+}
+
+func decodeTags(data []byte) (map[string]string, error) {
 	tags := make(map[string]string)
 	if err := json.Unmarshal(data, &tags); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal tags: %w", err)
