@@ -40,24 +40,21 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 	var bucketPolicy string
 	var bucketTags map[string]string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
+		// One read gives the metadata, the policy and the tags the policy may
+		// condition on, all from the same version of the bucket.
+		entry, err := h.lookupEntry(r.Context(), client, bucketPath)
 		if err != nil {
 			return err
+		}
+		data, ok := entry.Extended[ExtendedKeyMetadata]
+		if !ok {
+			return fmt.Errorf("%w: %s", ErrAttributeNotFound, ExtendedKeyMetadata)
 		}
 		if err := json.Unmarshal(data, &metadata); err != nil {
 			return fmt.Errorf("failed to unmarshal metadata: %w", err)
 		}
-
-		// Fetch bucket policy if it exists
-		policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
-		if err == nil {
-			bucketPolicy = string(policyData)
-		} else if !errors.Is(err, ErrAttributeNotFound) {
-			return fmt.Errorf("failed to fetch bucket policy: %v", err)
-		}
-
-		// The policy may condition on the bucket's own tags.
-		bucketTags, err = h.readTags(r.Context(), client, bucketPath)
+		bucketPolicy = string(entry.Extended[ExtendedKeyPolicy])
+		bucketTags, err = tagsFromExtended(entry.Extended)
 		return err
 	})
 
@@ -319,10 +316,15 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		}
 	}()
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		// 1. Get metadata for ownership check
-		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
+		// 1. Read the bucket once: the metadata for the ownership check, and the
+		// policy with the tags it may condition on, from the same version of it.
+		bucketEntry, err := h.lookupEntry(r.Context(), client, bucketPath)
 		if err != nil {
 			return err
+		}
+		data, ok := bucketEntry.Extended[ExtendedKeyMetadata]
+		if !ok {
+			return fmt.Errorf("%w: %s", ErrAttributeNotFound, ExtendedKeyMetadata)
 		}
 		if err := json.Unmarshal(data, &metadata); err != nil {
 			return fmt.Errorf("failed to unmarshal metadata: %w", err)
@@ -330,21 +332,8 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		if otherTableBucket(r.Context(), metadata.CreatedAt) {
 			return filer_pb.ErrNotFound
 		}
-
-		// Fetch bucket policy if it exists
-		policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
-		if err != nil {
-			if errors.Is(err, ErrAttributeNotFound) {
-				// No bucket policy set; proceed with empty bucketPolicy
-			} else {
-				return fmt.Errorf("failed to fetch bucket policy: %w", err)
-			}
-		} else {
-			bucketPolicy = string(policyData)
-		}
-
-		// The policy may condition on the bucket's own tags.
-		bucketTags, err := h.readTags(r.Context(), client, bucketPath)
+		bucketPolicy = string(bucketEntry.Extended[ExtendedKeyPolicy])
+		bucketTags, err := tagsFromExtended(bucketEntry.Extended)
 		if err != nil {
 			return err
 		}
