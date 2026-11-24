@@ -109,7 +109,14 @@ func NewFileReader(filerClient filer_pb.FilerClient, entry *filer_pb.Entry) io.R
 	if len(entry.Content) > 0 {
 		return bytes.NewReader(entry.Content)
 	}
-	return NewChunkStreamReader(filerClient, entry.GetChunks())
+	reader := NewChunkStreamReader(filerClient, entry.GetChunks())
+	// A file extended past its last chunk ends in a hole. A remote-storage
+	// entry's size counts content its local chunks may not hold, so only a
+	// local file is extended.
+	if entry.RemoteEntry == nil && entry.Attributes != nil {
+		reader.extendTo(int64(entry.Attributes.FileSize))
+	}
+	return reader
 }
 
 type DoStreamContent func(writer io.Writer) error
@@ -423,10 +430,11 @@ func doNewChunkStreamReader(ctx context.Context, lookupFileIdFn wdclient.LookupF
 		}
 	}
 
+	// The stream ends where the last view does. A range no view covers is a
+	// hole of a sparse file and reads as zeros.
 	var totalSize int64
 	for x := chunkViews.Front(); x != nil; x = x.Next {
-		chunk := x.Value
-		totalSize += int64(chunk.ViewSize)
+		totalSize = max(totalSize, x.Value.ViewOffset+int64(x.Value.ViewSize))
 	}
 
 	return &ChunkStreamReader{
@@ -458,8 +466,10 @@ func NewChunkStreamReader(filerClient filer_pb.FilerClient, chunks []*filer_pb.F
 func (c *ChunkStreamReader) ReadAt(p []byte, off int64) (n int, err error) {
 	c.bufferLock.Lock()
 	defer c.bufferLock.Unlock()
-	if err = c.prepareBufferFor(off); err != nil {
-		return
+	if _, inHole := c.holeAt(off); !inHole {
+		if err = c.prepareBufferFor(off); err != nil {
+			return
+		}
 	}
 	c.logicOffset = off
 	return c.doRead(p)
@@ -475,6 +485,13 @@ func (c *ChunkStreamReader) doRead(p []byte) (n int, err error) {
 	// fmt.Printf("do read [%d,%d) at %s[%d,%d)\n", c.logicOffset, c.logicOffset+int64(len(p)), c.chunk, c.bufferOffset, c.bufferOffset+int64(len(c.buffer)))
 	for n < len(p) {
 		// println("read", c.logicOffset)
+		if holeEnd, inHole := c.holeAt(c.logicOffset); inHole {
+			t := int(min(int64(len(p)-n), holeEnd-c.logicOffset))
+			clear(p[n : n+t])
+			n += t
+			c.logicOffset += int64(t)
+			continue
+		}
 		if err = c.prepareBufferFor(c.logicOffset); err != nil {
 			return
 		}
@@ -509,6 +526,41 @@ func (c *ChunkStreamReader) Seek(offset int64, whence int) (int64, error) {
 
 	return offset, err
 
+}
+
+// extendTo makes the stream at least size bytes long; the range past the last
+// chunk view reads as zeros, as a file extended by truncate does. A reader
+// that failed to resolve its chunks keeps failing instead.
+func (c *ChunkStreamReader) extendTo(size int64) {
+	if c.sourceErr == nil && size > c.totalSize {
+		c.totalSize = size
+	}
+}
+
+// holeAt reports whether offset falls in a range of the stream no chunk view
+// covers, and where that hole ends: at the next view, or at the end of the
+// stream.
+func (c *ChunkStreamReader) holeAt(offset int64) (end int64, inHole bool) {
+	if offset < 0 || offset >= c.totalSize {
+		return 0, false
+	}
+	p := c.chunkView
+	if p == nil {
+		p = c.head
+	}
+	for p != nil && p.Prev != nil && p.Value.ViewOffset > offset {
+		p = p.Prev
+	}
+	for p != nil && p.Value.ViewOffset+int64(p.Value.ViewSize) <= offset {
+		p = p.Next
+	}
+	if p == nil {
+		return c.totalSize, true
+	}
+	if p.Value.ViewOffset <= offset {
+		return 0, false
+	}
+	return p.Value.ViewOffset, true
 }
 
 func insideChunk(offset int64, chunk *ChunkView) bool {
