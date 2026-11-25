@@ -15,6 +15,35 @@ BUCKET = "vectors-bucket"
 INDEX = "idx"
 
 
+def query_indexed_vectors(client, **kwargs):
+    def before_sign(request, **_):
+        request.headers["x-seaweedfs-vector-search-mode"] = "indexed-only"
+
+    event = "before-sign.s3vectors.QueryVectors"
+    client.meta.events.register(event, before_sign)
+    try:
+        return client.query_vectors(**kwargs)
+    finally:
+        client.meta.events.unregister(event, before_sign)
+
+
+def test_indexed_only_requires_a_built_index(vectors):
+    bucket = "indexed-only-" + uuid.uuid4().hex[:12]
+    target = {"vectorBucketName": bucket, "indexName": "idx"}
+    vectors.create_vector_bucket(vectorBucketName=bucket)
+    try:
+        vectors.create_index(**target, dataType="float32", dimension=3, distanceMetric="cosine")
+        vectors.put_vectors(**target, vectors=[{"key": "new", "data": {"float32": [1, 0, 0]}}])
+        query = {**target, "queryVector": {"float32": [1, 0, 0]}, "topK": 1}
+        assert vectors.query_vectors(**query)["vectors"][0]["key"] == "new"
+        with pytest.raises(ClientError, match="no usable index for vector") as exc:
+            query_indexed_vectors(vectors, **query)
+        assert exc.value.response["Error"]["Code"] == "ValidationException"
+    finally:
+        vectors.delete_index(**target)
+        vectors.delete_vector_bucket(vectorBucketName=bucket)
+
+
 def test_vector_lifecycle(vectors):
     vectors.create_vector_bucket(vectorBucketName=BUCKET)
     buckets = [b["vectorBucketName"] for b in vectors.list_vector_buckets()["vectorBuckets"]]
@@ -143,15 +172,14 @@ def assert_engine_wrote_like_the_gateway(cluster, index):
 
 def run_cli(cluster, *args):
     """weed-vector-cli's JSON answer. It reaches the cluster through the
-    namespace that names the tables, the masters whose filers hold them and the
-    cluster token's key, and finds security.toml and the read key where the
-    weed processes do."""
+    masters, whose gateways and filers hold the tables, and the cluster token's
+    key, and finds security.toml and the read key where the weed processes do."""
     import os
     import subprocess
     from pathlib import Path
     cli = Path(os.environ.get("VECTOR_CLI_BINARY", Path(__file__).resolve().parent / "weed-vector-cli")).resolve()
-    command = [str(cli), "--namespace", cluster["catalog"], "--masters", cluster["masters"],
-               "--filer-signing-key", cluster["filer_signing_key"], "--filer-group", os.environ.get("VECTOR_FILER_GROUP", ""), *args]
+    command = [str(cli), "--masters", cluster["masters"], "--filer-signing-key", cluster["filer_signing_key"],
+               "--filer-group", os.environ.get("VECTOR_FILER_GROUP", ""), *args]
     return json.loads(subprocess.run(command, check=True, capture_output=True, text=True,
                                      cwd=cluster["directory"], env=cluster["env"]).stdout)
 
@@ -684,6 +712,13 @@ def test_vector_index_job(vectors, cluster):
     hits = vectors.query_vectors(vectorBucketName=bucket, indexName=index, queryVector={"float32": late}, topK=1)
     assert [h["key"] for h in hits["vectors"]] == ["late"]
 
+    indexed = query_indexed_vectors(vectors, vectorBucketName=bucket, indexName=index,
+                                    queryVector={"float32": late}, topK=10)
+    assert all(h["key"] != "late" for h in indexed["vectors"])
+    headers = indexed["ResponseMetadata"]["HTTPHeaders"]
+    assert headers["x-seaweedfs-vector-search-mode"] == "indexed-only"
+    assert headers["x-seaweedfs-vector-data-excluded"] == "true"
+
     again = call("/run", "POST", {"timeout_seconds": 60})
     assert again["detected_count"] == 0, again
 
@@ -709,6 +744,11 @@ def test_vector_index_job(vectors, cluster):
     optimize(1)
     after = coverage_now()
     assert after["unindexed_rows"] == 0 and after["segments"] == 2, after
+
+    indexed = query_indexed_vectors(vectors, vectorBucketName=bucket, indexName=index,
+                                    queryVector={"float32": late}, topK=1)
+    assert indexed["vectors"][0]["key"] == "late"
+    assert indexed["ResponseMetadata"]["HTTPHeaders"]["x-seaweedfs-vector-data-excluded"] == "false"
 
     # Five times the rows the index was sized for: the job trains it again
     # instead of extending it, and the partitions follow the new row count.

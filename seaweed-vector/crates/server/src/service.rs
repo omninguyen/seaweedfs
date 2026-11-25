@@ -705,7 +705,6 @@ pub struct VectorServer {
     pub(crate) handles: moka::sync::Cache<(String, bool), (u64, Dataset)>,
     lance_cache_bytes: (usize, usize),
     leases: SharedLeases,
-    nprobes: Option<usize>,
     exact_match_limit: Option<usize>,
     filter_stats: crate::filter_stats::FilterStats,
     /// URI schemes a table's location may have.
@@ -730,7 +729,6 @@ impl VectorServer {
             lance_cache_bytes: (DEFAULT_INDEX_CACHE_BYTES, DEFAULT_METADATA_CACHE_BYTES),
             handles: moka::sync::Cache::new(MAX_HANDLES),
             leases: SharedLeases::default(),
-            nprobes: None,
             exact_match_limit: None,
             filter_stats: Default::default(),
             schemes: &["s3"],
@@ -744,15 +742,10 @@ impl VectorServer {
         self
     }
 
-    /// Partitions every query probes, instead of the index's own default.
-    pub fn with_nprobes(mut self, nprobes: Option<usize>) -> Self {
-        self.nprobes = nprobes;
-        self
-    }
-
     /// Matches of a filter's indexed metadata keys scored exactly instead of
     /// searched through the vector index, at most; None keeps the default.
-    pub fn with_exact_match_limit(mut self, limit: Option<usize>) -> Self {
+    #[cfg(test)]
+    pub(crate) fn with_exact_match_limit(mut self, limit: Option<usize>) -> Self {
         self.exact_match_limit = limit;
         self
     }
@@ -1144,6 +1137,71 @@ impl VectorService for VectorServer {
         &self,
         request: Request<pb::QueryVectorsRequest>,
     ) -> Result<Response<pb::QueryVectorsResponse>, Status> {
+        self.query(request, false).await
+    }
+
+    async fn query_indexed_vectors(
+        &self,
+        request: Request<pb::QueryVectorsRequest>,
+    ) -> Result<Response<pb::QueryVectorsResponse>, Status> {
+        self.query(request, true).await
+    }
+
+    async fn metadata_keys(
+        &self,
+        request: Request<pb::MetadataKeysRequest>,
+    ) -> Result<Response<pb::MetadataKeysResponse>, Status> {
+        let table = request
+            .into_inner()
+            .table
+            .ok_or_else(|| Status::invalid_argument("missing table"))?;
+        let dataset = self.open_to_read(&table).await?;
+        let _lease = self.leases.try_pin(&dataset).await.map_err(internal)?;
+        Ok(Response::new(
+            metadata_keys(&dataset).await.map_err(internal)?,
+        ))
+    }
+
+    async fn update_metadata_key(
+        &self,
+        request: Request<pb::UpdateMetadataKeyRequest>,
+    ) -> Result<Response<pb::MetadataKeysResponse>, Status> {
+        let req = request.into_inner();
+        let table = req
+            .table
+            .ok_or_else(|| Status::invalid_argument("missing table"))?;
+        let mut dataset = self.open(&table).await?;
+        let updated = if req.remove {
+            metadata_index::request_removal(&mut dataset, &req.key).await
+        } else {
+            metadata_index::request(&mut dataset, &req.key).await
+        };
+        updated.map_err(|e| Status::failed_precondition(format!("{e:#}")))?;
+        Ok(Response::new(
+            metadata_keys(&dataset).await.map_err(internal)?,
+        ))
+    }
+
+    async fn filter_stats(
+        &self,
+        request: Request<pb::FilterStatsRequest>,
+    ) -> Result<Response<pb::FilterStatsResponse>, Status> {
+        let table = request
+            .into_inner()
+            .table
+            .ok_or_else(|| Status::invalid_argument("missing table"))?;
+        Ok(Response::new(
+            self.filter_stats.snapshot(&table.id.join("/")),
+        ))
+    }
+}
+
+impl VectorServer {
+    async fn query(
+        &self,
+        request: Request<pb::QueryVectorsRequest>,
+        indexed_only: bool,
+    ) -> Result<Response<pb::QueryVectorsResponse>, Status> {
         let started = std::time::Instant::now();
         let req = request.into_inner();
         let table = req
@@ -1180,14 +1238,29 @@ impl VectorService for VectorServer {
             },
             postfilter: req.postfilter,
             distance,
-            nprobes: self.nprobes,
+            nprobes: None,
             index_segments: None,
             fragments: None,
             exact_match_limit: self.exact_match_limit,
         };
-        let hits = query::ann(&dataset, &resolved, &query)
-            .await
-            .map_err(internal)?;
+        let (hits, excluded) = if indexed_only {
+            query::indexed_only(&dataset, &resolved, &query)
+                .await
+                .map_err(|err| {
+                    if err.is::<query::IndexedOnlyError>() {
+                        invalid(err)
+                    } else {
+                        internal(err)
+                    }
+                })?
+        } else {
+            (
+                query::ann(&dataset, &resolved, &query)
+                    .await
+                    .map_err(internal)?,
+                0,
+            )
+        };
         // One batched read for every hit's columns; keyed by the hit key so
         // row order does not matter.
         let mut metas: std::collections::HashMap<String, Option<Struct>> =
@@ -1262,55 +1335,18 @@ impl VectorService for VectorServer {
         let index = table.id.join("/");
         self.filter_stats
             .record(&index, table_id(&dataset), &filter_keys, started.elapsed());
-        Ok(Response::new(pb::QueryVectorsResponse { vectors }))
-    }
-
-    async fn metadata_keys(
-        &self,
-        request: Request<pb::MetadataKeysRequest>,
-    ) -> Result<Response<pb::MetadataKeysResponse>, Status> {
-        let table = request
-            .into_inner()
-            .table
-            .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open_to_read(&table).await?;
-        let _lease = self.leases.try_pin(&dataset).await.map_err(internal)?;
-        Ok(Response::new(
-            metadata_keys(&dataset).await.map_err(internal)?,
-        ))
-    }
-
-    async fn update_metadata_key(
-        &self,
-        request: Request<pb::UpdateMetadataKeyRequest>,
-    ) -> Result<Response<pb::MetadataKeysResponse>, Status> {
-        let req = request.into_inner();
-        let table = req
-            .table
-            .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let mut dataset = self.open(&table).await?;
-        let updated = if req.remove {
-            metadata_index::request_removal(&mut dataset, &req.key).await
-        } else {
-            metadata_index::request(&mut dataset, &req.key).await
-        };
-        updated.map_err(|e| Status::failed_precondition(format!("{e:#}")))?;
-        Ok(Response::new(
-            metadata_keys(&dataset).await.map_err(internal)?,
-        ))
-    }
-
-    async fn filter_stats(
-        &self,
-        request: Request<pb::FilterStatsRequest>,
-    ) -> Result<Response<pb::FilterStatsResponse>, Status> {
-        let table = request
-            .into_inner()
-            .table
-            .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        Ok(Response::new(
-            self.filter_stats.snapshot(&table.id.join("/")),
-        ))
+        let mut response = Response::new(pb::QueryVectorsResponse { vectors });
+        if indexed_only {
+            response.metadata_mut().insert(
+                "x-seaweedfs-vector-search-mode",
+                "indexed-only".parse().unwrap(),
+            );
+            response.metadata_mut().insert(
+                "x-seaweedfs-vector-excluded-fragments",
+                excluded.to_string().parse().unwrap(),
+            );
+        }
+        Ok(response)
     }
 }
 

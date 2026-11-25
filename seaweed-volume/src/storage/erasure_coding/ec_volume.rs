@@ -31,6 +31,17 @@ pub(crate) struct ShardLocationCache {
     /// Maps shard ID -> list of server addresses where that shard exists.
     /// Used for distributed EC reads across the cluster.
     locations: HashMap<ShardId, Vec<String>>,
+    /// Holders a complete lookup stopped placing a shard on (Go's
+    /// `ShardReadHints`). Reads ask them before reconstructing, for a delete only
+    /// such a holder journaled, but take nothing else from them: a delete made
+    /// since went to a listed holder, which reconstruction asks. Deletes never
+    /// use them.
+    read_hints: HashMap<ShardId, Vec<String>>,
+    /// Changes with every change to `read_hints` (Go's `ShardReadHintsRevision`),
+    /// so a read only forgets the hint holders it asked if no lookup changed them.
+    /// Drawn from `READ_HINTS_REVISION`, so a revision read before a remount
+    /// never matches the new `EcVolume`'s cache.
+    read_hints_revision: u64,
     /// Wall-clock timestamp of the most recent successful `LookupEcVolume`
     /// refresh of `locations`. `None` until the first refresh. Drives the
     /// staleness heuristic in `cached_lookup_ec_shard_locations` (mirrors Go's
@@ -48,6 +59,12 @@ pub(crate) struct ShardLocationCache {
 /// Bytes read per positional read when seeding `deleted_needles` from `.ecj`.
 /// A multiple of `NEEDLE_ID_SIZE`; 1 MiB is 131072 entries per syscall.
 const ECJ_LOAD_CHUNK_BYTES: usize = 1 << 20;
+
+static READ_HINTS_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn next_read_hints_revision() -> u64 {
+    READ_HINTS_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+}
 
 /// Process-wide epoch bumped whenever a failed .ecj append truncates its
 /// uncommitted tail. A decode that read the journal without the store lock
@@ -308,7 +325,17 @@ impl EcJournalAppender {
     pub(crate) fn lock_journal(&self) -> MutexGuard<'_, EcJournal> {
         self.ecj.lock().unwrap()
     }
+
+    /// Drops the journal file, so every later append fails.
+    #[cfg(test)]
+    pub(crate) fn drop_journal_file(&self) {
+        self.ecj.lock().unwrap().file = None;
+    }
 }
+
+/// The encode run a holder reports when its disks serve shards of more than
+/// one encode run for the volume (Go `erasure_coding.MixedEncodeRuns`).
+pub const MIXED_ENCODE_RUNS: i64 = -1;
 
 /// An erasure-coded volume managing its local shards and index.
 pub struct EcVolume {
@@ -1722,10 +1749,11 @@ impl EcVolume {
     /// stamp the refresh time, returning a clone of the resulting map.
     ///
     /// Per-shard upsert (mirrors Go's `cachedLookupEcShardLocations`): each shard
-    /// id present in the reply overwrites its cached entry, while shard ids absent
-    /// from the reply keep their previously-cached locations — so a reply that
-    /// passes the data-shard completeness guard but omits a shard already in cache
-    /// does not drop that shard's known location (unlike a full replace).
+    /// id present in the reply overwrites its cached entry, and one the reply
+    /// places nowhere is dropped, while shard ids absent from the reply keep
+    /// their previously-cached locations — so a reply that passes the data-shard
+    /// completeness guard but omits a shard already in cache does not drop that
+    /// shard's known location (unlike a full replace).
     ///
     /// Map and refresh time advance in one write section, so no reader can pair
     /// the merged map with the previous lookup's timestamp.
@@ -1735,9 +1763,48 @@ impl EcVolume {
     ) -> HashMap<ShardId, Vec<String>> {
         let mut cache = self.shard_locations.write().unwrap();
         for (shard_id, addrs) in locations {
-            cache.locations.insert(shard_id, addrs);
+            if addrs.is_empty() {
+                if let Some(known) = cache.locations.remove(&shard_id)
+                    && !known.is_empty()
+                {
+                    cache.read_hints.insert(shard_id, known);
+                    cache.read_hints_revision = next_read_hints_revision();
+                }
+            } else {
+                if cache.read_hints.remove(&shard_id).is_some() {
+                    cache.read_hints_revision = next_read_hints_revision();
+                }
+                cache.locations.insert(shard_id, addrs);
+            }
         }
         cache.refreshed_at = Some(Instant::now());
+        cache.locations.clone()
+    }
+
+    /// Put a partial reply's holders ahead of the cached ones for each shard it
+    /// places, keeping the cached addresses as fallback and every other shard
+    /// and the refresh time alone. A partial is not the volume's map, but a read
+    /// can still go straight to a shard it names; the map stays marked so the
+    /// next read looks it up again.
+    pub(crate) fn merge_partial_shard_locations(
+        &self,
+        locations: HashMap<ShardId, Vec<String>>,
+    ) -> HashMap<ShardId, Vec<String>> {
+        let mut cache = self.shard_locations.write().unwrap();
+        for (shard_id, mut addrs) in locations {
+            if addrs.is_empty() {
+                continue;
+            }
+            if let Some(known) = cache.locations.get(&shard_id) {
+                for addr in known {
+                    if !addrs.contains(addr) {
+                        addrs.push(addr.clone());
+                    }
+                }
+            }
+            cache.locations.insert(shard_id, addrs);
+        }
+        cache.stale = true;
         cache.locations.clone()
     }
 
@@ -1749,6 +1816,37 @@ impl EcVolume {
     ) -> (HashMap<ShardId, Vec<String>>, Option<Instant>) {
         let cache = self.shard_locations.read().unwrap();
         (cache.locations.clone(), cache.refreshed_at)
+    }
+
+    /// The shard's hint with the revision to pass back to
+    /// `forget_shard_read_hints`.
+    pub(crate) fn shard_read_hints(&self, shard_id: ShardId) -> Option<(Vec<String>, u64)> {
+        let cache = self.shard_locations.read().unwrap();
+        let hints = cache.read_hints.get(&shard_id)?.clone();
+        Some((hints, cache.read_hints_revision))
+    }
+
+    /// Drops the `failed` holders from the shard's hint only if no lookup
+    /// changed the hints since `revision`, as one may have while the reads were
+    /// in flight.
+    pub(crate) fn forget_shard_read_hints(
+        &self,
+        shard_id: ShardId,
+        revision: u64,
+        failed: &[String],
+    ) {
+        let mut cache = self.shard_locations.write().unwrap();
+        if cache.read_hints_revision != revision {
+            return;
+        }
+        let Some(hints) = cache.read_hints.get_mut(&shard_id) else {
+            return;
+        };
+        hints.retain(|h| !failed.contains(h));
+        if hints.is_empty() {
+            cache.read_hints.remove(&shard_id);
+        }
+        cache.read_hints_revision = next_read_hints_revision();
     }
 
     /// Mark the cached map for a prompt re-check after a read failed against one
@@ -3705,6 +3803,33 @@ mod tests {
         assert_eq!(vol.read_deleted_needles().unwrap(), ids);
     }
 
+    /// A read hint revision taken from one instance of a volume must not let
+    /// a read forget the hint a later instance holds after a remount.
+    #[test]
+    fn test_read_hint_revision_is_not_shared_across_instances() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let vid = VolumeId(50);
+        write_ecx_file(dir, "", vid, &[]);
+        let holder = "127.0.0.1:8080".to_string();
+        let delist = |vol: &EcVolume| {
+            vol.merge_shard_locations(HashMap::from([(0, vec![holder.clone()])]));
+            vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
+            vol.shard_read_hints(0).unwrap().1
+        };
+        let old = EcVolume::new(dir, dir, "", vid).unwrap();
+        let revision = delist(&old);
+        drop(old);
+
+        let vol = EcVolume::new(dir, dir, "", vid).unwrap();
+        delist(&vol);
+        vol.forget_shard_read_hints(0, revision, std::slice::from_ref(&holder));
+        assert_eq!(
+            vol.shard_read_hints(0).map(|(hints, _)| hints),
+            Some(vec![holder])
+        );
+    }
+
     /// A journal that grew, or was replaced, after it was loaded must not be
     /// compacted from the stale set.
     #[test]
@@ -5443,6 +5568,78 @@ mod tests {
         assert!(
             later.unwrap() >= before,
             "the second merge re-stamped the refresh time"
+        );
+
+        // A shard the master places nowhere is dropped, not kept at an address
+        // a delete would trust; its holder stays a place a read can ask first.
+        let merged = vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
+        assert_eq!(merged, HashMap::from([(1, vec!["c:3".to_string()])]));
+        let hint = || vol.shard_read_hints(0).map(|(hint, _)| hint);
+        let a = vec!["a:1".to_string()];
+        assert_eq!(hint(), Some(a.clone()));
+        vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
+        assert_eq!(
+            hint(),
+            Some(a.clone()),
+            "a later reply placing the shard nowhere keeps the hint"
+        );
+        let (_, revision) = vol.shard_read_hints(0).unwrap();
+        vol.merge_shard_locations(HashMap::from([(0, a.clone())]));
+        assert_eq!(hint(), None);
+        vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
+        vol.forget_shard_read_hints(0, revision, &a);
+        assert_eq!(
+            hint(),
+            Some(a.clone()),
+            "a failed read keeps a hint a lookup reinstalled meanwhile, even for the same holder"
+        );
+        let (_, revision) = vol.shard_read_hints(0).unwrap();
+        vol.forget_shard_read_hints(0, revision, &a);
+        assert_eq!(hint(), None);
+        vol.merge_shard_locations(HashMap::from([(0, vec!["e:5".into(), "f:6".into()])]));
+        vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
+        let (_, revision) = vol.shard_read_hints(0).unwrap();
+        vol.forget_shard_read_hints(0, revision, &["e:5".into()]);
+        assert_eq!(
+            hint(),
+            Some(vec!["f:6".to_string()]),
+            "only the holders that failed are forgotten"
+        );
+    }
+
+    #[test]
+    fn merge_partial_shard_locations_keeps_known_holders_and_refresh_time() {
+        let tmp = TempDir::new().unwrap();
+        let vol = mount_bare_ec_volume(tmp.path().to_str().unwrap());
+
+        let filled =
+            vol.merge_partial_shard_locations(HashMap::from([(0, vec!["a:1".to_string()])]));
+        assert_eq!(filled.get(&0), Some(&vec!["a:1".to_string()]));
+        assert!(
+            vol.shard_locations_snapshot().1.is_none(),
+            "a partial reply is not a refresh"
+        );
+
+        vol.merge_shard_locations(HashMap::from([(1, vec!["b:2".to_string()])]));
+        let stamped = vol.shard_locations_snapshot().1;
+        vol.claim_shard_locations_refresh(|_| true);
+        let filled = vol.merge_partial_shard_locations(HashMap::from([
+            (1, vec!["c:3".to_string()]),
+            (2, vec!["d:4".to_string()]),
+            (3, Vec::new()),
+        ]));
+        assert_eq!(
+            filled.get(&1),
+            Some(&vec!["c:3".to_string(), "b:2".to_string()]),
+            "a holder the partial names goes first, the cached one stays as fallback"
+        );
+        assert_eq!(filled.get(&0), Some(&vec!["a:1".to_string()]));
+        assert_eq!(filled.get(&2), Some(&vec!["d:4".to_string()]));
+        assert!(!filled.contains_key(&3), "a partial reply's empty slot adds nothing");
+        assert_eq!(vol.shard_locations_snapshot().1, stamped);
+        assert!(
+            vol.claim_shard_locations_refresh(|stale| stale),
+            "the partial leaves the map marked for the next lookup"
         );
     }
 

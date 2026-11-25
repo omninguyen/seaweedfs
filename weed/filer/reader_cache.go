@@ -144,6 +144,10 @@ func (rc *ReaderCache) fetchChunkRange(ctx context.Context, buffer []byte, chunk
 		glog.ErrorfCtx(ctx, "operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
 		return 0, err
 	}
+	if rc.budget != nil {
+		// the buffers of hedged requests count against the budget too
+		ctx = util_http.WithScratchBudget(ctx, rc.budget)
+	}
 	return rc.fetchChunkDataFn(ctx, buffer, urlStrings, chunkView.CipherKey, chunkView.IsGzipped, false, offset, chunkView.FileId,
 		refreshUrls(ctx, rc.cacheInvalidator, rc.lookupFileIdFn, chunkView.FileId))
 }
@@ -187,13 +191,12 @@ retry:
 		rc.RUnlock()
 	}
 
-	if shouldCache || rc.lookupFileIdFn == nil {
-		n, err := rc.chunkCache.ReadChunkAt(buffer, fileId, uint64(offset))
-		if n > 0 {
-			// Served from the chunk cache: the stream has left its pinned chunk.
-			rc.unpin(stream.detach(nil))
-			return n, err
-		}
+	// shouldCache only admits new downloads: a chunk past the cutoff can still
+	// be cached (uploads on peer-sharing and read-auth mounts cache every chunk).
+	if n, err := rc.chunkCache.ReadChunkAt(buffer, fileId, uint64(offset)); n > 0 {
+		// Served from the chunk cache: the stream has left its pinned chunk.
+		rc.unpin(stream.detach(nil))
+		return n, err
 	}
 
 	rc.Lock()
@@ -520,6 +523,10 @@ func (s *SingleChunkCacher) fetchChunkData(ctx context.Context, urlStrings []str
 	// Allocate buffer and download without holding the lock.
 	// This allows multiple downloads to proceed in parallel.
 	data := mem.Allocate(s.chunkSize)
+	if s.parent.budget != nil {
+		// the buffers of hedged requests count against the budget too
+		ctx = util_http.WithScratchBudget(ctx, s.parent.budget)
+	}
 	_, fetchErr := s.parent.fetchChunkDataFn(ctx, data, urlStrings, s.cipherKey, s.isGzipped, true, 0, s.chunkFileId, refreshUrls(ctx, s.parent.cacheInvalidator, s.lookupFileId, s.chunkFileId))
 	if fetchErr != nil {
 		mem.Free(data)

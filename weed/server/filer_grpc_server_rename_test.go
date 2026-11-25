@@ -34,9 +34,27 @@ type renameTestStore struct {
 	findDelay time.Duration // optional: widen check-then-act windows in tests
 	findErr   error         // simulates a failing entry lookup
 	strictTx  bool          // like a SQL store: calls through a committed transaction fail
+	openTx    int           // strictTx transactions begun and not yet committed or rolled back
 
 	kv        map[string][]byte // optional KV (hard links); nil: every key is absent
 	kvGetErrs int               // fail this many KvGet calls before answering
+
+	afterOp   func(op string, p util.FullPath) // optional: runs after each insert, update or delete
+	afterFind func(p util.FullPath)            // optional: runs after each lookup
+	listing   map[string]bool                  // optional: directory listing kept the way Redis keeps it
+
+	overwritesAtOnce bool // declares filer.OverwritingStore, as the Redis stores do
+}
+
+// OverwritesAtOnce is what the store declares; its InsertEntry does replace an
+// entry at once and whole either way.
+func (s *renameTestStore) OverwritesAtOnce() bool { return s.overwritesAtOnce }
+
+// noteOp runs the afterOp hook after a write, outside the store's lock.
+func (s *renameTestStore) noteOp(op string, p util.FullPath) {
+	if s.afterOp != nil {
+		s.afterOp(op, p)
+	}
 }
 
 type renameTestTxKey struct{}
@@ -64,20 +82,38 @@ func (s *renameTestStore) Initialize(util.Configuration, string) error { return 
 func (s *renameTestStore) Shutdown()                                   {}
 func (s *renameTestStore) BeginTransaction(ctx context.Context) (context.Context, error) {
 	if s.strictTx {
+		s.mu.Lock()
+		s.openTx++
+		s.mu.Unlock()
 		return context.WithValue(ctx, renameTestTxKey{}, &renameTestTx{}), nil
 	}
 	return ctx, nil
 }
-func (s *renameTestStore) CommitTransaction(ctx context.Context) error {
+
+// endTx marks the transaction in ctx committed or rolled back.
+func (s *renameTestStore) endTx(ctx context.Context) {
 	if tx, ok := ctx.Value(renameTestTxKey{}).(*renameTestTx); ok {
-		tx.done = true
+		s.mu.Lock()
+		if !tx.done {
+			s.openTx--
+			tx.done = true
+		}
+		s.mu.Unlock()
 	}
+}
+
+func (s *renameTestStore) openTransactions() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.openTx
+}
+
+func (s *renameTestStore) CommitTransaction(ctx context.Context) error {
+	s.endTx(ctx)
 	return s.commitErr
 }
 func (s *renameTestStore) RollbackTransaction(ctx context.Context) error {
-	if tx, ok := ctx.Value(renameTestTxKey{}).(*renameTestTx); ok {
-		tx.done = true
-	}
+	s.endTx(ctx)
 	return nil
 }
 func (s *renameTestStore) KvPut(_ context.Context, key []byte, value []byte) error {
@@ -112,18 +148,24 @@ func (s *renameTestStore) InsertEntry(ctx context.Context, entry *filer.Entry) e
 		return err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.entries[string(entry.FullPath)] = entry.ShallowClone()
+	if s.listing != nil {
+		s.listing[string(entry.FullPath)] = true
+	}
+	s.mu.Unlock()
+	s.noteOp("insert", entry.FullPath)
 	return nil
 }
 
+// UpdateEntry rewrites the entry and leaves the listing alone, as Redis does.
 func (s *renameTestStore) UpdateEntry(ctx context.Context, entry *filer.Entry) error {
 	if err := s.txDone(ctx); err != nil {
 		return err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.entries[string(entry.FullPath)] = entry.ShallowClone()
+	s.mu.Unlock()
+	s.noteOp("update", entry.FullPath)
 	return nil
 }
 
@@ -133,6 +175,9 @@ func (s *renameTestStore) FindEntry(ctx context.Context, p util.FullPath) (*file
 	}
 	if s.findDelay > 0 {
 		time.Sleep(s.findDelay)
+	}
+	if s.afterFind != nil {
+		defer s.afterFind(p)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -155,8 +200,12 @@ func (s *renameTestStore) DeleteEntry(ctx context.Context, p util.FullPath) erro
 		return s.deleteErr
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	delete(s.entries, string(p))
+	if s.listing != nil {
+		delete(s.listing, string(p))
+	}
+	s.mu.Unlock()
+	s.noteOp("delete", p)
 	return nil
 }
 
@@ -300,7 +349,7 @@ func swapNotificationQueue(t *testing.T, q notification.MessageQueue) {
 // each, and its loop goroutines keep the whole filer reachable, so the tens of
 // filers this package builds would otherwise pin gigabytes for the rest of the
 // run - fatal on 32-bit, where that exhausts the address space.
-func newRenameTestFiler(t *testing.T, store *renameTestStore) *filer.Filer {
+func newRenameTestFiler(t *testing.T, store filer.FilerStore) *filer.Filer {
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
 	masterClient := wdclient.NewMasterClient(
 		dialOption,
@@ -322,6 +371,9 @@ func newRenameTestFiler(t *testing.T, store *renameTestStore) *filer.Filer {
 	t.Cleanup(logBuffer.ShutdownLogBuffer)
 
 	return &filer.Filer{
+		// Use an explicit bucket root so ordinary fixture paths retain the
+		// default collection. Collection tests configure their own bucket root.
+		DirBucketsPath:      "/test-buckets",
 		Store:               filer.NewFilerStoreWrapper(store),
 		MasterClient:        masterClient,
 		FilerConf:           filer.NewFilerConf(),

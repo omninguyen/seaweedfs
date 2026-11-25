@@ -439,6 +439,9 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 
 		// Use the specific disk location
 		location = vs.store.Locations[req.DiskId]
+		if req.DiskType != "" && location.DiskType != types.ToDiskType(req.DiskType) {
+			return nil, status.Errorf(codes.InvalidArgument, "disk %d is %s, not the requested disk type %s", req.DiskId, location.DiskType.ReadableString(), req.DiskType)
+		}
 		glog.V(1).Infof("Using disk %d for EC shard copy: %s", req.DiskId, location.Directory)
 	} else {
 		// Auto-select the target disk: prefer a disk that already owns one
@@ -467,8 +470,11 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			}
 			return nil, fmt.Errorf("volume %d shards %v are already owned by multiple local disks %v: no single destination; copy per shard or pass disk_id", req.VolumeId, req.ShardIds, dirs)
 		}
-		location = vs.store.FindEcShardTargetLocation(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.DataShardsCount, shardIds...)
+		location = vs.store.FindEcShardTargetLocation(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.DataShardsCount, req.DiskType, shardIds...)
 		if location == nil {
+			if req.DiskType != "" {
+				return nil, status.Errorf(codes.ResourceExhausted, "no space left on a %s disk, or a disk of another type holds the shards", req.DiskType)
+			}
 			return nil, status.Error(codes.ResourceExhausted, "no space left")
 		}
 	}
@@ -522,26 +528,30 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			stagedShards = append(stagedShards, shardId)
 		}
 
+		// The sidecars are staged too and committed with the index, so a failed
+		// copy cannot pair a new .vif with the index this disk keeps. The .vif
+		// is fetched even when not installed: it names the copied shards' run.
+		var stagedSidecars []string
+		stagedVif, err := vs.stageEcCopyFile(client, req.Collection, req.VolumeId, ".vif", dataBaseFileName+".vif", true, throttler)
+		if err != nil {
+			return err
+		}
+		if stagedVif != "" {
+			defer os.Remove(stagedVif)
+			if err := vs.requireMountedEncodeRun(needle.VolumeId(req.VolumeId), stagedVif); err != nil {
+				return err
+			}
+			if req.CopyVifFile {
+				stagedSidecars = append(stagedSidecars, dataBaseFileName+".vif")
+			}
+		}
+
 		if req.CopyEcjFile {
 			// The journal is a *set* of ids: merge the source's into the
 			// local one as a union, never append it whole.
 			created.track(indexBaseFileName + ".ecj")
 			if err := vs.copyEcjAndMerge(client, req.Collection, req.VolumeId, location.Directory, indexBaseFileName, throttler); err != nil {
 				return err
-			}
-		}
-
-		// The sidecars are staged too and committed with the index, so a failed
-		// copy cannot pair a new .vif with the index this disk keeps.
-		var stagedSidecars []string
-		if req.CopyVifFile {
-			staged, err := vs.stageEcCopyFile(client, req.Collection, req.VolumeId, ".vif", dataBaseFileName+".vif", true, throttler)
-			if err != nil {
-				return err
-			}
-			if staged != "" {
-				defer os.Remove(staged)
-				stagedSidecars = append(stagedSidecars, dataBaseFileName+".vif")
 			}
 		}
 
@@ -597,10 +607,49 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 	}, vs.grpcDialOption, vs.guardedGrpcDialOption(req.SourceDataNode))
 	if err != nil {
 		created.remove(req.VolumeId)
-		return nil, fmt.Errorf("VolumeEcShardsCopy volume %d: %v", req.VolumeId, err)
+		return nil, fmt.Errorf("VolumeEcShardsCopy volume %d: %w", req.VolumeId, err)
 	}
 
 	return &volume_server_pb.VolumeEcShardsCopyResponse{}, nil
+}
+
+// requireMountedEncodeRun refuses a copied .vif of another encode run than the
+// one this server mounts for the volume: the mounted volume would keep
+// reporting its run while serving the copied bytes.
+func (vs *VolumeServer) requireMountedEncodeRun(vid needle.VolumeId, stagedVif string) error {
+	vi, _, found, _ := volume_info.MaybeLoadVolumeInfo(stagedVif)
+	run := vi.GetEcShardConfig().GetEncodeTsNs()
+	if !found || run == 0 {
+		return nil
+	}
+	for _, location := range vs.store.Locations {
+		if ecv, ok := location.FindEcVolume(vid); ok && ecv.EncodeTsNs != 0 && ecv.EncodeTsNs != run {
+			return status.Errorf(codes.FailedPrecondition, "copied shards are encode run %d but %s mounts run %d", run, location.Directory, ecv.EncodeTsNs)
+		}
+	}
+	return nil
+}
+
+// requireOneLocalEncodeRun refuses to serve the files of a volume whose disks
+// here hold different encode runs: each copied file is looked up on its own,
+// so a copy could pair one run's shards with another run's .vif.
+func (vs *VolumeServer) requireOneLocalEncodeRun(collection string, vid uint32) error {
+	baseFileName := erasure_coding.EcShardBaseFileName(collection, int(vid)) + ".vif"
+	var run int64
+	for _, location := range vs.store.Locations {
+		for _, dir := range []string{location.Directory, location.IdxDirectory} {
+			vi, _, found, _ := volume_info.MaybeLoadVolumeInfo(util.Join(dir, baseFileName))
+			r := vi.GetEcShardConfig().GetEncodeTsNs()
+			if !found || r == 0 {
+				continue
+			}
+			if run != 0 && run != r {
+				return status.Errorf(codes.FailedPrecondition, "ec volume %d holds encode runs %d and %d on this server", vid, run, r)
+			}
+			run = r
+		}
+	}
+	return nil
 }
 
 // ecCopyCreatedFiles records the files a VolumeEcShardsCopy adds to its disk,
@@ -1351,27 +1400,39 @@ func (vs *VolumeServer) VolumeEcBlobDelete(ctx context.Context, req *volume_serv
 
 	resp := &volume_server_pb.VolumeEcBlobDeleteResponse{}
 
-	for _, location := range vs.store.Locations {
-		if localEcVolume, found := location.FindEcVolume(needle.VolumeId(req.VolumeId)); found {
-
-			_, size, _, err := localEcVolume.LocateEcShardNeedle(types.NeedleId(req.FileKey), needle.Version(req.Version))
-			if err != nil {
-				return nil, fmt.Errorf("locate in local ec volume: %w", err)
-			}
-			if size.IsDeleted() {
-				return resp, nil
-			}
-
-			err = localEcVolume.DeleteNeedleFromEcx(types.NeedleId(req.FileKey))
-			if err != nil {
-				return nil, err
-			}
-
-			break
+	// Each disk holding shards of the volume mounts its own runtime with its
+	// own deletion set, and a shard read checks the runtime of the disk that
+	// holds the shard, so every runtime records the delete. A retry on this
+	// server resolves the volume through the first runtime, so it records
+	// last: a failure on any other leaves it live and the retry fans out again.
+	var pending []*erasure_coding.EcVolume
+	for i, localEcVolume := range vs.store.FindAllEcVolumes(needle.VolumeId(req.VolumeId)) {
+		live, err := isLiveInLocalEcVolume(localEcVolume, req, i > 0)
+		if err != nil {
+			return nil, err
+		}
+		if live {
+			pending = append(pending, localEcVolume)
+		}
+	}
+	for i := len(pending) - 1; i >= 0; i-- {
+		if err := pending[i].DeleteNeedleFromEcx(types.NeedleId(req.FileKey)); err != nil {
+			return nil, err
 		}
 	}
 
 	return resp, nil
+}
+
+func isLiveInLocalEcVolume(localEcVolume *erasure_coding.EcVolume, req *volume_server_pb.VolumeEcBlobDeleteRequest, sibling bool) (bool, error) {
+	_, size, _, err := localEcVolume.LocateEcShardNeedle(types.NeedleId(req.FileKey), needle.Version(req.Version))
+	if err != nil {
+		if sibling && errors.Is(err, erasure_coding.NotFoundError) {
+			return false, nil
+		}
+		return false, fmt.Errorf("locate in local ec volume: %w", err)
+	}
+	return !size.IsDeleted(), nil
 }
 
 // VolumeEcShardsToVolume generates the .idx, .dat files from .ecx, .ecj and .ec01 ~ .ec14 files
@@ -1664,6 +1725,7 @@ func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serv
 	// DiskLocation.FindEcVolume.
 	var primary *erasure_coding.EcVolume
 	var seenShards erasure_coding.ShardBits
+	var servedRun int64
 	shardInfos := make([]*volume_server_pb.EcShardInfo, 0, erasure_coding.MaxShardCount)
 	for _, location := range vs.store.Locations {
 		ecv, ok := location.FindEcVolume(vid)
@@ -1673,7 +1735,15 @@ func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serv
 		if primary == nil {
 			primary = ecv
 		}
-		for _, s := range ecv.Shards {
+		shards := ecv.Shards
+		if len(shards) > 0 && ecv.EncodeTsNs != 0 {
+			if servedRun == 0 {
+				servedRun = ecv.EncodeTsNs
+			} else if servedRun != ecv.EncodeTsNs {
+				servedRun = erasure_coding.MixedEncodeRuns
+			}
+		}
+		for _, s := range shards {
 			if seenShards.Has(s.ShardId) {
 				continue
 			}
@@ -1707,11 +1777,16 @@ func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serv
 	// the only way a coordinator can tell a holder that understands the
 	// uniform block layout from one that dropped the unknown .vif field on the
 	// floor and mounted the volume as legacy.
+	encodeTsNs := primary.EncodeTsNs
+	if servedRun == erasure_coding.MixedEncodeRuns {
+		encodeTsNs = servedRun
+	}
 	var ecShardConfig *volume_server_pb.EcShardConfig
 	if primary.ECContext != nil {
 		ecShardConfig = &volume_server_pb.EcShardConfig{
 			DataShards:   uint32(primary.ECContext.DataShards),
 			ParityShards: uint32(primary.ECContext.ParityShards),
+			EncodeTsNs:   encodeTsNs,
 			BlockSize:    primary.ECContext.BlockSize,
 		}
 	}
