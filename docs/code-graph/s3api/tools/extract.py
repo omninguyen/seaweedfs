@@ -12,11 +12,12 @@ FILE_PKGS = ['s3tables', 'iceberg', 'lance', 's3vectors']
 EXTRA_NEIGH = [REPO / 'weed/worker/tasks/iceberg']
 # The filer the gateway stores everything in (lanes 12-19): the filer package's
 # top-level files, its empty-folder cleaner, the hand-written filer_pb client
-# code and the filer's gRPC server files are graphed file by file; abstract_sql
-# and the code generated from filer.proto are collapsed by arrange.py.
+# code and the filer's gRPC server files (its handlers and, since #12904, the
+# token scope it enforces on them) are graphed file by file; abstract_sql and
+# the code generated from filer.proto are collapsed by arrange.py.
 FILER_FILE_DIRS = [REPO / 'weed/filer', REPO / 'weed/filer/empty_folder_cleanup', REPO / 'weed/pb/filer_pb']
 FILER_COLLAPSED = [REPO / 'weed/filer/abstract_sql']
-FILER_SERVER_GLOB = (REPO / 'weed/server', 'filer_grpc_server*.go')
+FILER_SERVER_GLOBS = [(REPO / 'weed/server', 'filer_grpc_server*.go'), (REPO / 'weed/server', 'filer_grpc_scope*.go')]
 EXCLUDE = {'weed/s3api/kms_azure.go', 'weed/s3api/policy_engine/examples.go',
            # test-support hooks other packages' tests call; not production paths
            'weed/filer/filer_notify_read_testing.go', 'weed/filer/meta_aggregator_testing.go'}
@@ -33,7 +34,8 @@ for d in EXTRA_NEIGH + FILER_COLLAPSED:
     neigh += sorted(p for p in d.glob('*.go') if ok(p))
 for d in FILER_FILE_DIRS:
     seeds += sorted(p for p in d.glob('*.go') if ok(p))
-seeds += sorted(p for p in FILER_SERVER_GLOB[0].glob(FILER_SERVER_GLOB[1]) if ok(p))
+for d, pattern in FILER_SERVER_GLOBS:
+    seeds += sorted(p for p in d.glob(pattern) if ok(p))
 print('seed files', len(seeds), 'neighbor files', len(neigh), file=sys.stderr)
 res = graphify.extract(seeds + neigh, Path(sys.argv[1]), root=REPO)
 json.dump(res, open(sys.argv[2], 'w'))

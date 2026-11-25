@@ -261,5 +261,15 @@
  "weed/s3api/s3vectors/discovery.go": 10,
  "weed/s3api/s3vectors/iam.go": 10,
  "weed/s3api/s3vectors/limits.go": 10,
- "weed/s3api/s3vectors/operations.go": 10
+ "weed/s3api/s3vectors/operations.go": 10,
+ "weed/pb/filer_pb/chunk_auth.go": 12,
+ "weed/s3api/s3vectors/query.go": 10,
+ "weed/server/filer_grpc_scope.go": 13,
+ "weed/server/filer_grpc_scope_context.go": 13,
+ "weed/server/filer_grpc_scope_hardlink_visibility.go": 13,
+ "weed/server/filer_grpc_scope_retention.go": 13,
+ "weed/server/filer_grpc_scope_rules.go": 13,
+ "weed/server/filer_grpc_scope_sse.go": 13,
+ "weed/server/filer_grpc_scope_stream.go": 13,
+ "weed/server/filer_grpc_scope_worm.go": 13
 }

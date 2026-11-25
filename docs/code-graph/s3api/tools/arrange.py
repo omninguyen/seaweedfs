@@ -10,7 +10,7 @@ FILE_PKGS = ('s3tables/', 'iceberg/', 'lance/', 's3vectors/')     # graphed file
 COLLAPSED_EXTRA = ('weed/worker/tasks/iceberg/', 'weed/filer/abstract_sql/')  # outside s3api, one node
 # Filer files graphed one node per file (lanes 12-19).
 FILER_FILE_DIRS = ('weed/filer/', 'weed/filer/empty_folder_cleanup/', 'weed/pb/filer_pb/')
-FILER_SERVER_PREFIX = 'weed/server/filer_grpc_server'
+FILER_SERVER_PREFIXES = ('weed/server/filer_grpc_server', 'weed/server/filer_grpc_scope')
 # Code generated from weed/pb/filer.proto: one node, named after its source.
 GENERATED = {'weed/pb/filer_pb/filer.pb.go', 'weed/pb/filer_pb/filer_grpc.pb.go',
              'weed/pb/filer_pb/filer_vtproto.pb.go'}
@@ -20,7 +20,7 @@ def node_key(sf):
     if sf in GENERATED: return GENERATED_NODE
     for d in FILER_FILE_DIRS:
         if sf.startswith(d) and '/' not in sf[len(d):]: return sf
-    if sf.startswith(FILER_SERVER_PREFIX) and '/' not in sf[len('weed/server/'):]: return sf
+    if sf.startswith(FILER_SERVER_PREFIXES) and '/' not in sf[len('weed/server/'):]: return sf
     for pkg in COLLAPSED_EXTRA:
         if sf.startswith(pkg) and '/' not in sf[len(pkg):]: return pkg
     if not sf.startswith(CORE): return None
@@ -31,15 +31,24 @@ def node_key(sf):
     return CORE + pkg + '/'
 nodes = {n['id']: n for n in raw['nodes']}
 # INFERRED calls that graphify resolved by name onto a method in another file,
-# and that the code shows to be something else: each calls a func-typed
-# parameter named write, not copyKeepAlive.write. (source file, caller,
-# callee file, callee)
+# and that the code shows to be something else. (source file, caller, callee
+# file, callee)
 NAME_COLLISIONS = {
+    # a func-typed parameter named write, not copyKeepAlive.write
     ('weed/s3api/s3tables/filer_ops.go', '.moveCatalogRecord()',
      'weed/s3api/s3api_object_handlers_copy_keepalive.go', '.write()'),
     ('weed/worker/tasks/iceberg/row_lineage.go', 'copyFileRows()',
      'weed/s3api/s3api_object_handlers_copy_keepalive.go', '.write()'),
+    # a closure named load, local to checkClientEntry, not signedPayloadBody.load
+    ('weed/server/filer_grpc_scope.go', '.checkClientEntry()',
+     'weed/s3api/request_body.go', '.load()'),
 }
+# Types defined outside the graphed files. graphify pins such a type to the
+# first input file that mentions it, so a reference to it would point at a file
+# that does not define it. FilerServer is declared in weed/server/filer_server.go;
+# it was pinned to filer_grpc_server.go, and to filer_grpc_scope.go once that
+# file sorted first (#12904).
+OUT_OF_SCOPE_TYPES = {'server_filerserver'}
 fmap = {nid: node_key(n.get('source_file')) for nid, n in nodes.items()}
 agg = collections.defaultdict(lambda: {'w': 0, 'via': []})
 dropped = collections.Counter()
@@ -47,6 +56,8 @@ for e in raw['edges']:
     s, t = fmap.get(e['source']), fmap.get(e['target'])
     if e['relation'] == 'contains' or e['relation'] == 'method':
         continue                                        # intra-file structure
+    if e['source'] in OUT_OF_SCOPE_TYPES or e['target'] in OUT_OF_SCOPE_TYPES:
+        dropped['out_of_scope_type'] += 1; continue
     if s is None or t is None:
         dropped['out_of_scope' if s else 'sourceless_src'] += 1; continue
     if s == t: continue
